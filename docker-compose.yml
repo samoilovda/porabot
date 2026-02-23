@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: porabot
+    restart: always
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ:-UTC}
+      # Explicitly set DB paths to point to the volume mount
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/porabot.db
+      - SCHEDULER_DB_URL=sqlite:////app/data/jobs.sqlite

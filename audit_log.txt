@@ -1,0 +1,35 @@
+# Audit Log - Porabot Deployment Readiness
+
+## 1. Data Safety
+**Question:** Will the database persist after `docker-compose down && up`?
+**Answer:** YES.
+- We configured a named volume mapping in `docker-compose.yml`: `./data:/app/data`.
+- We updated `loader.py` to respect `DATABASE_URL` and `SCHEDULER_DB_URL` environment variables.
+- We configured `docker-compose.yml` to set these variables to point to files inside `/app/data/` (e.g., `sqlite:////app/data/porabot.db`).
+- **Result:** All database writes occur in the mounted volume on the host machine (`./data`). Recreating the container will mount the same directory, preserving data.
+
+## 2. Timezones
+**Question:** How does the container know the current time?
+**Answer:** Through the `TZ` environment variable.
+- `docker-compose.yml` passes the `TZ` variable from `.env` to the container.
+- The `Dockerfile` sets a default `TZ=UTC`.
+- Start script or system configuration isn't strictly necessary for Python's `datetime.now()` if `TZ` is set in some distros, but for robust `date` command usage, some images require `tzdata` package. `python:3.10-slim` might need `tzdata` installed for system time to physically change, but Python's `datetime.now(tz)` usually respects the env var or simply relies on UTC.
+- **Critical Note:** `aiogram` and `apscheduler` mostly work with UTC or aware datetimes. We rely on user-specific timezones logic in the code, which is good. The system time of the container matters less if we always use aware datetimes.
+
+## 3. Concurrency
+**Question:** can `aiosqlite` handle Bot and Scheduler simultaneously?
+**Answer:** YES, with caveats.
+- `aiosqlite` queues queries in a separate thread. SQLite itself supports concurrent readers but only one writer (WAL mode helps).
+- Since this is a Telegram bot, load is likely "event-based" and "bursty", not high-frequency continuous writes.
+- `APScheduler` runs jobs in the event loop or threads. Our `send_reminder_wrapper` is async, so it doesn't block.
+- **Risk:** If `APScheduler` triggers 1000 jobs at the exact same second, `aiosqlite` might queue them up, delaying execution slightly. For a personal/small community bot, this is negligible.
+
+## 4. Risks & Bottlenecks
+- **Event Loop Blocking:** `dateparser` is a heavy synchronous library. If we call it inside an `async def` handler without `run_in_executor`, it blocks the loop for the duration of parsing.
+  - *Mitigation:* Ideally, wrap `parser.parse_input` in `await loop.run_in_executor(None, parser.parse_input, ...)`.
+  - *Current Status:* It is called directly (`parser.parse_input`). For short texts, it's fast (ms). For long texts or complex regexes, it could lag the bot. **Recommendation: Refactor to run_in_executor in future.**
+- **Memory:** `python:3.10-slim` is efficient, but Python processes can grow. `APScheduler` with `SQLAlchemyJobStore` is efficient.
+- **SQLite Limitations:** If the bot scales to thousands of users, SQLite will become a bottleneck. Migration to PostgreSQL (`asyncpg`) would be required (supported by SQLAlchemy, just change URL and driver).
+
+## Final Verdict
+The project is **READY** for basic production deployment using Docker. Data persistence is secured, and configuration is flexible.

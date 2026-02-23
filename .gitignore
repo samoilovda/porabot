@@ -1,0 +1,34 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Environments
+venv/
+.env
+.venv
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
+*.db
+*.sqlite
+data/
+*.log
+nohup.out

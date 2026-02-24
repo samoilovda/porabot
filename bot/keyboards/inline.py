@@ -116,15 +116,46 @@ def get_timezone_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_task_done_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=l10n["btn_done"], callback_data=f"done_task_{reminder_id}"
-                )
-            ]
-        ]
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n["btn_done"], callback_data=f"done_task_{reminder_id}"
+        ),
+        InlineKeyboardButton(
+            text=l10n["btn_snooze"], callback_data=f"snooze_show_{reminder_id}"
+        ),
     )
+    return builder.as_markup()
+
+
+def get_snooze_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    # Row 1: 15m, 30m, 1h, 2h
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
+        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
+        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
+        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
+    )
+    
+    # Row 2: morning, day, evening, night
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_morning"], callback_data=f"snooze_act_{reminder_id}_morning"),
+        InlineKeyboardButton(text=l10n["snooze_day"], callback_data=f"snooze_act_{reminder_id}_day"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_evening"], callback_data=f"snooze_act_{reminder_id}_evening"),
+        InlineKeyboardButton(text=l10n["snooze_night"], callback_data=f"snooze_act_{reminder_id}_night"),
+    )
+    
+    # Row 3: 1 day, custom
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
+        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
+    )
+    
+    return builder.as_markup()
 
 
 def get_tasks_list_keyboard(tasks, l10n: dict[str, Any]) -> InlineKeyboardMarkup:

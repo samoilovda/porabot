@@ -23,6 +23,7 @@ from bot.database.engine import create_engine, create_session_maker, init_db
 from bot.middlewares.database import DatabaseMiddleware
 from bot.handlers import all_routers
 from bot.services.scheduler import SchedulerService
+from bot.services.daily_briefs import setup_daily_briefs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +54,9 @@ async def main() -> None:
         jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)}
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)
+
+    # 4.1 Daily Briefs Cron Check
+    setup_daily_briefs(scheduler, bot, session_pool)
 
     # 5. Middleware (DI of session + DAOs + user)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))

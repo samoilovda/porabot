@@ -8,6 +8,7 @@ RU: dict[str, Any] = {
     "btn_new_task": "➕ Новая задача",
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
+    "btn_habits": "🫧 Привычки",
     
     # Language Selection
     "choose_language": "Пожалуйста, выберите язык / Please choose a language:",

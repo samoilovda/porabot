@@ -11,5 +11,8 @@ def get_main_menu_keyboard(l10n: dict[str, Any]) -> ReplyKeyboardMarkup:
         KeyboardButton(text=l10n["btn_new_task"]),
         KeyboardButton(text=l10n["btn_my_tasks"]),
     )
-    builder.row(KeyboardButton(text=l10n["btn_settings"]))
+    builder.row(
+        KeyboardButton(text=l10n["btn_habits"]),
+        KeyboardButton(text=l10n["btn_settings"])
+    )
     return builder.as_markup(resize_keyboard=True)

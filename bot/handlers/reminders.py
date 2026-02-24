@@ -20,6 +20,7 @@ from bot.database.models import User, Reminder
 from bot.keyboards.inline import (
     get_edit_keyboard,
     get_task_done_keyboard,
+    get_snooze_keyboard,
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
 )
@@ -431,9 +432,17 @@ async def callback_refresh_tasks(
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(
-    callback: CallbackQuery, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery, 
+    reminder_dao: ReminderDAO, 
+    scheduler_service: SchedulerService, 
+    l10n: dict[str, Any]
 ) -> None:
     reminder_id = int(callback.data.split("done_task_")[1])
+    
+    # Soft delete
+    await reminder_dao.mark_done(reminder_id)
+    
+    # Clean up jobs
     scheduler_service.remove_nagging_job(reminder_id)
 
     await callback.message.edit_text(
@@ -441,3 +450,90 @@ async def callback_task_done(
         parse_mode="Markdown",
     )
     await callback.answer(l10n["btn_done"])
+
+
+# ------------------------------------------------------------------ #
+#  Snooze actions                                                     #
+# ------------------------------------------------------------------ #
+
+@router.callback_query(F.data.startswith("snooze_show_"))
+async def callback_snooze_show(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    reminder_id = int(callback.data.split("snooze_show_")[1])
+    keyboard = get_snooze_keyboard(reminder_id, l10n)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("snooze_act_"))
+async def callback_snooze_act(
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    state: FSMContext,
+    user: User,
+    l10n: dict[str, Any],
+) -> None:
+    parts = callback.data.split("_")
+    reminder_id = int(parts[2])
+    action = parts[3]
+
+    reminder = await reminder_dao.get_by_id(reminder_id)
+    if not reminder:
+        return await callback.answer("Task not found.", show_alert=True)
+
+    # If user selected custom time, pivot into the edit FSM flow
+    if action == "custom":
+        await state.set_state(ReminderWizard.choosing_time)
+        await state.update_data(
+            edit_reminder_id=reminder.id,
+            text=reminder.reminder_text,
+        )
+        await callback.message.edit_text(
+            l10n["ask_time"].format(text=reminder.reminder_text),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n)
+        )
+        return
+
+    # Process time delta / fixed time
+    try:
+        user_tz = pytz.timezone(user.timezone)
+    except Exception:
+        user_tz = pytz.UTC
+
+    now = datetime.now(user_tz)
+    new_time = now
+
+    if action == "15m":
+        new_time += timedelta(minutes=15)
+    elif action == "30m":
+        new_time += timedelta(minutes=30)
+    elif action == "1h":
+        new_time += timedelta(hours=1)
+    elif action == "2h":
+        new_time += timedelta(hours=2)
+    elif action == "1d":
+        new_time += timedelta(days=1)
+    elif action in ["morning", "day", "evening", "night"]:
+        hour_map = {"morning": 9, "day": 13, "evening": 19, "night": 23}
+        target_hour = hour_map[action]
+        new_time = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        # If the target hour has already passed today, rollover to tomorrow
+        if new_time <= now:
+            new_time += timedelta(days=1)
+
+    # Discard timezone info if saving as naive (or handle properly depending on model setup)
+    if new_time.tzinfo:
+        new_time = new_time.replace(tzinfo=None)
+
+    # 1. Update DB
+    reminder.execution_time = new_time
+    # 2. Reschedule
+    scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
+
+    # 3. UI
+    friendly_time = new_time.strftime("%d.%m %H:%M")
+    await callback.message.edit_text(
+        f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}",
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    await callback.answer("Snoozed!")

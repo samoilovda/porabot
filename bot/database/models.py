@@ -49,6 +49,10 @@ class Reminder(Base):
     # Nagging mode
     is_nagging: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Added fields for daily briefs / soft-delete
+    status: Mapped[str] = mapped_column(String, default="pending")  # 'pending', 'completed'
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), server_default=func.now()
     )

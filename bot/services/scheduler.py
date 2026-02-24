@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 # Global delegate for APScheduler to avoid pickling `self` (which contains unpicklable Bot/Scheduler instances)
 _instance = None
 
-async def execute_reminder_job(reminder_id: int) -> None:
+async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
     global _instance
     if _instance:
-        await _instance._execute_reminder(reminder_id)
+        await _instance._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
     else:
         logger.error(f"Cannot execute reminder {reminder_id}: SchedulerService not initialized in this process.")
 
@@ -67,7 +67,7 @@ class SchedulerService:
                 execute_reminder_job,
                 "date",
                 run_date=run_date,
-                args=[reminder_id],
+                args=[reminder_id, False],
                 id=str(reminder_id),
                 replace_existing=True,
             )
@@ -98,12 +98,12 @@ class SchedulerService:
     #  Job target (called by APScheduler, outside request scope)          #
     # ------------------------------------------------------------------ #
 
-    async def _execute_reminder(self, reminder_id: int) -> None:
+    async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """
         APScheduler job target. Opens its own session (no middleware),
         sends the Telegram message, handles recurring reschedule & nagging.
         """
-        logger.info(f"Executing reminder job for ID: {reminder_id}")
+        logger.info(f"Executing reminder job for ID: {reminder_id} (nagging={is_nagging_execution})")
 
         async with self.session_pool() as session:
             try:
@@ -134,7 +134,7 @@ class SchedulerService:
                 )
 
                 # 2. Handle RECURRING
-                if reminder.is_recurring and reminder.rrule_string:
+                if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
                     try:
                         start_dt = reminder.execution_time
                         if start_dt.tzinfo is None:
@@ -176,7 +176,7 @@ class SchedulerService:
                         execute_reminder_job,
                         "date",
                         run_date=next_nag,
-                        args=[reminder_id],
+                        args=[reminder_id, True],
                         id=f"nag_{reminder_id}",
                         replace_existing=True,
                     )

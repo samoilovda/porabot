@@ -1,7 +1,9 @@
 """ReminderDAO — data access for the Reminder model."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Sequence
+
+import pytz
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,13 +43,51 @@ class ReminderDAO(BaseDAO[Reminder]):
         return reminder
 
     async def get_user_reminders(self, user_id: int) -> Sequence[Reminder]:
-        """All reminders for a user, ordered by execution_time ASC."""
+        """All PENDING reminders for a user, ordered by execution_time ASC."""
         result = await self.session.execute(
             select(Reminder)
-            .where(Reminder.user_id == user_id)
+            .where(Reminder.user_id == user_id, Reminder.status == "pending")
             .order_by(Reminder.execution_time)
         )
         return result.scalars().all()
+
+    async def mark_done(self, reminder_id: int) -> None:
+        """Soft delete a reminder by marking it completed. For recurring, only updates completed_at."""
+        reminder = await self.get_by_id(reminder_id)
+        if reminder:
+            if not reminder.is_recurring:
+                reminder.status = "completed"
+            reminder.completed_at = datetime.utcnow()
+            await self.session.flush()
+
+    async def get_today_tasks_by_status(self, user_id: int, user_tz_str: str, status: str) -> Sequence[Reminder]:
+        """Fetch tasks for 'today' based on the user's local timezone."""
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+            
+        now_local = datetime.now(tz)
+        start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+        end_of_day = start_of_day + timedelta(days=1)
+        
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == status,
+                Reminder.execution_time >= start_of_day,
+                Reminder.execution_time < end_of_day
+            )
+            .order_by(Reminder.execution_time)
+        )
+        return result.scalars().all()
+
+    async def get_today_pending_tasks(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
+        return await self.get_today_tasks_by_status(user_id, user_tz_str, "pending")
+
+    async def get_today_completed_tasks(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
+        return await self.get_today_tasks_by_status(user_id, user_tz_str, "completed")
 
     async def update_execution_time(
         self, reminder_id: int, new_time: datetime

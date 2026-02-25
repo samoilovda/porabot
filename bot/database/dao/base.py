@@ -52,3 +52,9 @@ class BaseDAO(Generic[T]):
             delete(self.model).where(self.model.id == record_id)  # type: ignore[attr-defined]
         )
         await self.session.flush()
+
+    async def count(self) -> int:
+        """Get total number of records in the table."""
+        from sqlalchemy import func
+        result = await self.session.execute(select(func.count()).select_from(self.model))
+        return result.scalar_one()

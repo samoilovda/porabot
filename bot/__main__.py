@@ -21,6 +21,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from bot.config import config
 from bot.database.engine import create_engine, create_session_maker, init_db
 from bot.middlewares.database import DatabaseMiddleware
+from bot.middlewares.whitelist import WhitelistMiddleware
 from bot.handlers import all_routers
 from bot.services.scheduler import SchedulerService
 from bot.services.daily_briefs import setup_daily_briefs
@@ -58,7 +59,11 @@ async def main() -> None:
     # 4.1 Daily Briefs Cron Check
     setup_daily_briefs(scheduler, bot, session_pool)
 
-    # 5. Middleware (DI of session + DAOs + user)
+    # 5. Middleware (Access Control and DI)
+    # Register Whitelist BEFORE DatabaseMiddleware to avoid DB overhead for unauthorized users
+    dp.update.middleware(
+        WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID)
+    )
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
 
     # 6. Register routers

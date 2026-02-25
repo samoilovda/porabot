@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # --- Telegram ---
     BOT_TOKEN: SecretStr
     ADMIN_ID: int = 0
+    ALLOWED_USERS: list[int] = []
 
     # --- Database ---
     DATABASE_URL: str = "sqlite+aiosqlite:///porabot.db"

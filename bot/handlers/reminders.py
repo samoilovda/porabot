@@ -52,8 +52,9 @@ async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]
 
 @router.message(F.text.in_(["📅 Мои задачи", "📅 My Tasks"]))
 async def btn_my_tasks(
-    message: Message, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
+    await state.clear()  # FIX EDGE-1: reset FSM if user navigates away mid-wizard
     tasks = await reminder_dao.get_user_reminders(user.id)
 
     if not tasks:
@@ -432,23 +433,33 @@ async def callback_refresh_tasks(
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(
-    callback: CallbackQuery, 
-    reminder_dao: ReminderDAO, 
-    scheduler_service: SchedulerService, 
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
     l10n: dict[str, Any]
 ) -> None:
     reminder_id = int(callback.data.split("done_task_")[1])
-    
+
+    # FIX CRIT-3: idempotency guard — ignore rapid double-taps
+    reminder = await reminder_dao.get_by_id(reminder_id)
+    if not reminder or reminder.status == "completed":
+        await callback.answer(l10n.get("already_done", "Already done ✅"))
+        return
+
     # Soft delete
     await reminder_dao.mark_done(reminder_id)
-    
-    # Clean up jobs
+
+    # Clean up nagging job
     scheduler_service.remove_nagging_job(reminder_id)
 
-    await callback.message.edit_text(
-        f"{callback.message.text}\n\n{l10n['task_done_reply']}",
-        parse_mode="Markdown",
-    )
+    try:
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n{l10n['task_done_reply']}",
+            parse_mode="Markdown",
+        )
+    except TelegramBadRequest:
+        pass  # Already updated by a concurrent tap — safe to ignore
+
     await callback.answer(l10n["btn_done"])
 
 
@@ -520,16 +531,16 @@ async def callback_snooze_act(
         if new_time <= now:
             new_time += timedelta(days=1)
 
-    # Discard timezone info if saving as naive (or handle properly depending on model setup)
-    if new_time.tzinfo:
-        new_time = new_time.replace(tzinfo=None)
+    # FIX CRIT-1: keep the timezone-aware datetime — DO NOT strip tzinfo.
+    # APScheduler correctly handles tz-aware run_date; stripping it caused
+    # reminders to fire at wrong times for non-UTC users.
 
     # 1. Update DB
     reminder.execution_time = new_time
-    # 2. Reschedule
+    # 2. Reschedule (pass timezone-aware datetime directly)
     scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
 
-    # 3. UI
+    # 3. UI — display in user's local time
     friendly_time = new_time.strftime("%d.%m %H:%M")
     await callback.message.edit_text(
         f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}",

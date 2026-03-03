@@ -4,6 +4,7 @@ import logging
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 @router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings"]))
-async def btn_settings(message: Message, user: User, l10n: dict[str, Any]) -> None:
+async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
+    await state.clear()  # FIX EDGE-1: reset FSM if user navigates away mid-wizard
     text = l10n["settings_text"].format(timezone=user.timezone)
     await message.answer(text, reply_markup=get_settings_keyboard(l10n), parse_mode="Markdown")
 

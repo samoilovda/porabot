@@ -57,27 +57,37 @@ class ReminderDAO(BaseDAO[Reminder]):
         if reminder:
             if not reminder.is_recurring:
                 reminder.status = "completed"
-            reminder.completed_at = datetime.utcnow()
+            # FIX EDGE-5: use timezone-aware utcnow (datetime.utcnow is deprecated in 3.12)
+            reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
             await self.session.flush()
 
-    async def get_today_tasks_by_status(self, user_id: int, user_tz_str: str, status: str) -> Sequence[Reminder]:
+    async def get_today_tasks_by_status(
+        self, user_id: int, user_tz_str: str, status: str
+    ) -> Sequence[Reminder]:
         """Fetch tasks for 'today' based on the user's local timezone."""
+        # FIX CRIT-6: convert start/end of the user's local day to UTC before querying.
+        # Comparing naive local timestamps against potentially-UTC DB values was causing
+        # wrong results for non-UTC users (tasks would appear on the wrong day).
         try:
             tz = pytz.timezone(user_tz_str)
         except Exception:
             tz = pytz.UTC
-            
+
         now_local = datetime.now(tz)
-        start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
-        end_of_day = start_of_day + timedelta(days=1)
-        
+        start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day_local = start_of_day_local + timedelta(days=1)
+
+        # Normalize to UTC (naive) for DB comparison
+        start_utc = start_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        end_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
         result = await self.session.execute(
             select(Reminder)
             .where(
                 Reminder.user_id == user_id,
                 Reminder.status == status,
-                Reminder.execution_time >= start_of_day,
-                Reminder.execution_time < end_of_day
+                Reminder.execution_time >= start_utc,
+                Reminder.execution_time < end_utc,
             )
             .order_by(Reminder.execution_time)
         )

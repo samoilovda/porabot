@@ -1,7 +1,7 @@
 """Admin handlers — monitoring and system management."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import Router, filters
 from aiogram.types import Message
@@ -40,8 +40,8 @@ async def cmd_debug(
     # 3. Scheduler status
     job_count = len(scheduler_service.scheduler.get_jobs())
 
-    # 4. Server time
-    now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    # 4. Server time (FIX EDGE-5: use timezone-aware now, utcnow() is deprecated in 3.12)
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     text_msg = (
         "🔍 **System Debug Summary**\n\n"

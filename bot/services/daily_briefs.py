@@ -34,7 +34,15 @@ async def process_daily_briefs(bot: Bot, session_pool) -> None:
                 if tasks:
                     lines = ["🌅 **Доброе утро! План на сегодня:**\n"]
                     for t in tasks:
-                        time_str = t.execution_time.strftime('%H:%M')
+                        # FIX CRIT-5: convert stored UTC to user's local TZ for display
+                        dt_display = t.execution_time
+                        try:
+                            if dt_display.tzinfo is None:
+                                dt_display = pytz.UTC.localize(dt_display)
+                            dt_display = dt_display.astimezone(tz)
+                        except Exception:
+                            pass
+                        time_str = dt_display.strftime('%H:%M')
                         lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
                     try:
                         await bot.send_message(user.id, "\n".join(lines), parse_mode="Markdown")
@@ -45,18 +53,33 @@ async def process_daily_briefs(bot: Bot, session_pool) -> None:
             elif local_time.hour == 23:
                 completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                 pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                
+
                 if completed or pending:
                     lines = [
                         "🌙 **Итоги дня:**",
                         f"✅ Выполнено: {len(completed)}",
-                        f"⏳ Осталось/Пропущено: {len(pending)}\n"
+                        f"⏳ Осталось/Пропущено: {len(pending)}\n",
                     ]
                     for t in completed:
-                        lines.append(f"✅ ~{t.reminder_text}~")
+                        # FIX CRIT-5: display in user-local time
+                        dt_c = t.execution_time
+                        try:
+                            if dt_c.tzinfo is None:
+                                dt_c = pytz.UTC.localize(dt_c)
+                            dt_c = dt_c.astimezone(tz)
+                        except Exception:
+                            pass
+                        lines.append(f"✅ ~{t.reminder_text}~ ({dt_c.strftime('%H:%M')})")
                     for t in pending:
-                        lines.append(f"❌ {t.reminder_text}")
-                        
+                        dt_p = t.execution_time
+                        try:
+                            if dt_p.tzinfo is None:
+                                dt_p = pytz.UTC.localize(dt_p)
+                            dt_p = dt_p.astimezone(tz)
+                        except Exception:
+                            pass
+                        lines.append(f"❌ {t.reminder_text} ({dt_p.strftime('%H:%M')})")
+
                     try:
                         await bot.send_message(user.id, "\n".join(lines), parse_mode="Markdown")
                     except Exception as e:

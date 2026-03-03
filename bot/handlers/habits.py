@@ -50,20 +50,21 @@ async def callback_habit_create(
     except Exception:
         user_tz = pytz.UTC
         
+    # FIX CRIT-2: keep timezone-aware datetime — do NOT strip tzinfo.
+    # APScheduler handles tz-aware run_date correctly.
     execution_time = datetime.now(user_tz) + timedelta(hours=hours)
-    naive_time = execution_time.replace(tzinfo=None)
-    
+
     # Save directly to DB, skipping FSM
     reminder = await reminder_dao.create_reminder(
         user_id=user.id,
         text=text,
-        execution_time=naive_time,
+        execution_time=execution_time,
         is_recurring=False,
-        is_nagging=False
+        is_nagging=False,
     )
-    
-    # Schedule
-    scheduler_service.schedule_reminder(reminder.id, naive_time)
+
+    # Schedule with tz-aware datetime
+    scheduler_service.schedule_reminder(reminder.id, execution_time)
     
     time_str = execution_time.strftime('%H:%M')
     await callback.message.edit_text(

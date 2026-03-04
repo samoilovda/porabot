@@ -93,6 +93,65 @@ async def btn_my_tasks(
 # ------------------------------------------------------------------ #
 
 
+@router.message(F.forward_origin)
+async def handle_forwarded_task(
+    message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
+    reminder_dao: ReminderDAO, scheduler_service: SchedulerService
+) -> None:
+    text = message.text or message.caption
+    if not text:
+        return
+
+    await state.clear()
+
+    origin_name = ""
+    fwd = message.forward_origin
+    if fwd:
+        if fwd.type == "user":
+            origin_name = fwd.sender_user.full_name
+        elif fwd.type == "hidden_user":
+            origin_name = fwd.sender_user_name
+        elif fwd.type == "channel":
+            origin_name = fwd.chat.title
+        elif fwd.type == "chat":
+            origin_name = getattr(fwd, "sender_chat").title if getattr(fwd, "sender_chat", None) else "Group"
+
+    prefix = ""
+    if origin_name:
+        if user.language == "en":
+            prefix = f"👤 Forwarded from {origin_name}:\n"
+        else:
+            prefix = f"👤 Переслано от {origin_name}:\n"
+
+    full_text = f"{prefix}{text}".strip()
+
+    try:
+        result = await parser.parse(full_text, user.timezone)
+        clean_text = result.clean_text or "Без названия"
+        parsed_dt = result.parsed_datetime
+
+        await state.update_data(
+            text=clean_text,
+            user_timezone=user.timezone,
+            chat_id=message.chat.id,
+        )
+
+        if parsed_dt:
+            await state.update_data(execution_time=parsed_dt.isoformat())
+            await _save_and_show_edit(
+                message, state, l10n, user.id, reminder_dao, scheduler_service
+            )
+        else:
+            await state.set_state(ReminderWizard.choosing_time)
+            await message.answer(
+                l10n["ask_time"].format(text=clean_text),
+                reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+            )
+    except Exception as e:
+        logger.error(f"Error parsing forwarded text: {e}")
+        await message.answer(l10n.get("parse_error", "Error parsing text"))
+
+
 @router.message(ReminderWizard.entering_text, F.text)
 @router.message(F.text)
 async def handle_task_text(

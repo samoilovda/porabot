@@ -100,8 +100,13 @@ class SchedulerService:
 
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """
-        APScheduler job target. Opens its own session (no middleware),
+        APScheduler job target.  Opens its own session (no middleware),
         sends the Telegram message, handles recurring reschedule & nagging.
+
+        Session lifecycle:
+        - ``async with self.session_pool()`` auto-commits on clean exit and
+          rolls back on exception.  We must NOT call ``session.commit()``
+          manually inside the block — that causes a double-commit error.
         """
         logger.info(f"Executing reminder job for ID: {reminder_id} (nagging={is_nagging_execution})")
 
@@ -113,11 +118,17 @@ class SchedulerService:
                 reminder = result.scalar_one_or_none()
 
                 if not reminder:
-                    logger.warning(
-                        f"Reminder {reminder_id} not found in DB. Skipping."
+                    logger.warning(f"Reminder {reminder_id} not found in DB. Skipping.")
+                    return
+
+                # FIX: Do not fire for reminders that were already marked done
+                # between the time the nag job was scheduled and now.
+                if reminder.status == "completed":
+                    logger.info(
+                        f"Reminder {reminder_id} already completed — skipping nag execution."
                     )
                     return
-                
+
                 # Fetch user for language preferences
                 user_dao = UserDAO(session)
                 user = await user_dao.get_by_id(reminder.user_id)
@@ -134,6 +145,10 @@ class SchedulerService:
                 )
 
                 # 2. Handle RECURRING
+                # FIX: Do NOT call session.commit() here — the session context
+                # manager commits automatically on clean exit.  A manual commit
+                # here raises 'This transaction is already committed' on the
+                # auto-flush that follows.
                 if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
                     try:
                         start_dt = reminder.execution_time
@@ -149,16 +164,14 @@ class SchedulerService:
                                 f"Rescheduling RECURRING reminder {reminder_id} to {next_run}"
                             )
                             reminder.execution_time = next_run
-                            await session.commit()
+                            # No session.commit() here — CM handles it on exit
                             self.schedule_reminder(
                                 reminder_id,
                                 next_run,
                                 is_nagging=reminder.is_nagging,
                             )
                         else:
-                            logger.info(
-                                f"No next occurrence for reminder {reminder_id}."
-                            )
+                            logger.info(f"No next occurrence for reminder {reminder_id}.")
                     except Exception as e:
                         logger.error(
                             f"Error calculating next run for reminder {reminder_id}: {e}",
@@ -169,9 +182,7 @@ class SchedulerService:
                 if reminder.is_nagging:
                     tz = reminder.execution_time.tzinfo or pytz.UTC
                     next_nag = datetime.now(tz) + timedelta(minutes=5)
-                    logger.info(
-                        f"Scheduling NAGGING for reminder {reminder_id} at {next_nag}"
-                    )
+                    logger.info(f"Scheduling NAGGING for reminder {reminder_id} at {next_nag}")
                     self.scheduler.add_job(
                         execute_reminder_job,
                         "date",

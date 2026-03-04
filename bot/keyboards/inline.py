@@ -5,8 +5,10 @@ import pytz
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.utils.time_ext import format_time
 
-def get_time_selection_keyboard(user_timezone: str, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+
+def get_time_selection_keyboard(user_timezone: str, l10n: dict[str, Any], show_utc_offset: bool = False) -> InlineKeyboardMarkup:
     """
     Keyboard for choosing reminder time.
     If a fixed time-of-day has passed today, it rolls over to tomorrow.
@@ -44,9 +46,10 @@ def get_time_selection_keyboard(user_timezone: str, l10n: dict[str, Any]) -> Inl
             target_time += timedelta(days=1)
 
         callback_val = target_time.isoformat()
+        time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")
         buttons.append(
             InlineKeyboardButton(
-                text=f"{label} ({target_time.strftime('%H:%M')})",
+                text=f"{label} ({time_str})",
                 callback_data=f"time_fixed_{callback_val}",
             )
         )
@@ -159,27 +162,42 @@ def get_snooze_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboar
 
 
 def get_tasks_list_keyboard(tasks, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """Keyboard for task list with per-task delete buttons."""
+    """Keyboard for task list: Done! + Delete per task, Refresh/Close/Completed controls."""
     builder = InlineKeyboardBuilder()
     for task in tasks:
         text_preview = (
-            task.reminder_text[:20] + "..."
-            if len(task.reminder_text) > 20
+            task.reminder_text[:18] + "…"
+            if len(task.reminder_text) > 18
             else task.reminder_text
         )
         builder.row(
             InlineKeyboardButton(
-                text=f"{l10n['btn_delete_prefix']} {text_preview}",
+                text=f"{l10n['btn_done_task_prefix']} {text_preview}",
+                callback_data=f"done_task_{task.id}",
+            ),
+            InlineKeyboardButton(
+                text=l10n["btn_delete"],
                 callback_data=f"del_task_{task.id}",
-            )
+            ),
         )
     builder.row(
         InlineKeyboardButton(text=l10n["btn_refresh"], callback_data="refresh_tasks"),
+        InlineKeyboardButton(text=l10n["btn_completed_tasks"], callback_data="show_completed"),
         InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
     )
     return builder.as_markup()
 
-def get_settings_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+
+def get_completed_tasks_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Simple close keyboard for the completed tasks view."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+    )
+    return builder.as_markup()
+
+
+def get_settings_keyboard(l10n: dict[str, Any], show_utc_offset: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -188,6 +206,13 @@ def get_settings_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text=l10n["btn_change_lang"], callback_data="settings_change_lang"
         ),
+    )
+    
+    utc_btn_text = l10n["btn_toggle_utc_on"] if show_utc_offset else l10n["btn_toggle_utc_off"]
+    builder.row(
+        InlineKeyboardButton(
+            text=utc_btn_text, callback_data="settings_toggle_utc"
+        )
     )
     return builder.as_markup()
 

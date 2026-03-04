@@ -7,6 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.database.models import User
 from bot.database.dao.reminder import ReminderDAO
+from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,7 @@ async def process_daily_briefs(bot: Bot, session_pool) -> None:
                     lines = ["🌅 **Доброе утро! План на сегодня:**\n"]
                     for t in tasks:
                         # FIX CRIT-5: convert stored UTC to user's local TZ for display
-                        dt_display = t.execution_time
-                        try:
-                            if dt_display.tzinfo is None:
-                                dt_display = pytz.UTC.localize(dt_display)
-                            dt_display = dt_display.astimezone(tz)
-                        except Exception:
-                            pass
-                        time_str = dt_display.strftime('%H:%M')
+                        time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
                         lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
                     try:
                         await bot.send_message(user.id, "\n".join(lines), parse_mode="Markdown")
@@ -62,23 +56,11 @@ async def process_daily_briefs(bot: Bot, session_pool) -> None:
                     ]
                     for t in completed:
                         # FIX CRIT-5: display in user-local time
-                        dt_c = t.execution_time
-                        try:
-                            if dt_c.tzinfo is None:
-                                dt_c = pytz.UTC.localize(dt_c)
-                            dt_c = dt_c.astimezone(tz)
-                        except Exception:
-                            pass
-                        lines.append(f"✅ ~{t.reminder_text}~ ({dt_c.strftime('%H:%M')})")
+                        time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
+                        lines.append(f"✅ ~{t.reminder_text}~ ({time_str})")
                     for t in pending:
-                        dt_p = t.execution_time
-                        try:
-                            if dt_p.tzinfo is None:
-                                dt_p = pytz.UTC.localize(dt_p)
-                            dt_p = dt_p.astimezone(tz)
-                        except Exception:
-                            pass
-                        lines.append(f"❌ {t.reminder_text} ({dt_p.strftime('%H:%M')})")
+                        time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
+                        lines.append(f"❌ {t.reminder_text} ({time_str})")
 
                     try:
                         await bot.send_message(user.id, "\n".join(lines), parse_mode="Markdown")

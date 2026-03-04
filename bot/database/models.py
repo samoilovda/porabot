@@ -17,6 +17,7 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String, nullable=True)
     timezone: Mapped[str] = mapped_column(String, default="UTC")
     language: Mapped[str | None] = mapped_column(String, nullable=True)
+    show_utc_offset: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), server_default=func.now()
     )

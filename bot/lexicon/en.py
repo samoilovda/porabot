@@ -23,6 +23,8 @@ EN: dict[str, Any] = {
     "choose_tz": "Choose your timezone:",
     "tz_manual_prompt": "Send me your city (e.g., 'Europe/London').",
     "tz_success": "✅ Timezone: `{tz}`",
+    "btn_toggle_utc_off": "🕒 Show UTC offset: OFF",
+    "btn_toggle_utc_on": "🕒 Show UTC offset: ON",
 
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",
@@ -65,5 +67,26 @@ EN: dict[str, Any] = {
     # Reminders / Scheduler
     "reminder_prefix": "🔔 **IT'S TIME!**\n",
     "btn_done": "✅ Done",
+    "btn_snooze": "⏰ Snooze",
     "task_done_reply": "✅ **Good job. I'll leave you alone.**",
+    "already_done": "Already done ✅",
+    "snoozed_until": "⏰ Snoozed until {time}",
+
+    # Snooze options
+    "snooze_15m": "+15m",
+    "snooze_30m": "+30m",
+    "snooze_1h": "+1h",
+    "snooze_2h": "+2h",
+    "snooze_1d": "+1 day",
+    "snooze_morning": "🌅 Morning",
+    "snooze_day": "☀️ Day",
+    "snooze_evening": "🌙 Evening",
+    "snooze_night": "🌌 Night",
+    "snooze_custom": "⌨️ Custom",
+
+    # Completed tasks section
+    "btn_completed_tasks": "📜 Completed",
+    "no_completed_tasks": "🧨 No completed tasks yet. Let's change that!",
+    "completed_header": "🏆 **Completed tasks:**\n",
+    "btn_done_task_prefix": "✅ Done:",
 }

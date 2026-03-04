@@ -21,7 +21,22 @@ logger = logging.getLogger(__name__)
 async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
     await state.clear()  # FIX EDGE-1: reset FSM if user navigates away mid-wizard
     text = l10n["settings_text"].format(timezone=user.timezone)
-    await message.answer(text, reply_markup=get_settings_keyboard(l10n), parse_mode="Markdown")
+    await message.answer(text, reply_markup=get_settings_keyboard(l10n, user.show_utc_offset), parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "settings_toggle_utc")
+async def callback_toggle_utc(
+    callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    new_val = not user.show_utc_offset
+    await user_dao.update_show_utc_offset(user.id, new_val)
+    
+    # Update local state for immediate render
+    text = l10n["settings_text"].format(timezone=user.timezone)
+    await callback.message.edit_text(
+        text, reply_markup=get_settings_keyboard(l10n, new_val), parse_mode="Markdown"
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "settings_change_tz")

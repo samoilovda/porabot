@@ -18,6 +18,7 @@ from aiogram.fsm.context import FSMContext
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User, Reminder
 from bot.keyboards.inline import (
+    get_completed_tasks_keyboard,
     get_edit_keyboard,
     get_task_done_keyboard,
     get_snooze_keyboard,
@@ -26,6 +27,7 @@ from bot.keyboards.inline import (
 )
 from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.parser import InputParser
+from bot.utils.time_ext import format_time
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from typing import Any
@@ -43,9 +45,10 @@ logger = logging.getLogger(__name__)
 @router.message(F.text.in_(["➕ Новая задача", "➕ New Task"]))
 async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.set_state(ReminderWizard.entering_text)
+    # Keep the reply keyboard visible so user can still tap "📅 My Tasks"/"⚙️ Settings"
+    # while composing — do NOT send ReplyKeyboardRemove here.
     await message.answer(
         l10n["enter_task"],
-        reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown",
     )
 
@@ -66,16 +69,7 @@ async def btn_my_tasks(
 
     text_lines = [l10n["tasks_header"]]
     for task in tasks:
-        dt_display = task.execution_time
-        try:
-            if user.timezone:
-                user_tz = pytz.timezone(user.timezone)
-                if dt_display.tzinfo:
-                    dt_display = dt_display.astimezone(user_tz)
-        except Exception:
-            pass
-
-        dt_str = dt_display.strftime("%d.%m %H:%M")
+        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         recur_icon = "🔁 " if task.is_recurring else ""
         nag_icon = "🔥 " if task.is_nagging else ""
         text_lines.append(f"▫️ `{dt_str}`: {recur_icon}{nag_icon}{task.reminder_text}")
@@ -139,13 +133,13 @@ async def handle_forwarded_task(
         if parsed_dt:
             await state.update_data(execution_time=parsed_dt.isoformat())
             await _save_and_show_edit(
-                message, state, l10n, user.id, reminder_dao, scheduler_service
+                message, state, l10n, user, reminder_dao, scheduler_service
             )
         else:
             await state.set_state(ReminderWizard.choosing_time)
             await message.answer(
                 l10n["ask_time"].format(text=clean_text),
-                reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+                reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
             )
     except Exception as e:
         logger.error(f"Error parsing forwarded text: {e}")
@@ -176,13 +170,13 @@ async def handle_task_text(
         if parsed_dt:
             await state.update_data(execution_time=parsed_dt.isoformat())
             await _save_and_show_edit(
-                message, state, l10n, user.id, reminder_dao, scheduler_service
+                message, state, l10n, user, reminder_dao, scheduler_service
             )
         else:
             await state.set_state(ReminderWizard.choosing_time)
             await message.answer(
                 l10n["ask_time"].format(text=clean_text),
-                reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+                reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
             )
     except Exception as e:
         logger.error(f"Error parsing text: {e}")
@@ -221,7 +215,7 @@ async def callback_time_selected(
         await state.update_data(execution_time=execution_time.isoformat())
         await callback.message.delete()
         await _save_and_show_edit(
-            callback.message, state, l10n, user.id, reminder_dao, scheduler_service
+            callback.message, state, l10n, user, reminder_dao, scheduler_service
         )
 
 # Global dict to track active sleep tasks by message_id
@@ -244,7 +238,7 @@ async def _save_and_show_edit(
     source_message: Message,
     state: FSMContext,
     l10n: dict[str, Any],
-    user_id: int,
+    user: User,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService
 ) -> None:
@@ -264,7 +258,7 @@ async def _save_and_show_edit(
             scheduler_service.remove_reminder_job(new_reminder.id)
         else:
             new_reminder = await reminder_dao.create_reminder(
-                user_id=user_id,
+                user_id=user.id,
                 text=text,
                 execution_time=execution_time,
                 is_recurring=False,
@@ -274,7 +268,7 @@ async def _save_and_show_edit(
     else:
         # 1. Immediate save to DB
         new_reminder = await reminder_dao.create_reminder(
-            user_id=user_id,
+            user_id=user.id,
             text=text,
             execution_time=execution_time,
             is_recurring=False,
@@ -290,7 +284,7 @@ async def _save_and_show_edit(
     await state.clear()
 
     # 3. Send confirmation with Edit keyboard
-    date_str = execution_time.strftime("%d.%m.%Y %H:%M")
+    date_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
     preview = l10n["preview"].format(text=new_reminder.reminder_text, time=date_str)
     
     rrule_text = l10n["repeat_none"]
@@ -475,7 +469,7 @@ async def callback_refresh_tasks(
 
     text_lines = [l10n["tasks_header"]]
     for task in tasks:
-        dt_str = task.execution_time.strftime("%d.%m %H:%M")
+        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         recur_icon = "🔁 " if task.is_recurring else ""
         nag_icon = "🔥 " if task.is_nagging else ""
         text_lines.append(
@@ -488,6 +482,31 @@ async def callback_refresh_tasks(
         reply_markup=get_tasks_list_keyboard(tasks, l10n),
         parse_mode="Markdown",
     )
+
+
+@router.callback_query(F.data == "show_completed")
+async def callback_show_completed(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    """Show completed tasks list in-place (replaces the active tasks message)."""
+    completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
+
+    if not completed:
+        await callback.answer(l10n["no_completed_tasks"], show_alert=True)
+        return
+
+    text_lines = [l10n["completed_header"]]
+
+    for task in completed:
+        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+        text_lines.append(f"✅ `{dt_str}`: ~{task.reminder_text}~")
+
+    await callback.message.edit_text(
+        "\n".join(text_lines),
+        reply_markup=get_completed_tasks_keyboard(l10n),
+        parse_mode="Markdown",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("done_task_"))
@@ -505,15 +524,15 @@ async def callback_task_done(
         await callback.answer(l10n.get("already_done", "Already done ✅"))
         return
 
-    # Soft delete
+    # Mark done in DB and remove scheduler jobs
     await reminder_dao.mark_done(reminder_id)
-
-    # Clean up nagging job
+    scheduler_service.remove_reminder_job(reminder_id)
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:
         await callback.message.edit_text(
             f"{callback.message.text}\n\n{l10n['task_done_reply']}",
+            reply_markup=None,
             parse_mode="Markdown",
         )
     except TelegramBadRequest:
@@ -600,7 +619,7 @@ async def callback_snooze_act(
     scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
 
     # 3. UI — display in user's local time
-    friendly_time = new_time.strftime("%d.%m %H:%M")
+    friendly_time = format_time(new_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     await callback.message.edit_text(
         f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}",
         reply_markup=None,

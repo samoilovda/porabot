@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.database.models import User
 from bot.database.dao.reminder import ReminderDAO
 from bot.services.scheduler import SchedulerService
+from bot.utils.time_ext import format_time
 
 router = Router(name="habits")
 
@@ -66,7 +67,7 @@ async def callback_habit_create(
     # Schedule with tz-aware datetime
     scheduler_service.schedule_reminder(reminder.id, execution_time)
     
-    time_str = execution_time.strftime('%H:%M')
+    time_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%H:%M")
     await callback.message.edit_text(
         f"✅ Привычка добавлена!\nНапомню в `{time_str}`: {text}",
         parse_mode="Markdown",

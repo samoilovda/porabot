@@ -23,6 +23,8 @@ RU: dict[str, Any] = {
     "choose_tz": "Выбери свой часовой пояс:",
     "tz_manual_prompt": "Напиши мне свой город (например 'Europe/London').",
     "tz_success": "✅ Часовой пояс: `{tz}`",
+    "btn_toggle_utc_off": "🕒 Показывать смещение UTC: ВЫКЛ",
+    "btn_toggle_utc_on": "🕒 Показывать смещение UTC: ВКЛ",
 
     # Tasks List
     "no_tasks": "🎉 У тебя нет активных задач. Отдыхай!",
@@ -65,5 +67,26 @@ RU: dict[str, Any] = {
     # Reminders / Scheduler
     "reminder_prefix": "🔔 **ПОРА!**\n",
     "btn_done": "✅ Сделано",
+    "btn_snooze": "⏰ Отложить",
     "task_done_reply": "✅ **Красавчик. Отстал.**",
+    "already_done": "Уже выполнено ✅",
+    "snoozed_until": "⏰ Отложено до {time}",
+
+    # Snooze options
+    "snooze_15m": "+15м",
+    "snooze_30m": "+30м",
+    "snooze_1h": "+1ч",
+    "snooze_2h": "+2ч",
+    "snooze_1d": "+1 день",
+    "snooze_morning": "🌅 Утро",
+    "snooze_day": "☀️ День",
+    "snooze_evening": "🌙 Вечер",
+    "snooze_night": "🌌 Ночь",
+    "snooze_custom": "⌨️ Свой вариант",
+
+    # Completed tasks section
+    "btn_completed_tasks": "📜 Выполненные",
+    "no_completed_tasks": "🧨 Выполненных задач еще нет. Давай исправлять это!",
+    "completed_header": "🏆 **Выполненные задачи:**\n",
+    "btn_done_task_prefix": "✅ Готово:",
 }

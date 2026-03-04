@@ -43,3 +43,10 @@ class UserDAO(BaseDAO[User]):
         if user:
             user.language = language
             await self.session.flush()
+
+    async def update_show_utc_offset(self, user_id: int, show: bool) -> None:
+        """Update whether to show UTC offset in formatted times."""
+        user = await self.get_by_id(user_id)
+        if user:
+            user.show_utc_offset = show
+            await self.session.flush()

@@ -6,7 +6,7 @@ Stops propagation if the user is not allowed.
 """
 
 import logging
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, User as TgUser, Message, CallbackQuery
@@ -31,7 +31,7 @@ class WhitelistMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        tg_user: TgUser | None = data.get("event_from_user")
+        tg_user: Optional[TgUser] = data.get("event_from_user")
 
         if not tg_user:
             return await handler(event, data)

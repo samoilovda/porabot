@@ -1,6 +1,6 @@
 """Lexicon module for i18n support."""
 
-from typing import Any
+from typing import Any, Optional
 
 from bot.lexicon.en import EN
 from bot.lexicon.ru import RU
@@ -13,7 +13,7 @@ _LEXICONS: dict[str, dict[str, Any]] = {
     "en": EN,
 }
 
-def get_l10n(language_code: str | None) -> dict[str, Any]:
+def get_l10n(language_code: Optional[str]) -> dict[str, Any]:
     """Retrieve the translation dictionary for a given language code."""
     if not language_code:
         return _LEXICONS[DEFAULT_LANG]

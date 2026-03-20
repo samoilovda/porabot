@@ -10,7 +10,7 @@ On every incoming update:
 """
 
 import logging
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, User as TgUser
@@ -46,7 +46,7 @@ class DatabaseMiddleware(BaseMiddleware):
             data["reminder_dao"] = reminder_dao
 
             # --- Resolve domain User ---
-            tg_user: TgUser | None = data.get("event_from_user")
+            tg_user: Optional[TgUser] = data.get("event_from_user")
             l10n = get_l10n(None)  # Default fallback
             
             if tg_user:

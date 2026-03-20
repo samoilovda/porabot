@@ -67,15 +67,17 @@ class SchedulerService:
                 execute_reminder_job,
                 "date",
                 run_date=run_date,
-                args=[reminder_id, False],
+                args=[reminder_id, False],  # is_nagging_execution=False for the initial fire;
+                                             # nagging follow-ups are chained inside _execute_reminder
                 id=str(reminder_id),
                 replace_existing=True,
             )
-            logger.info(f"Scheduled reminder {reminder_id} for {run_date}")
+            logger.info(f"Scheduled reminder {reminder_id} for {run_date} (nagging={is_nagging})")
         except Exception as e:
             logger.error(
                 f"Failed to schedule reminder {reminder_id}: {e}", exc_info=True
             )
+
 
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job + any nagging job for a reminder."""

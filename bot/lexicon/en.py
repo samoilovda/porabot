@@ -32,7 +32,6 @@ EN: dict[str, Any] = {
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
     "btn_close": "❌ Close",
-    "task_deleted": "✅ Task deleted.",
 
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",
@@ -53,7 +52,7 @@ EN: dict[str, Any] = {
     "repeat_week": "Weekly",
 
     "main_menu_fallback": "Main menu",
-    "task_deleted": "❌ Task deleted.",
+    "task_deleted": "❌ Task deleted.",  # single definition — canonical value
     "what_next": "What next?",
 
     # Time Selection Keyboard

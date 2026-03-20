@@ -6,7 +6,6 @@ from typing import Optional, Sequence
 import pytz
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.dao.base import BaseDAO
 from bot.database.models import Reminder

@@ -32,7 +32,6 @@ RU: dict[str, Any] = {
     "btn_delete_prefix": "🗑 Удалить:",
     "btn_refresh": "🔄 Обновить",
     "btn_close": "❌ Закрыть",
-    "task_deleted": "✅ Задача удалена.",
 
     # Wizard
     "enter_task": "Напиши, о чем напомнить.\nМожно сразу с временем: *\"Позвонить маме завтра в 18:00\"*.",
@@ -53,7 +52,7 @@ RU: dict[str, Any] = {
     "repeat_week": "Неделя",
     
     "main_menu_fallback": "Главное меню",
-    "task_deleted": "❌ Задача удалена.",
+    "task_deleted": "❌ Задача удалена.",  # single definition — canonical value
     "what_next": "Что дальше?",
 
     # Time Selection Keyboard

@@ -2,8 +2,6 @@
 
 from typing import Optional
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.dao.base import BaseDAO
 from bot.database.models import User

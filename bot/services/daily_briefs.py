@@ -67,24 +67,22 @@ async def process_daily_briefs(bot: Bot, session_pool) -> None:
                     except Exception as e:
                         logger.error(f"Failed to send evening brief to {user.id}: {e}")
 
-_bot = None
-_session_pool = None
 
-async def _run_daily_briefs_job() -> None:
-    global _bot, _session_pool
-    if _bot and _session_pool:
-        await process_daily_briefs(_bot, _session_pool)
-    else:
-        logger.error("Cannot run daily briefs: globals not initialized.")
+async def _run_daily_briefs_job(bot: Bot, session_pool) -> None:
+    await process_daily_briefs(bot, session_pool)
 
 def setup_daily_briefs(scheduler: AsyncIOScheduler, bot: Bot, session_pool) -> None:
-    """Register the cron job to run at the start of every hour."""
-    global _bot, _session_pool
-    _bot = bot
-    _session_pool = session_pool
-    
+    """Register the cron job to run at the start of every hour.
+
+    BUG-6 FIX: bot and session_pool are passed via functools.partial instead of
+    module-level globals — eliminates the silent-failure race where the cron job
+    could fire before the globals were initialised.
+    """
+    import functools
+    job_func = functools.partial(_run_daily_briefs_job, bot, session_pool)
+
     scheduler.add_job(
-        _run_daily_briefs_job,
+        job_func,
         "cron",
         minute=0,  # Run exactly at XX:00
         id="hourly_daily_briefs",

@@ -1,4 +1,3 @@
-from typing import Any
 from datetime import datetime, timedelta
 import pytz
 from aiogram import Router, F

@@ -9,7 +9,6 @@ from aiogram.fsm.context import FSMContext
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, get_language_selection_keyboard
-from bot.keyboards.reply import get_main_menu_keyboard
 from aiogram.types import Message
 from typing import Any
 

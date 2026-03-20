@@ -12,15 +12,14 @@ from datetime import datetime, timedelta
 import pytz
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import User, Reminder
+from bot.database.models import User
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_edit_keyboard,
-    get_task_done_keyboard,
     get_snooze_keyboard,
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
@@ -345,7 +344,10 @@ async def callback_edit_edit(
 
 @router.callback_query(F.data.startswith("edit_toggle_repeat_"))
 async def callback_edit_repeat(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete_timeout(callback.message)
     reminder_id = int(callback.data.split("edit_toggle_repeat_")[1])
@@ -359,7 +361,7 @@ async def callback_edit_repeat(
         l10n["repeat_weekdays"]: (True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
         l10n["repeat_week"]: (True, "FREQ=WEEKLY")
     }
-    
+
     # Reverse lookup current state
     current_key = l10n["repeat_none"]
     for k, v in options.items():
@@ -374,8 +376,17 @@ async def callback_edit_repeat(
 
     reminder.is_recurring = is_rec
     reminder.rrule_string = rrule
-    # Uses session.flush(), middleware will commit
-    
+    # Flush so the DB row is updated before rescheduling (middleware will commit)
+    await reminder_dao.session.flush()
+
+    # BUG-3/4 FIX: keep the scheduler job in sync with the updated recurrence flag.
+    # Without this, the old one-shot 'date' job stays registered even after the user
+    # enables repeat — meaning the task fires once and never recurs.
+    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.schedule_reminder(
+        reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging
+    )
+
     keyboard = get_edit_keyboard(
         reminder.id, l10n, is_rec, reminder.is_nagging, next_key
     )

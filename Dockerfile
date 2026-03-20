@@ -23,3 +23,5 @@ RUN mkdir -p /app/data
 
 # Run the application
 CMD ["python", "-m", "bot"]
+
+# And nothing else matters

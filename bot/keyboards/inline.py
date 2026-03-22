@@ -120,14 +120,37 @@ def get_timezone_keyboard() -> InlineKeyboardMarkup:
 
 def get_task_done_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    
+    # Row 1: Primary action
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_done"], callback_data=f"done_task_{reminder_id}"
-        ),
-        InlineKeyboardButton(
-            text=l10n["btn_snooze"], callback_data=f"snooze_show_{reminder_id}"
-        ),
+        )
     )
+    
+    # Row 2: Short intervals
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
+        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
+        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
+        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
+    )
+    
+    # Row 3: Time of day (Emojis only in scenery style)
+    # 🌅=Morning, 🏙️=Day, 🌇=Evening, 🌃=Night
+    builder.row(
+        InlineKeyboardButton(text="🌅", callback_data=f"snooze_act_{reminder_id}_morning"),
+        InlineKeyboardButton(text="🏙️", callback_data=f"snooze_act_{reminder_id}_day"),
+        InlineKeyboardButton(text="🌇", callback_data=f"snooze_act_{reminder_id}_evening"),
+        InlineKeyboardButton(text="🌃", callback_data=f"snooze_act_{reminder_id}_night"),
+    )
+    
+    # Row 4: Long intervals and custom
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
+        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
+    )
+    
     return builder.as_markup()
 
 

@@ -138,9 +138,7 @@ class SchedulerService:
                 l10n = get_l10n(lang_code)
 
                 # 1. Send the message
-                keyboard = None
-                if reminder.is_nagging:
-                    keyboard = get_task_done_keyboard(reminder.id, l10n)
+                keyboard = get_task_done_keyboard(reminder.id, l10n)
 
                 await self._send_telegram_message(
                     reminder.user_id, reminder.reminder_text, l10n, reply_markup=keyboard

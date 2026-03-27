@@ -62,6 +62,11 @@ def get_time_selection_keyboard(user_timezone: str, l10n: dict[str, Any], show_u
         InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data="time_tomorrow"),
         InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"),
     )
+    
+    # Row 5: Cancel option (FIXED Phase 1 - FSM management)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_cancel", "❌ Отмена"), callback_data="cancel_wizard")
+    )
 
     return builder.as_markup()
 
@@ -92,6 +97,11 @@ def get_edit_keyboard(
 
     builder.row(
         InlineKeyboardButton(text=l10n["btn_delete"], callback_data=f"edit_delete_{reminder_id}")
+    )
+    
+    # Add cancel button (FIXED Phase 1 - FSM management)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_cancel", "❌ Отмена"), callback_data="cancel_wizard")
     )
 
     return builder.as_markup()

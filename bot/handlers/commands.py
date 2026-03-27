@@ -1,4 +1,4 @@
-"""Handlers for base commands: /start, /help."""
+"""Handlers for base commands: /start, /help, /cancel."""
 
 import logging
 
@@ -52,4 +52,78 @@ async def callback_set_lang(
     # Show main menu in the new language
     text = new_l10n["cmd_start"].format(name=callback.from_user.first_name)
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(new_l10n))
+    await callback.answer()
+
+
+# =============================================================================
+# /cancel command handler (FIXED Phase 1 - FSM management)
+# =============================================================================
+
+@router.message(F.text == "/cancel")
+async def cmd_cancel(
+    message: Message, 
+    state: FSMContext, 
+    l10n: dict[str, Any]
+) -> None:
+    """
+    Cancel current reminder creation wizard.
+    
+    This handler clears the FSM state when user wants to abort creating a new reminder.
+    Returns user to main menu.
+    
+    Args:
+        message: Incoming Telegram message with /cancel command
+        state: FSMContext for state management
+        l10n: Localization dictionary
+        
+    Returns:
+        None
+    
+    Side Effects:
+      Clears FSM state, sends confirmation and shows main menu
+      
+    BUG FIX APPLIED (Phase 1):
+      Previously didn't have explicit /cancel handler. Users could get stuck in FSM states
+      with no escape route except restarting the bot or using /start command.
+      
+    EXAMPLE USAGE:
+        User types "/cancel" while in ReminderWizard.entering_text state
+        → State cleared, main menu shown
+    """
+    await state.clear()
+    
+    text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
+    await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+
+
+@router.callback_query(F.data == "cancel_wizard")
+async def callback_cancel(
+    callback: CallbackQuery, 
+    state: FSMContext, 
+    l10n: dict[str, Any]
+) -> None:
+    """
+    Cancel reminder creation from inline keyboard.
+    
+    Alternative way to cancel via button press instead of /cancel command.
+    
+    Args:
+        callback: CallbackQuery with cancel_wizard data
+        state: FSMContext for state management
+        l10n: Localization dictionary
+        
+    Returns:
+        None
+    
+    Side Effects:
+      Clears FSM state, sends confirmation and shows main menu
+      
+    EXAMPLE USAGE:
+        User presses "❌ Cancel" button on inline keyboard
+        → State cleared, main menu shown
+    """
+    await state.clear()
+    
+    text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
+    await callback.message.edit_text(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()

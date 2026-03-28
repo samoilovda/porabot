@@ -217,9 +217,9 @@ class ReminderDAO(BaseDAO[Reminder]):
             if not reminder.is_recurring:
                 reminder.status = "completed"
             
-            # FIX EDGE-5: Use timezone-aware datetime for consistency
-            # pytz.UTC is clearer than deprecated datetime.utcnow()
-            reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
+            # FIX EDGE-5: Store timezone-aware datetime for consistency
+            # Using naive datetime can cause issues when comparing with execution_time
+            reminder.completed_at = datetime.now(pytz.UTC)
             
             await self.session.flush()
 

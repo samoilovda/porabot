@@ -334,13 +334,15 @@ class InputParser:
             >>> result = parser._parse_sync("вечером", "Europe/Moscow")
             >>> print(result.parsed_datetime)  # datetime object or None
         """
-        logger.info(f"Parser: Starting parse for text='{text}' (timezone={timezone})")
+        # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Parser: Starting parse for text='{text}' (timezone={timezone})")
 
         # --- Stage 1: Heuristic substitution (lowercased working copy) ---
         normalized_text: str = self._apply_heuristics(text)
-        logger.info(
-            f"Parser: After heuristics '{text}' → '{normalized_text}'"
-        )
+        # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Parser: After heuristics '{text}' → '{normalized_text}'")
 
         # --- Stage 2: Natasha: locate date spans for clean-text extraction ---
         # DatesExtractor is NOT reentrant — serialise with the module lock.
@@ -350,9 +352,9 @@ class InputParser:
             with _NATASHA_LOCK:  # Thread-safe access to Natasha
                 natasha_matches = list(_dates_extractor(normalized_text))
 
-            logger.info(
-                f"Parser: Natasha found {len(natasha_matches)} matches in '{normalized_text}'"
-            )
+            # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Parser: Natasha found {len(natasha_matches)} matches in '{normalized_text}'")
 
             if natasha_matches:
                 # Strip in reverse order so earlier indices stay valid.
@@ -381,9 +383,9 @@ class InputParser:
             settings=settings,
         )
 
-        logger.info(
-            f"Parser: dateparser returned {len(dp_matches) if dp_matches else 0} matches for '{normalized_text}'"
-        )
+        # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Parser: dateparser returned {len(dp_matches) if dp_matches else 0} matches for '{normalized_text}'")
 
         parsed_datetime: Optional[datetime] = None
 
@@ -391,9 +393,9 @@ class InputParser:
             matched_substring, dt_obj = dp_matches[0]  # Take first match
             parsed_datetime = dt_obj
             
-            logger.info(
-                f"Parser: dateparser matched '{matched_substring}' → {dt_obj}"
-            )
+            # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Parser: dateparser matched '{matched_substring}' → {dt_obj}")
             
             # Strip the dateparser match if Natasha didn't already remove it.
             if matched_substring in clean_text:
@@ -435,7 +437,9 @@ class InputParser:
         # --- Stage 4b: Regex fallback for duration-based expressions (через X минут/часов) ---
         # Handles cases like "через 15 минут", "через 2 часа" that dateparser might miss
         elif not parsed_datetime and re.search(r"через\s+\d+", normalized_text):
-            logger.info("Parser: Trying duration-based regex fallback...")
+            # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Parser: Trying duration-based regex fallback...")
             
             duration_match = re.search(
                 r"через\s+(\d+)\s*(минут|часов?|дней?)",
@@ -459,9 +463,9 @@ class InputParser:
                 
                 parsed_datetime = new_time
                 
-                logger.info(
-                    f"Parser: Duration fallback matched '{duration_match.group(0)}' → {parsed_datetime}"
-                )
+                # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Parser: Duration fallback matched '{duration_match.group(0)}' → {parsed_datetime}")
                 
                 # Remove the time expression from clean_text
                 if duration_match.group(0) in clean_text:
@@ -469,7 +473,9 @@ class InputParser:
 
         # --- Stage 4c: Regex fallback for "в X часов" pattern (e.g., "в 23 часа") ---
         elif not parsed_datetime and re.search(r"в\s+\d{1,2}\s*часов?", normalized_text):
-            logger.info("Parser: Trying 'в X часов' regex fallback...")
+            # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Parser: Trying 'в X часов' regex fallback...")
             
             hour_match = re.search(
                 r"в\s+(\d{1,2})\s*(утра|послеобеденно|вечера|ночи|часов?)?",
@@ -486,9 +492,9 @@ class InputParser:
                 
                 if result_dt:
                     parsed_datetime = result_dt
-                    logger.info(
-                        f"Parser: 'в X часов' regex fallback matched '{hour_match.group(0)}' → {parsed_datetime}"
-                    )
+                    # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Parser: 'в X часов' regex fallback matched '{hour_match.group(0)}' → {parsed_datetime}")
                     
                     # Remove the time expression from clean_text
                     match_str = hour_match.group(0)
@@ -508,9 +514,9 @@ class InputParser:
         # Normalize whitespace (remove extra spaces)
         clean_text = " ".join(clean_text.split())
 
-        logger.info(
-            f"Parser: Final result → clean_text='{clean_text}', parsed_datetime={parsed_datetime}"
-        )
+        # OPTIMIZATION: Only log at DEBUG level to reduce verbosity in production
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Parser: Final result → clean_text='{clean_text}', parsed_datetime={parsed_datetime}")
 
         return ParsedInput(clean_text=clean_text, parsed_datetime=parsed_datetime)
 

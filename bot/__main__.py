@@ -57,10 +57,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 # Configuration loaded from .env file via pydantic-settings
-from bot.config import config
+from bot.config import config, validate_config
 
-# Database utilities for creating engine and session factory
-from bot.database.engine import create_engine, create_session_maker, init_db, dispose_engine, close_session_pool
+# Validate configuration at startup (BUG FIX APPLIED)
+validate_config()
 
 # Middleware classes that run before every handler
 from bot.middlewares.database import DatabaseMiddleware

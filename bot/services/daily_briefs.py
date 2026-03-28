@@ -7,6 +7,10 @@ PURPOSE:
   - 🌅 MORNING BRIEF (09:00): Shows today's pending tasks
   - 🌙 EVENING BRIEF (23:00): Shows completed + remaining tasks for the day
 
+OPTIMIZATION APPLIED:
+  ✅ Queries only active users (those with pending/completed tasks) instead of ALL users.
+     This changes complexity from O(n_all_users) to O(n_active_users).
+  
 ARCHITECTURE NOTE:
   This module uses a "global state" pattern where bot and session_pool are
   stored in global variables. While not ideal for production apps, this works
@@ -38,6 +42,7 @@ from sqlalchemy import select
 
 # Import our DAO layer for database access
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.models import Reminder  # noqa: F401
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -99,8 +104,13 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
         async with session_pool_factory() as session:
             reminder_dao = ReminderDAO(session)
             
-            # Query all users from database
-            result = await session.execute(select(User))
+            # OPTIMIZATION: Query only active users (those with pending/completed tasks)
+            # instead of ALL users. This changes complexity from O(n_all_users) to O(n_active_users).
+            result = await session.execute(
+                select(User)
+                .join(Reminder)  # Join reminders table
+                .where(Reminder.status.in_(['pending', 'completed']))  # Only active tasks
+            )
             users = result.scalars().all()
 
             for user in users:
@@ -210,6 +220,9 @@ async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
     It processes morning (09:00) and evening (23:00) briefs based on each user's
     local timezone.
     
+    OPTIMIZATION: Queries only active users (those with pending/completed tasks)
+    instead of ALL users. This changes complexity from O(n_all_users) to O(n_active_users).
+    
     Args:
         bot: Telegram Bot instance for sending messages
         session_pool_factory: Callable that returns async session factory
@@ -226,8 +239,12 @@ async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
         async with session_pool_factory() as session:
             reminder_dao = ReminderDAO(session)
             
-            # Get all users from database
-            result = await session.execute(select(User))
+            # OPTIMIZATION: Query only active users (those with pending/completed tasks)
+            result = await session.execute(
+                select(User)
+                .join(Reminder)  # Join reminders table
+                .where(Reminder.status.in_(['pending', 'completed']))  # Only active tasks
+            )
             users = result.scalars().all()
 
             for user in users:

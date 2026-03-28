@@ -78,7 +78,7 @@ USAGE:
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 # Import Base from engine module (defines table metadata)
@@ -119,6 +119,11 @@ class User(Base):
     """
 
     __tablename__ = "users"
+    
+    __table_args__ = (
+        Index('idx_users_timezone', 'timezone'),      # For timezone-based queries
+        Index('idx_users_language', 'language'),      # For language filtering
+    )
 
     # Telegram user ID - NOT auto-incremented, must be set from update!
     id: Mapped[int] = mapped_column(
@@ -257,6 +262,12 @@ class Reminder(Base):
     """
 
     __tablename__ = "reminders"
+    
+    __table_args__ = (
+        Index('idx_reminders_user_id', 'user_id'),           # For user-specific queries
+        Index('idx_reminders_execution_time', 'execution_time'),  # For time-based filtering
+        Index('idx_reminders_status', 'status'),              # For status filtering (pending/completed)
+    )
 
     # Internal task ID - auto-incremented (NOT Telegram user ID!)
     id: Mapped[int] = mapped_column(

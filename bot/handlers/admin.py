@@ -23,7 +23,12 @@ async def cmd_debug(
 ) -> None:
     """Admin-only command to show system status."""
     if message.from_user.id != config.ADMIN_ID:
-        return  # Silently ignore or send permission error
+        # SECURITY FIX: Log unauthorized access attempts for audit trail
+        logger.warning(
+            f"Unauthorized /debug attempt from user {message.from_user.id} "
+            f"({message.from_user.full_name})"
+        )
+        return  # Silently ignore to avoid revealing admin commands exist
 
     logger.info(f"Admin {message.from_user.id} requested debug summary")
 

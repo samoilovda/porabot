@@ -198,6 +198,9 @@ async def handle_forwarded_task(
     Extracts text from forwarded message and attempts to parse it as a reminder.
     Adds attribution ("Forwarded from X") if the forward source is known.
     
+    SECURITY FIX APPLIED:
+      Added input validation for text length to prevent Telegram API errors.
+    
     Args:
         message: Forwarded Telegram message
         state: FSMContext for state management
@@ -246,6 +249,17 @@ async def handle_forwarded_task(
 
     full_text = f"{prefix}{text}".strip()
 
+    # SECURITY FIX: Validate input length before processing
+    MAX_INPUT_LENGTH = 3000
+    if len(full_text) > MAX_INPUT_LENGTH:
+        await message.answer(
+            l10n.get("text_too_long", "❌ Text too long.").format(
+                length=len(full_text),
+                max_length=MAX_INPUT_LENGTH
+            )
+        )
+        return
+
     try:
         # Parse the forwarded text for time expression
         result = await parser.parse(full_text, user.timezone)
@@ -276,8 +290,12 @@ async def handle_forwarded_task(
                     user.show_utc_offset
                 ),
             )
+    except ValueError as ve:
+        # Validation error from DAO (e.g., text too long)
+        logger.warning(f"Validation error for user {user.id}: {ve}")
+        await message.answer(str(ve))
     except Exception as e:
-        logger.error(f"Error parsing forwarded text: {e}")
+        logger.error(f"Error parsing forwarded text: {e}", exc_info=True)
         await message.answer(l10n.get("parse_error", "Error parsing text"))
 
 
@@ -296,6 +314,9 @@ async def handle_task_text(
     
     This is the catch-all handler for any text message. It filters out menu
     button texts and attempts to parse them as reminders.
+    
+    SECURITY FIX APPLIED:
+      Added input validation for text length to prevent Telegram API errors.
     
     Args:
         message: Incoming Telegram message
@@ -321,6 +342,17 @@ async def handle_task_text(
         "➕ New Task", "📅 My Tasks", "⚙️ Settings"
     ]
     if message.text in menu_texts:
+        return
+
+    # SECURITY FIX: Validate input length before processing
+    MAX_INPUT_LENGTH = 3000
+    if len(message.text) > MAX_INPUT_LENGTH:
+        await message.answer(
+            l10n.get("text_too_long", "❌ Text too long.").format(
+                length=len(message.text),
+                max_length=MAX_INPUT_LENGTH
+            )
+        )
         return
 
     try:
@@ -362,6 +394,10 @@ async def handle_task_text(
                     user.show_utc_offset
                 ),
             )
+    except ValueError as ve:
+        # Validation error from DAO (e.g., text too long)
+        logger.warning(f"Validation error for user {user.id}: {ve}")
+        await message.answer(str(ve))
     except Exception as e:
         logger.error(f"Error parsing text '{message.text}': {e}", exc_info=True)
         await message.answer(l10n["parse_error"])
@@ -530,6 +566,9 @@ async def _save_and_show_edit(
     This is the core save logic that handles both new reminders and edits
     of existing ones. It creates/removes scheduler jobs accordingly.
     
+    SECURITY FIX APPLIED:
+      Added error handling for scheduler failures to prevent orphaned DB records.
+    
     Args:
         source_message: Original message (for sending response)
         state: FSMContext with parsed data
@@ -594,26 +633,45 @@ async def _save_and_show_edit(
         # CREATE NEW REMINDER
         # ────────────────────────────────────────────────────────────────
         
-        # FIX BUG-3: Removed manual session.flush() - let context manager handle it
-        
-        new_reminder = await reminder_dao.create_reminder(
-            user_id=user.id,
-            text=text,
-            execution_time=execution_time,
-            is_recurring=False,  # New reminders are one-time by default
-            rrule_string=None,
-            is_nagging=False,    # Nagging must be explicitly enabled
-        )
+        try:
+            new_reminder = await reminder_dao.create_reminder(
+                user_id=user.id,
+                text=text,
+                execution_time=execution_time,
+                is_recurring=False,  # New reminders are one-time by default
+                rrule_string=None,
+                is_nagging=False,    # Nagging must be explicitly enabled
+            )
+        except ValueError as ve:
+            # Validation error (e.g., text too long)
+            logger.warning(f"Validation error creating reminder for user {user.id}: {ve}")
+            await source_message.answer(str(ve))
+            await state.clear()
+            return
 
     # ────────────────────────────────────────────────────────────────
     # STEP 2: Schedule the reminder job
     # ────────────────────────────────────────────────────────────────
     
-    scheduler_service.schedule_reminder(
-        new_reminder.id, 
-        new_reminder.execution_time, 
-        is_nagging=new_reminder.is_nagging
-    )
+    try:
+        scheduler_service.schedule_reminder(
+            new_reminder.id, 
+            new_reminder.execution_time, 
+            is_nagging=new_reminder.is_nagging
+        )
+    except Exception as sched_error:
+        # SECURITY FIX: If scheduling fails, delete the orphaned DB record
+        logger.error(
+            f"Failed to schedule reminder {new_reminder.id}: {sched_error}. "
+            f"Deleting orphaned DB record.",
+            exc_info=True
+        )
+        await reminder_dao.delete_by_id(new_reminder.id)
+        await source_message.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again.")
+        )
+        await state.clear()
+        return
     
     await state.clear()  # Clear FSM after successful save
 

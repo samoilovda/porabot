@@ -62,6 +62,15 @@ from bot.config import config, validate_config
 # Validate configuration at startup (BUG FIX APPLIED)
 validate_config()
 
+# Database engine and session management (FIXED: Added cleanup imports)
+from bot.database.engine import (
+    create_engine,
+    create_session_maker,
+    init_db,
+    dispose_engine,
+    close_session_pool,
+)
+
 # Middleware classes that run before every handler
 from bot.middlewares.database import DatabaseMiddleware
 from bot.middlewares.whitelist import WhitelistMiddleware

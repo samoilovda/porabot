@@ -82,6 +82,9 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
     This function checks if it's morning (09:00) or evening (23:00) in each
     user's local timezone and sends appropriate summary messages.
     
+    OPTIMIZATION APPLIED:
+      Uses DISTINCT to avoid duplicate users when they have multiple tasks.
+    
     Args:
         bot: Telegram Bot instance for sending messages
         session_pool_factory: Callable that returns async session factory
@@ -90,7 +93,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
         None
         
     Side Effects:
-        Sends morning/evening brief messages to all users in database
+        Sends morning/evening brief messages to active users
     
     Raises:
         No exceptions - errors are logged internally
@@ -104,12 +107,13 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
         async with session_pool_factory() as session:
             reminder_dao = ReminderDAO(session)
             
-            # OPTIMIZATION: Query only active users (those with pending/completed tasks)
-            # instead of ALL users. This changes complexity from O(n_all_users) to O(n_active_users).
+            # OPTIMIZATION: Query only DISTINCT active users (those with pending/completed tasks)
+            # Uses DISTINCT to avoid duplicate users when they have multiple tasks
             result = await session.execute(
                 select(User)
-                .join(Reminder)  # Join reminders table
-                .where(Reminder.status.in_(['pending', 'completed']))  # Only active tasks
+                .distinct()  # FIXED: Prevent duplicate users in results
+                .join(Reminder)
+                .where(Reminder.status.in_(['pending', 'completed']))
             )
             users = result.scalars().all()
 
@@ -117,7 +121,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                 try:
                     tz = pytz.timezone(user.timezone)
                 except Exception as e:
-                    logger.warning(f"Invalid timezone '{user.timezone}', using UTC")
+                    logger.warning(f"Invalid timezone '{user.timezone}' for user {user.id}, using UTC")
                     tz = pytz.UTC
                     
                 local_time = datetime.now(tz)
@@ -136,12 +140,11 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                             lines = ["🌅 **Доброе утро! План на сегодня:**\n"]
                             
                             for t in tasks:
-                                # FIX CRIT-5: format_time handles timezone conversion automatically
                                 time_str = format_time(
                                     t.execution_time, 
-                                    user.timezone,  # User's timezone string (e.g., "Europe/Moscow")
-                                    user.show_utc_offset,  # Whether to show UTC offset (+03:00)
-                                    "%H:%M"  # Format: just hours and minutes
+                                    user.timezone,
+                                    user.show_utc_offset,
+                                    "%H:%M"
                                 )
                                 lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
                             
@@ -149,7 +152,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                                 await bot.send_message(
                                     chat_id=user.id,
                                     text="\n".join(lines),
-                                    parse_mode="Markdown",  # Enables bold/italic formatting
+                                    parse_mode="Markdown",
                                 )
                                 logger.info(f"Morning brief sent to user {user.id}")
                             except Exception as send_error:
@@ -162,6 +165,8 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                 # ────────────────────────────────────────────────────────────────
                 
                 elif local_time.hour == 23 and local_time.minute == 0:
+                    logger.info(f"Sending evening brief to user {user.id}")
+                    
                     try:
                         completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                         pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
@@ -174,7 +179,6 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                             ]
                             
                             for t in completed:
-                                # FIX CRIT-5: display in user-local time (format_time handles this)
                                 time_str = format_time(
                                     t.execution_time, 
                                     user.timezone, 
@@ -190,7 +194,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                                     user.show_utc_offset, 
                                     "%H:%M"
                                 )
-                                lines.append(f"❌ {t.reminder_text} ({time_str}")
+                                lines.append(f"❌ {t.reminder_text} ({time_str})")
 
                             try:
                                 await bot.send_message(
@@ -350,9 +354,8 @@ def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory):
     """
     Register the hourly cron job for daily briefs.
     
-    This function must be called at application startup to initialize the
-    global state that the cron job captures. Without this call, the scheduled
-    jobs won't have valid references to send messages.
+    This function must be called at application startup to register the
+    process_daily_briefs function as an hourly cron job.
     
     Args:
         scheduler: APScheduler instance to register the job with
@@ -363,8 +366,8 @@ def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory):
         None
     
     BUG FIX APPLIED:
-      Previously stored bot/session in global variables directly. Now properly
-      stores them and passes as args to the job function.
+      Removed duplicate _run_daily_briefs_job function - now directly calls
+      process_daily_briefs which is the canonical implementation.
       
     EXAMPLE USAGE (from __main__.py):
         >>> from bot.services.daily_briefs import setup_daily_briefs
@@ -372,24 +375,20 @@ def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory):
         >>> setup_daily_briefs(scheduler, my_bot, my_session_factory)
     """
     
-    # Store dependencies in global scope for the job function to access
-    _bot = bot
-    _session_pool = session_pool_factory
-    
-    logger.info("Registered hourly daily briefs cron job")
+    logger.info("Registering hourly daily briefs cron job")
 
     scheduler.add_job(
-        _run_daily_briefs_job,  # Job target function
+        process_daily_briefs,  # Job target function (canonical implementation)
         "cron",  # Cron-style schedule (like Unix crontab)
         minute=0,  # Run exactly at XX:00 (start of each hour)
         id="hourly_daily_briefs",  # Unique job ID for removal/replacement
         replace_existing=True,  # Replace if job with same ID already exists
-        args=[_bot, _session_pool],  # Pass dependencies to job function
+        args=[bot, session_pool_factory],  # Pass dependencies to job function
     )
 
 
 # =============================================================================
-# MISSING IMPORT - User Model
+# IMPORTS - User Model
 # =============================================================================
 
 from bot.database.models import User  # noqa: F401

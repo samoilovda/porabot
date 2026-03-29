@@ -193,11 +193,20 @@ class DatabaseMiddleware(BaseMiddleware):
                     l10n = get_l10n(user.language)
                 except Exception as e:
                     logger.error(
-                        f"DatabaseMiddleware: Error getting/creating user in middleware: {e}",
+                        f"DatabaseMiddleware: Error getting/creating user {tg_user.id}: {e}",
                         exc_info=True,
                     )
-                    # Re-raise to trigger rollback and fail the request
-                    raise
+                    # SECURITY FIX: Don't re-raise - send error message to user instead
+                    # Re-raising would cause the middleware to crash without user feedback
+                    try:
+                        if hasattr(event, 'answer'):
+                            await event.answer(
+                                "❌ Database error. Please try again later.",
+                                show_alert=True if hasattr(event, 'show_alert') else False
+                            )
+                    except Exception:
+                        pass  # Best effort - don't crash if we can't send error message
+                    return None  # Stop propagation
 
             # ────────────────────────────────────────────────────────────────
             # STEP 4: Inject Localization Dictionary

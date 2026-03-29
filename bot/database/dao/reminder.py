@@ -117,6 +117,10 @@ class ReminderDAO(BaseDAO[Reminder]):
         This method creates a complete Reminder object with all fields.
         The session.flush() call populates the auto-generated id field.
         
+        SECURITY FIX APPLIED:
+          Added input validation for text length to prevent Telegram API errors.
+          Maximum length: 3000 characters (leaves room for formatting/prefix).
+        
         Args:
             user_id: Telegram user ID (foreign key to users table)
             text: What the user needs to remember (e.g., "Take medication")
@@ -135,6 +139,9 @@ class ReminderDAO(BaseDAO[Reminder]):
         Side Effects:
           Adds record to session and flushes to populate auto-generated ID
         
+        Raises:
+            ValueError: If text exceeds maximum length (3000 chars)
+        
         Example:
             >>> reminder = await dao.create_reminder(
             ...     user_id=123,
@@ -142,6 +149,16 @@ class ReminderDAO(BaseDAO[Reminder]):
             ...     execution_time=datetime(2024, 3, 27, 9, 0),  # UTC time!
             ... )
         """
+        # SECURITY FIX: Validate text length to prevent Telegram API errors
+        # Telegram message limit is 4096 chars, but we need room for prefix/formatting
+        MAX_TEXT_LENGTH = 3000
+        
+        if len(text) > MAX_TEXT_LENGTH:
+            raise ValueError(
+                f"Reminder text too long ({len(text)} chars). "
+                f"Maximum allowed: {MAX_TEXT_LENGTH} chars."
+            )
+        
         reminder = Reminder(
             user_id=user_id,
             reminder_text=text,

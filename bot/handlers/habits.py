@@ -54,22 +54,31 @@ async def callback_habit_create(
     # APScheduler handles tz-aware run_date correctly.
     execution_time = datetime.now(user_tz) + timedelta(hours=hours)
 
-    # Save directly to DB, skipping FSM
-    reminder = await reminder_dao.create_reminder(
-        user_id=user.id,
-        text=text,
-        execution_time=execution_time,
-        is_recurring=False,
-        is_nagging=False,
-    )
+    # SECURITY FIX: Wrap in try-except to handle validation errors
+    try:
+        # Save directly to DB, skipping FSM
+        reminder = await reminder_dao.create_reminder(
+            user_id=user.id,
+            text=text,
+            execution_time=execution_time,
+            is_recurring=False,
+            is_nagging=False,
+        )
 
-    # Schedule with tz-aware datetime
-    scheduler_service.schedule_reminder(reminder.id, execution_time)
-    
-    time_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-    await callback.message.edit_text(
-        f"✅ Привычка добавлена!\nНапомню в `{time_str}`: {text}",
-        parse_mode="Markdown",
-        reply_markup=None
-    )
-    await callback.answer("Привычка создана!")
+        # Schedule with tz-aware datetime
+        scheduler_service.schedule_reminder(reminder.id, execution_time)
+        
+        time_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%H:%M")
+        await callback.message.edit_text(
+            f"✅ Привычка добавлена!\nНапомню в `{time_str}`: {text}",
+            parse_mode="Markdown",
+            reply_markup=None
+        )
+        await callback.answer("Привычка создана!")
+    except ValueError as ve:
+        # Validation error (e.g., text too long - shouldn't happen with hardcoded text)
+        logger.error(f"Validation error creating habit for user {user.id}: {ve}")
+        await callback.answer("❌ Ошибка создания привычки", show_alert=True)
+    except Exception as e:
+        logger.error(f"Error creating habit for user {user.id}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка создания привычки", show_alert=True)

@@ -54,6 +54,8 @@ RU: dict[str, Any] = {
     "main_menu_fallback": "Главное меню",
     "task_deleted": "❌ Задача удалена.",  # single definition — canonical value
     "what_next": "Что дальше?",
+    "cmd_cancel": "❌ Создание напоминания отменено.",
+    "btn_cancel": "❌ Отмена",
 
     # Time Selection Keyboard
     "time_morning": "🌅 Утро",
@@ -88,4 +90,8 @@ RU: dict[str, Any] = {
     "no_completed_tasks": "🧨 Выполненных задач еще нет. Давай исправлять это!",
     "completed_header": "🏆 **Выполненные задачи:**\n",
     "btn_done_task_prefix": "✅ Готово:",
+    
+    # Error messages (SECURITY FIX: Added missing keys)
+    "text_too_long": "❌ Текст слишком длинный ({length} символов). Максимум: {max_length} символов.",
+    "schedule_error": "❌ Не удалось запланировать напоминание. Попробуйте снова.",
 }

@@ -54,6 +54,8 @@ EN: dict[str, Any] = {
     "main_menu_fallback": "Main menu",
     "task_deleted": "❌ Task deleted.",  # single definition — canonical value
     "what_next": "What next?",
+    "cmd_cancel": "❌ Reminder creation cancelled.",
+    "btn_cancel": "❌ Cancel",
 
     # Time Selection Keyboard
     "time_morning": "🌅 Morning",
@@ -88,4 +90,8 @@ EN: dict[str, Any] = {
     "no_completed_tasks": "🧨 No completed tasks yet. Let's change that!",
     "completed_header": "🏆 **Completed tasks:**\n",
     "btn_done_task_prefix": "✅ Done:",
+    
+    # Error messages (SECURITY FIX: Added missing keys)
+    "text_too_long": "❌ Text too long ({length} chars). Maximum: {max_length} chars.",
+    "schedule_error": "❌ Failed to schedule reminder. Please try again.",
 }

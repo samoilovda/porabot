@@ -418,8 +418,22 @@ class SchedulerService:
                             )
                             start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-                        # Calculate next occurrence using rrulestr
-                        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
+                        # SECURITY FIX: Validate rrule_string before parsing
+                        # Wrap rrulestr in try-except to prevent crashes from invalid rules
+                        try:
+                            rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
+                        except (ValueError, TypeError) as parse_error:
+                            logger.error(
+                                f"Invalid rrule_string for reminder {reminder_id}: "
+                                f"'{reminder.rrule_string}'. Error: {parse_error}. "
+                                f"Task will not recur."
+                            )
+                            # Mark as non-recurring to prevent future parse attempts
+                            reminder.is_recurring = False
+                            reminder.rrule_string = None
+                            await session.flush()
+                            return  # Skip recurrence calculation
+                        
                         now = datetime.now(start_dt.tzinfo)
                         next_run = rule.after(now)
 

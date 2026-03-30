@@ -53,7 +53,7 @@ from aiogram.enums import ParseMode
 
 # APScheduler is a job scheduling library (cron-like tasks)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-# SQLAlchemyJobStore stores scheduler jobs in database for persistence
+# SQLAlchemyJobStore stores scheduler jobs in database for persistence (production-ready)
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 # Configuration loaded from .env file via pydantic-settings
@@ -170,8 +170,8 @@ async def main() -> None:
     # PHASE 4: Scheduler Setup (for recurring tasks)
     # --------------------------------------------------------------------------
     
-    # Create AsyncIOScheduler with SQLAlchemy job store
-    # Jobs are persisted in a separate SQLite database for durability
+    # Create AsyncIOScheduler with SQLAlchemy job store (production-ready)
+    # Jobs are persisted in separate SQLite database for durability across restarts
     scheduler = AsyncIOScheduler(
         jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)}
     )
@@ -273,10 +273,7 @@ async def main() -> None:
 # =============================================================================
 
 if __name__ == "__main__":
-    # Windows-specific: Set event loop policy for better asyncio compatibility
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
+    # Production: Skip Windows-specific event loop policy (not needed in Docker/Linux)
     try:
         # Run the async main() function
         asyncio.run(main())

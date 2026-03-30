@@ -65,13 +65,13 @@ def validate_config():
     
     # Check if ADMIN_ID is 0 and ALLOWED_USERS is empty
     if config.ADMIN_ID == 0 and not config.ALLOWED_USERS:
-        print("⚠️ WARNING: No admin or allowed users configured!")
+        print("[WARNING] No admin or allowed users configured!")
         print("   The bot will have no access control - only you can use it.")
         print(f"   Set ADMIN_ID in .env file to enable proper access control.")
     
     # Check if DATABASE_URL uses default value (production warning)
     if config.DATABASE_URL == "sqlite+aiosqlite:///porabot.db":
-        print("⚠️ WARNING: Using default SQLite database URL!")
+        print("[WARNING] Using default SQLite database URL!")
         print("   For production, set DATABASE_URL in .env file.")
 
 # Export for use in __main__.py

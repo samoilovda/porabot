@@ -297,6 +297,12 @@ async def handle_forwarded_task(
     except Exception as e:
         logger.error(f"Error parsing forwarded text: {e}", exc_info=True)
         await message.answer(l10n.get("parse_error", "Error parsing text"))
+    
+    # HIGH-3 FIX: Clear FSM state after error to prevent stuck wizard
+    try:
+        await state.clear()
+    except Exception:
+        pass  # Ignore if already cleared
 
 
 @router.message(ReminderWizard.entering_text, F.text)
@@ -552,6 +558,9 @@ async def remove_keyboard_after_delay(
 # INTERNAL HELPER: SAVE AND SHOW EDIT KEYBOARD
 # =============================================================================
 
+from bot.utils.timezone import to_utc  # noqa: E402
+
+
 async def _save_and_show_edit(
     source_message: Message,
     state: FSMContext,
@@ -565,6 +574,8 @@ async def _save_and_show_edit(
     
     This is the core save logic that handles both new reminders and edits
     of existing ones. It creates/removes scheduler jobs accordingly.
+    
+    CRIT-4 FIX: execution_time is now converted to UTC-aware before saving.
     
     SECURITY FIX APPLIED:
       Added error handling for scheduler failures to prevent orphaned DB records.
@@ -587,18 +598,18 @@ async def _save_and_show_edit(
       ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
       │ Get FSM Data│────▶│ Check Edit?  │────▶│ Create/Update   │
       └─────────────┘     └──────────────┘     └─────────────────┘
-                                              ↓
-                                    ┌─────────────────┐
-                                    │ Schedule Job    │
-                                    └─────────────────┘
-                                              ↓
-                                    ┌─────────────────┐
-                                    │ Send Confirm    │
-                                    └─────────────────┘
-                                              ↓
-                                    ┌─────────────────┐
-                                    │ Launch Timer    │
-                                    └─────────────────┘
+                                          ↓
+                                ┌─────────────────┐
+                                │ Schedule Job    │
+                                └─────────────────┘
+                                          ↓
+                                ┌─────────────────┐
+                                │ Send Confirm    │
+                                └─────────────────┘
+                                          ↓
+                                ┌─────────────────┐
+                                │ Launch Timer    │
+                                └─────────────────┘
     """
     # Get parsed data from FSM
     data = await state.get_data()
@@ -606,9 +617,26 @@ async def _save_and_show_edit(
     exec_time_iso = data.get("execution_time")
 
     edit_reminder_id = data.get("edit_reminder_id")  # None for new reminders
-
+    
     # Parse execution time (already ISO string from parser)
+    # CRIT-4 FIX: Ensure timezone-aware datetime before conversion to UTC
     execution_time = datetime.fromisoformat(exec_time_iso)
+    
+    # CRIT-4 FIX: Convert to UTC for database storage
+    if execution_time.tzinfo is None:
+        # If naive (from dateparser or regex fallback), assume user's timezone
+        logger.debug(
+            f"Parsing naive datetime {execution_time} for user timezone {user.timezone}, "
+            f"attaching timezone first..."
+        )
+        from bot.utils.timezone import ensure_timezone_aware
+        execution_time = ensure_timezone_aware(execution_time, user.timezone)
+    
+    # Convert to UTC for storage (database should always store in UTC)
+    execution_time_utc = to_utc(execution_time)
+    logger.debug(
+        f"Storing reminder {edit_reminder_id or 'new'} with UTC time: {execution_time_utc}"
+    )
 
     if edit_reminder_id:
         # ────────────────────────────────────────────────────────────────
@@ -1188,6 +1216,27 @@ async def callback_show_completed(
 # =============================================================================
 # CALLBACK HANDLER: MARK TASK AS DONE
 # =============================================================================
+
+def _cleanup_stale_timers() -> None:
+    """
+    Clean up any tasks in active_auto_delete_tasks that have already completed.
+    
+    This prevents memory leaks from orphaned task references after 5 seconds
+    when the keyboard removal completes successfully.
+    
+    Called periodically via APScheduler cleanup job.
+    """
+    if not active_auto_delete_tasks:
+        return
+    
+    # Remove any tasks that are still pending (tasks should have completed)
+    # This handles edge cases where task wasn't properly removed from dict
+    for msg_id, task in list(active_auto_delete_tasks.items()):
+        if task.done():  # Task has completed (success or error)
+            try:
+                active_auto_delete_tasks.pop(msg_id, None)
+            except Exception:
+                pass
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(

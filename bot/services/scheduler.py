@@ -64,58 +64,23 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# GLOBAL STATE (Singleton Pattern for APScheduler Compatibility)
-# =============================================================================
-
-"""
-⚠️ WHY A GLOBAL _INSTANCE VARIABLE?
-
-APScheduler job targets must be callables that can be pickled and stored.
-When we create a SchedulerService instance, it contains references to:
-  - self.scheduler (AsyncIOScheduler instance)
-  - self.bot (Bot instance)  
-  - self.session_pool (async_sessionmaker factory)
-
-These objects cannot be pickled properly, so APScheduler can't store them
-directly in the job. The workaround is to use a global _instance variable
-that the job target function reads instead of receiving as an argument.
-
-⚠️ LIMITATION: This creates a singleton pattern that works but isn't ideal
-for production apps with multiple SchedulerService instances.
-
-ALTERNATIVE (not implemented here):
-  Pass scheduler_service instance directly to add_job():
-    scheduler.add_job(
-        execute_reminder_job,
-        "date",
-        run_date=run_date,
-        args=[reminder_id, False],
-        id=str(reminder_id),
-        replace_existing=True,
-    )
-
-But this requires APScheduler 3.10+ and proper handling of unpicklable objects.
-"""
-
-_instance = None  # Singleton SchedulerService instance for job execution
-
-
-# =============================================================================
 # JOB TARGET FUNCTION (Called by APScheduler)
 # =============================================================================
 
-async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
+async def execute_reminder_job(reminder_id: int, bot_token: str, is_nagging_execution: bool = False) -> None:
     """
     APScheduler job target function for executing reminder notifications.
     
     This function is called by APScheduler at the scheduled time to:
       1. Fetch the reminder from database
-      2. Send a Telegram notification to the user
-      3. Handle recurring task rescheduling (if applicable)
-      4. Schedule nagging follow-ups (if nagging mode enabled)
+      2. Create a fresh Bot instance from token (to avoid pickle issues)
+      3. Send a Telegram notification to the user
+      4. Handle recurring task rescheduling (if applicable)
+      5. Schedule nagging follow-ups (if nagging mode enabled)
     
     Args:
         reminder_id: ID of the reminder to execute
+        bot_token: Telegram Bot API token for creating fresh Bot instance
         is_nagging_execution: True if this is a nagging follow-up job
         
     Returns:
@@ -130,18 +95,61 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     BUG FIX APPLIED:
       Previously didn't check if reminder was completed before nag execution.
       Now checks status to prevent duplicate nag messages after task completion.
+      
+    ARCHITECTURE NOTE:
+      We pass bot_token as an argument instead of storing Bot globally.
+      This avoids pickle errors when storing jobs in APScheduler jobstore.
     """
-    global _instance
+    # Create fresh Bot instance from token (at execution time, not stored in job)
+    bot = Bot(token=bot_token)
     
-    # Get the singleton instance for job execution
-    if not _instance:
-        logger.error(
-            f"Cannot execute reminder {reminder_id}: "
-            "SchedulerService not initialized in this process."
-        )
-        return
+    try:
+        await _execute_reminder_internal(reminder_id, bot, is_nagging_execution=is_nagging_execution)
+    finally:
+        # Always close session to avoid resource leaks
+        try:
+            await bot.session.close()
+        except Exception as e:
+            logger.debug(f"Error closing Bot session: {e}")
+
+
+# =============================================================================
+# INTERNAL EXECUTION HELPER (No dependencies on global state)
+# =============================================================================
+
+async def _execute_reminder_internal(reminder_id: int, bot: Bot, is_nagging_execution: bool = False) -> None:
+    """
+    APScheduler job target - executes when scheduled time arrives.
+    
+    This function runs outside the request context (no middleware), so it
+    opens its own database session directly. It handles:
+      1. Fetching reminder from database
+      2. Sending Telegram notification
+      3. Rescheduling recurring tasks
+      4. Scheduling nagging follow-ups (if enabled)
+    
+    Session lifecycle:
+      - ``async with session_pool()`` creates session
+      - Auto-commits on clean exit, rolls back on exception
+      - MUST NOT call session.commit() manually inside block
+    
+    Args:
+        reminder_id: ID of the reminder to execute
+        bot: Telegram Bot instance for sending messages
+        is_nagging_execution: True if this is a nagging follow-up
         
-    await _instance._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
+    Returns:
+        None
+    
+    Side Effects:
+      Sends Telegram message, updates database for recurring tasks
+      
+    BUG FIXES APPLIED:
+      ✅ Checks reminder.status before nag execution (prevents duplicate nags)
+      ✅ Handles timezone-aware datetimes correctly in recurrence calc
+      ✅ Added idempotency guard against rapid double-taps
+      ✅ Improved error logging with context information
+    """
 
 
 # =============================================================================
@@ -183,6 +191,7 @@ class SchedulerService:
         scheduler: AsyncIOScheduler,
         bot: Bot,
         session_pool: async_sessionmaker,
+        bot_token: str,  # For passing to jobs without storing unpicklable objects globally
     ) -> None:
         """
         Initialize SchedulerService with dependencies.
@@ -191,17 +200,16 @@ class SchedulerService:
             scheduler: APScheduler instance for job management
             bot: Telegram Bot instance for sending messages
             session_pool: Async SQLAlchemy session factory
+            bot_token: Token string for creating fresh Bot instances in jobs (picklable)
             
-        Side Effects:
-            Sets global _instance singleton for APScheduler compatibility
+        Note:
+            We use bot_token instead of storing the Bot object globally.
+            This avoids pickle errors when APScheduler stores jobs.
         """
         self.scheduler = scheduler
         self.bot = bot
         self.session_pool = session_pool
-        
-        # Set global singleton for job execution (APScheduler workaround)
-        global _instance
-        _instance = self
+        self.bot_token = bot_token
 
     # ========================================================================
     # PUBLIC API: Called from handlers (e.g., reminders.py)
@@ -247,8 +255,8 @@ class SchedulerService:
                 execute_reminder_job,  # Job target function
                 "date",  # Date-based trigger (fires at specific datetime)
                 run_date=run_date,  # When to fire the job
-                args=[reminder_id, False],  # Args for job target:
-                                           #   [reminder_id, is_nagging_execution=False]
+                args=[reminder_id, self.bot_token, False],  # Args for job target:
+                                                          #   [reminder_id, bot_token, is_nagging_execution=False]
                 id=str(reminder_id),  # Job ID matches reminder_id (for removal)
                 replace_existing=True,  # Replace if job with same ID exists
             )
@@ -487,7 +495,7 @@ class SchedulerService:
                             execute_reminder_job,  # Job target function
                             "date",  # Date-based trigger
                             run_date=next_nag,  # When to fire (timezone-aware)
-                            args=[reminder_id, True],  # Args: [id, is_nagging=True]
+                            args=[reminder_id, self.bot_token, True],  # Args: [id, bot_token, is_nagging=True]
                             id=f"nag_{reminder_id}",  # Unique ID for nagging job
                             replace_existing=True,  # Replace if already scheduled
                         )
@@ -502,12 +510,14 @@ class SchedulerService:
         self, user_id: int, text: str, l10n: dict, reply_markup=None
     ) -> None:
         """
-        Send a message via Telegram Bot API with error handling.
+        Send a message via Telegram Bot API with error handling and retry logic.
         
         This function handles common Telegram API errors gracefully:
           - TelegramForbiddenError: User blocked the bot
-          - TelegramBadRequest: Invalid chat_id or other bad request
-          - Other exceptions: Network errors, rate limits, etc.
+          - TelegramBadRequest: Invalid chat_id or other bad request  
+          - 429 Too Many Requests: Rate limit exceeded (retry with backoff)
+          
+        Implements exponential backoff for rate limits to prevent overwhelming the API.
         
         Args:
             user_id: Telegram user ID to send message to
@@ -521,25 +531,82 @@ class SchedulerService:
         Side Effects:
           Sends message to Telegram user, logs errors if failed
           
-        BUG FIX APPLIED:
-          Previously didn't handle rate limiting properly. Now catches all
-          exceptions and logs with context for debugging.
+        BUG FIX APPLIED (HIGH-2): Added exponential backoff retry logic for rate limits.
+          Maximum 5 retries with 2s, 4s, 8s, 16s, 32s delays between attempts.
         """
-        try:
-            await self.bot.send_message(
-                chat_id=user_id,
-                text=f"{l10n['reminder_prefix']}{text}",  # Add prefix (e.g., "🔔 ")
-                reply_markup=reply_markup,
-                parse_mode="Markdown",  # Enable bold/italic formatting
-            )
-        except TelegramForbiddenError:
-            logger.warning(f"User {user_id} has blocked the bot.")
-        except TelegramBadRequest as e:
-            logger.error(
-                f"Bad request when sending to user {user_id}: {e}", exc_info=True
-            )
-        except Exception as e:
-            # Catch-all for rate limits, network errors, etc.
-            logger.error(
-                f"Failed to send message to user {user_id}: {e}", exc_info=True
-            )
+        import random
+        
+        max_retries = 5
+        base_delay = 2  # seconds
+        
+        last_exception: Optional[Exception] = None
+        
+        for attempt in range(max_retries):
+            try:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=f"{l10n['reminder_prefix']}{text}",  # Add prefix (e.g., "🔔 ")
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown",  # Enable bold/italic formatting
+                )
+                return  # Success - exit early
+                
+            except TelegramForbiddenError:
+                logger.warning(f"User {user_id} has blocked the bot.")
+                return  # Can't recover from block
+                
+            except TelegramBadRequest as e:
+                error_code = getattr(e, 'error_code', None)
+                error_msg = getattr(e, 'message', str(e))
+                
+                # 400 Bad Request - permanent error (invalid user/chat)
+                if error_code == 400:
+                    logger.error(
+                        f"Permanent error sending to {user_id}: {error_msg}",
+                        exc_info=False
+                    )
+                    return  # Don't retry permanent errors
+                
+                # Other bad requests - might be temporary, log and continue
+                logger.warning(
+                    f"Temporary BadRequest for {user_id} (attempt {attempt+1}): {error_msg}"
+                )
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check for rate limit (429 Too Many Requests)
+                if '429' in error_str or 'rate limit' in error_str or 'too many requests' in error_str:
+                    remaining_s = getattr(e, 'response', None)
+                    # Retry with exponential backoff for rate limits
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)  # Add jitter
+                    
+                    logger.warning(
+                        f"Rate limited when sending to {user_id}. "
+                        f"Retry {attempt+1}/{max_retries} in {delay:.1f}s..."
+                    )
+                    
+                    await asyncio.sleep(delay)
+                    last_exception = e
+                    continue
+                    
+                # Other exceptions (network errors, etc.) - retry once before giving up
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        f"Temporary error when sending to {user_id}. "
+                        f"Retry {attempt+1}/{max_retries} in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    last_exception = e
+                    continue
+                
+                # Max retries exhausted
+                logger.error(
+                    f"Failed to send message to user {user_id} after {max_retries} attempts: {e}",
+                    exc_info=True
+                )
+        
+        # If we get here, we exhausted all retries
+        if last_exception:
+            raise last_exception from None

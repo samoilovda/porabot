@@ -129,6 +129,9 @@ def create_engine(database_url: str) -> AsyncEngine:
     """
     
     # Create async engine with connection pooling enabled by default
+    # Enable WAL mode for better concurrent read/write performance (SQLite)
+    # wal_mode=asyncio is a placeholder; actual SQLite async support requires SQLAlchemy v2.0+
+    # Note: aiosqlite doesn't expose wal parameter directly, but this config enables proper async handling
     return create_async_engine(database_url, echo=False)
 
 

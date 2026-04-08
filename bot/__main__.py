@@ -41,6 +41,7 @@ Author: Porabot Team
 
 import asyncio
 import logging
+import signal
 import sys
 from typing import Any, Dict
 
@@ -52,9 +53,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # APScheduler is a job scheduling library (cron-like tasks)
+import pickle
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-# SQLAlchemyJobStore stores scheduler jobs in database for persistence (production-ready)
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.memory import MemoryJobStore
 
 # Configuration loaded from .env file via pydantic-settings
 from bot.config import config, validate_config
@@ -100,6 +101,15 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# SIGNAL HANDLERS FOR GRACEFUL SHUTDOWN
+# =============================================================================
+
+# Set up signal handlers for graceful shutdown (Ctrl+C, container termination)
+signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+
+
+# =============================================================================
 # MAIN APPLICATION LIFECYCLE FUNCTION
 # =============================================================================
 
@@ -133,23 +143,13 @@ async def main() -> None:
     # PHASE 1: Configuration (already validated at import time)
     # --------------------------------------------------------------------------
     logger.info(f"Starting Porabot (TZ={config.TZ})")
-    # NOTE: Pydantic-settings validates all env vars on module import,
-    # so we don't need to validate again here. This is a common pattern!
 
     # --------------------------------------------------------------------------
     # PHASE 2: Database Initialization
     # --------------------------------------------------------------------------
     
-    # Create async SQLAlchemy engine from URL (e.g., "sqlite+aiosqlite:///porabot.db")
-    # The 'aiosqlite' dialect enables async operations with SQLite
     engine = create_engine(config.DATABASE_URL)
-    
-    # Create session factory bound to the engine
-    # This is used throughout the app for database access
     session_pool = create_session_maker(engine)
-    
-    # Initialize database: creates all tables defined in models.py
-    # IMPORTANT: Call this ONCE at startup, not on every request!
     await init_db(engine)
     logger.info("Database initialized.")
 
@@ -157,60 +157,65 @@ async def main() -> None:
     # PHASE 3: Create Telegram Bot Instance
     # --------------------------------------------------------------------------
     
-    # Create Bot object with token from environment variable
     bot = Bot(
-        token=config.BOT_TOKEN.get_secret_value(),  # SecretStr requires .get_secret_value()
-        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),  # Default message format
+        token=config.BOT_TOKEN.get_secret_value(),
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
     )
     
-    # Create Dispatcher - the central hub for all incoming updates
     dp = Dispatcher()
 
     # --------------------------------------------------------------------------
     # PHASE 4: Scheduler Setup (for recurring tasks)
     # --------------------------------------------------------------------------
     
-    # Create AsyncIOScheduler with SQLAlchemy job store (production-ready)
-    # Jobs are persisted in separate SQLite database for durability across restarts
     scheduler = AsyncIOScheduler(
-        jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)}
+        jobstores={"default": MemoryJobStore()},   # In-memory storage (no pickle issues)
+        pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
     )
     
-    # Create SchedulerService - our facade over APScheduler
-    # This service handles all scheduling operations with proper error handling
-    scheduler_service = SchedulerService(scheduler, bot, session_pool)
+    scheduler_service = SchedulerService(
+        scheduler, 
+        bot, 
+        session_pool, 
+        config.BOT_TOKEN.get_secret_value()  # Pass token string (picklable), not Bot instance
+    )
 
     # --------------------------------------------------------------------------
     # PHASE 4.5: Daily Briefs Setup (for morning/evening summaries)
     # --------------------------------------------------------------------------
     
-    # Register hourly cron job for daily briefs (morning at 09:00, evening at 23:00)
-    setup_daily_briefs(scheduler, bot, session_pool)
+    setup_daily_briefs(scheduler, config.BOT_TOKEN.get_secret_value(), session_pool)
     logger.info("Daily briefs scheduler registered.")
+
+    # --------------------------------------------------------------------------
+    # PHASE 4.5: Register Periodic Cleanup Job for Memory Management
+    # --------------------------------------------------------------------------
+    
+    from bot.handlers.reminders import _cleanup_stale_timers
+    
+    scheduler.add_job(
+        _cleanup_stale_timers,
+        "interval",
+        minutes=1,
+        id="cleanup_active_delete_tasks",
+        replace_existing=True,
+    )
+    logger.info("Registered periodic cleanup job for auto-delete task tracker.")
 
     # --------------------------------------------------------------------------
     # PHASE 5: Middleware Registration (Access Control & Dependency Injection)
     # --------------------------------------------------------------------------
     
-    # ⚠️ CRITICAL: Middleware order MATTERS!
-    # We register Whitelist BEFORE DatabaseMiddleware to avoid DB overhead for unauthorized users.
-    # This is a performance optimization - checking whitelist first saves database queries.
-    
-    # Register WhitelistMiddleware first (access control)
     dp.update.middleware(
         WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID)
     )
     
-    # Then register DatabaseMiddleware (dependency injection for handlers)
-    # This injects 'user' and 'session' into every handler's workflow_data dict
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
 
     # --------------------------------------------------------------------------
     # PHASE 6: Register All Route Handlers
     # --------------------------------------------------------------------------
     
-    # Include all routers in the dispatcher
-    # Order matters! More specific handlers should come first.
     for router in all_routers:
         dp.include_router(router)
 
@@ -218,12 +223,10 @@ async def main() -> None:
     # PHASE 7: Inject Services into Workflow Data (Dependency Injection)
     # --------------------------------------------------------------------------
     
-    # Make scheduler_service and config available to ALL handlers via workflow_data
-    # Handlers can access these without passing them as parameters
     dp.workflow_data.update(
         {
-            "scheduler_service": scheduler_service,  # For scheduling new tasks
-            "config": config,                        # For accessing configuration values
+            "scheduler_service": scheduler_service,
+            "config": config,
         }
     )
 
@@ -231,36 +234,31 @@ async def main() -> None:
     # PHASE 8: Start the Bot
     # --------------------------------------------------------------------------
     
-    # Start the scheduler (required for recurring tasks to work)
     scheduler.start()
     logger.info("Scheduler started.")
 
     try:
-        # Start polling Telegram API for incoming updates
-        # This is a blocking call that runs until interrupted
         logger.info("Starting polling...")
         await dp.start_polling(bot)
         
     finally:
-        # CLEANUP: Always close resources on shutdown (even if error occurred)
-        # FIXED Phase 1: Added proper resource cleanup to prevent leaks
         try:
-            await bot.session.close()  # Close Telegram API connection
+            await bot.session.close()
             logger.info("Telegram session closed.")
         except Exception as e:
             logger.warning(f"Error closing Telegram session: {e}")
         
-        scheduler.shutdown(wait=False)  # Stop accepting new jobs but let running ones finish
+        scheduler.shutdown(wait=False)
         logger.info("Scheduler shutdown complete.")
         
         try:
-            await close_session_pool(session_pool)  # Close all database sessions
+            await close_session_pool(session_pool)
             logger.info("Database sessions closed.")
         except Exception as e:
             logger.warning(f"Error closing session pool: {e}")
         
         try:
-            await dispose_engine(engine)  # Dispose engine and close connections
+            await dispose_engine(engine)
             logger.info("Database engine disposed.")
         except Exception as e:
             logger.warning(f"Error disposing engine: {e}")
@@ -273,11 +271,8 @@ async def main() -> None:
 # =============================================================================
 
 if __name__ == "__main__":
-    # Production: Skip Windows-specific event loop policy (not needed in Docker/Linux)
     try:
-        # Run the async main() function
         asyncio.run(main())
         
     except (KeyboardInterrupt, SystemExit):
-        # Handle graceful shutdown on Ctrl+C or explicit exit
         logger.info("Bot stopped by user.")

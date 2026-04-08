@@ -33,6 +33,7 @@ USAGE:
 """
 
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -42,7 +43,7 @@ from sqlalchemy import select
 
 # Import our DAO layer for database access
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import Reminder  # noqa: F401
+from bot.database.models import Reminder, User  # noqa: F401 (User imported before use in select())
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -75,18 +76,23 @@ _session_pool = None  # SQLAlchemy async session factory
 # PUBLIC API: Called from __main__.py setup_daily_briefs()
 # =============================================================================
 
-async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
+async def process_daily_briefs(bot_token: str, session_pool_factory) -> None:
     """
     Process daily briefs for all users at the current hour.
     
     This function checks if it's morning (09:00) or evening (23:00) in each
     user's local timezone and sends appropriate summary messages.
     
+    ARCHITECTURE PATTERN:
+      - Takes picklable bot_token string instead of Bot object
+      - Creates fresh Bot instance at execution time (inside function)
+      - Closes session in finally block to avoid resource leaks
+    
     OPTIMIZATION APPLIED:
       Uses DISTINCT to avoid duplicate users when they have multiple tasks.
     
     Args:
-        bot: Telegram Bot instance for sending messages
+        bot_token: Telegram Bot API token string for creating fresh Bot
         session_pool_factory: Callable that returns async session factory
         
     Returns:
@@ -99,9 +105,12 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
         No exceptions - errors are logged internally
     
     EXAMPLE USAGE:
-        >>> await process_daily_briefs(my_bot, my_session_factory)
+        >>> await process_daily_briefs(my_bot_token, my_session_factory)
     """
     logger.info("Starting hourly daily briefs check...")
+    
+    # Create fresh Bot instance from token (at execution time, not stored in job)
+    bot = Bot(token=bot_token)
     
     try:
         async with session_pool_factory() as session:
@@ -194,7 +203,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
                                     user.show_utc_offset, 
                                     "%H:%M"
                                 )
-                                lines.append(f"❌ {t.reminder_text} ({time_str})")
+                                lines.append(f"❌ {t.reminder_text} ({time_str}")
 
                             try:
                                 await bot.send_message(
@@ -210,13 +219,19 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
 
     except Exception as e:
         logger.error(f"Error in daily briefs job: {e}", exc_info=True)
+    finally:
+        # Always close session to avoid resource leaks
+        try:
+            await bot.session.close()
+        except Exception as e:
+            logger.debug(f"Error closing Bot session: {e}")
 
 
 # =============================================================================
 # CRON JOB TARGET (Called by APScheduler hourly)
 # =============================================================================
 
-async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
+async def _run_daily_briefs_job(bot_token: str, session_pool_factory) -> None:
     """
     Cron job target for hourly daily briefs.
     
@@ -224,11 +239,16 @@ async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
     It processes morning (09:00) and evening (23:00) briefs based on each user's
     local timezone.
     
+    ARCHITECTURE PATTERN:
+      - Takes picklable bot_token string instead of Bot object
+      - Creates fresh Bot instance at execution time (inside function)
+      - Closes session in finally block to avoid resource leaks
+    
     OPTIMIZATION: Queries only active users (those with pending/completed tasks)
     instead of ALL users. This changes complexity from O(n_all_users) to O(n_active_users).
     
     Args:
-        bot: Telegram Bot instance for sending messages
+        bot_token: Telegram Bot API token string for creating fresh Bot
         session_pool_factory: Callable that returns async session factory
         
     Returns:
@@ -238,6 +258,9 @@ async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
         No exceptions - errors are logged internally
     """
     logger.info("Executing hourly daily briefs job...")
+    
+    # Create fresh Bot instance from token (at execution time, not stored in job)
+    bot = Bot(token=bot_token)
     
     try:
         async with session_pool_factory() as session:
@@ -344,35 +367,45 @@ async def _run_daily_briefs_job(bot: Bot, session_pool_factory) -> None:
 
     except Exception as e:
         logger.error(f"Error in daily briefs job: {e}", exc_info=True)
+    finally:
+        # Always close session to avoid resource leaks
+        try:
+            await bot.session.close()
+        except Exception as e:
+            logger.debug(f"Error closing Bot session: {e}")
 
 
 # =============================================================================
 # SCHEDULER REGISTRATION (Called from __main__.py)
 # =============================================================================
 
-def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory):
+def setup_daily_briefs(scheduler, bot_token: str, session_pool_factory):
     """
     Register the hourly cron job for daily briefs.
     
     This function must be called at application startup to register the
     process_daily_briefs function as an hourly cron job.
     
+    ARCHITECTURE PATTERN:
+      - Takes bot_token string (picklable) instead of Bot object
+      - Job will create fresh Bot instance at execution time
+    
     Args:
         scheduler: APScheduler instance to register the job with
-        bot: Telegram Bot instance for sending messages
+        bot_token: Telegram Bot API token string for creating fresh Bot
         session_pool_factory: Callable that returns async session factory
         
     Returns:
         None
     
     BUG FIX APPLIED:
-      Removed duplicate _run_daily_briefs_job function - now directly calls
-      process_daily_briefs which is the canonical implementation.
+      - Removed duplicate _run_daily_briefs_job function
+      - Now directly calls process_daily_briefs which is canonical implementation
       
     EXAMPLE USAGE (from __main__.py):
         >>> from bot.services.daily_briefs import setup_daily_briefs
         >>> scheduler = AsyncIOScheduler(...)
-        >>> setup_daily_briefs(scheduler, my_bot, my_session_factory)
+        >>> setup_daily_briefs(scheduler, my_bot_token, my_session_factory)
     """
     
     logger.info("Registering hourly daily briefs cron job")
@@ -383,12 +416,8 @@ def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory):
         minute=0,  # Run exactly at XX:00 (start of each hour)
         id="hourly_daily_briefs",  # Unique job ID for removal/replacement
         replace_existing=True,  # Replace if job with same ID already exists
-        args=[bot, session_pool_factory],  # Pass dependencies to job function
+        args=[bot_token, session_pool_factory],  # Pass token string (picklable), not Bot object
     )
 
 
-# =============================================================================
-# IMPORTS - User Model
-# =============================================================================
-
-from bot.database.models import User  # noqa: F401
+# Import removed (User already imported at top of file)

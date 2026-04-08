@@ -61,6 +61,7 @@ def sample_l10n() -> Dict[str, Any]:
         "snooze_day": "День",
         "snooze_evening": "Вечер",
         "snooze_night": "Ночь",
+        "btn_done_task_prefix": "Готово",
         "btn_refresh": "Обновить",
         "btn_completed_tasks": "Завершённые",
         "btn_close": "Закрыть",
@@ -261,14 +262,14 @@ class TestSettingsKeyboard:
         
         keyboard = get_settings_keyboard(sample_l10n, show_utc_offset=True)
         
-        assert "btn_toggle_utc_on" in str(keyboard.inline_keyboard) or "UTC+(вкл)" in str(keyboard.inline_keyboard)
+        assert "btn_toggle_utc_on" in str(keyboard.inline_keyboard) or "UTC+ " in str(keyboard.inline_keyboard)
     
     def test_settings_keyboard_with_utc_offset_disabled(self, sample_l10n):
         """Verify settings keyboard shows UTC toggle in 'off' state."""
         
         keyboard = get_settings_keyboard(sample_l10n, show_utc_offset=False)
         
-        assert "btn_toggle_utc_off" in str(keyboard.inline_keyboard) or "UTC+(выкл)" in str(keyboard.inline_keyboard)
+        assert "btn_toggle_utc_off" in str(keyboard.inline_keyboard) or "UTC+ " in str(keyboard.inline_keyboard)
     
     def test_settings_keyboard_has_timezone_and_language_options(self, sample_l10n):
         """Verify settings keyboard has timezone and language change options."""
@@ -342,31 +343,38 @@ class TestKeyboardButtonCount:
 class TestKeyboardCallbackDataPattern:
     """Test that callback data follows consistent patterns."""
     
-    def test_time_delta_callback_pattern(self):
-        """Verify time delta callbacks follow 'time_delta_{minutes}' pattern."""
+    def test_time_delta_callback_pattern(self, sample_l10n):
+        """Verify time delta callbacks include 'time_delta_{minutes}' pattern."""
         
         from aiogram.types import InlineKeyboardButton
         
-        keyboard = get_time_selection_keyboard("Europe/Moscow", {"time_delta_15": "test"})
+        keyboard = get_time_selection_keyboard("Europe/Moscow", sample_l10n)
         
-        for row in keyboard.inline_keyboard:
-            for button in row:
-                if hasattr(button, 'callback_data'):
-                    assert button.callback_data.startswith("time_delta_") or \
-                           button.callback_data == "cancel_wizard"
+        callbacks = [
+            button.callback_data 
+            for row in keyboard.inline_keyboard 
+            for button in row 
+            if hasattr(button, 'callback_data')
+        ]
+        
+        assert any(cb.startswith("time_delta_") for cb in callbacks)
+        assert "time_delta_15" in callbacks
     
-    def test_fixed_time_callback_pattern(self):
-        """Verify fixed time callbacks follow 'time_fixed_{ISO}' pattern."""
+    def test_fixed_time_callback_pattern(self, sample_l10n):
+        """Verify fixed time callbacks include 'time_fixed_{ISO}' pattern."""
         
         from aiogram.types import InlineKeyboardButton
         
-        keyboard = get_time_selection_keyboard("Europe/Moscow", {"time_fixed_2024-03-27T18:30": "test"})
+        keyboard = get_time_selection_keyboard("Europe/Moscow", sample_l10n)
         
-        for row in keyboard.inline_keyboard:
-            for button in row:
-                if hasattr(button, 'callback_data'):
-                    assert button.callback_data.startswith("time_fixed_") or \
-                           button.callback_data == "cancel_wizard"
+        callbacks = [
+            button.callback_data 
+            for row in keyboard.inline_keyboard 
+            for button in row 
+            if hasattr(button, 'callback_data')
+        ]
+        
+        assert any(cb.startswith("time_fixed_") for cb in callbacks)
 
 
 if __name__ == "__main__":

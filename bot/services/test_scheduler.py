@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, MagicMock
 
 # Import scheduler components
-from bot.services.scheduler import SchedulerService, execute_reminder_job
+from bot.services.scheduler import SchedulerService
 
 
 class TestSchedulerService:

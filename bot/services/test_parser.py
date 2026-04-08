@@ -93,7 +93,12 @@ class TestPastHourRollover:
     
     async def test_past_hour_rolls_to_tomorrow(self, parser, mock_past_time):
         """Test that 'в 9 утра' at 10:30am rolls over to tomorrow."""
-        with patch('bot.services.parser.datetime.now', return_value=mock_past_time):
+        class MockDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return mock_past_time
+                
+        with patch('bot.services.parser.datetime', MockDatetime):
             result = await parser.parse("в 9 утра", "Europe/Moscow")
         
         assert result.parsed_datetime is not None
@@ -101,21 +106,32 @@ class TestPastHourRollover:
         assert result.parsed_datetime.day == mock_past_time.day + 1, \
             f"Expected tomorrow (day {mock_past_time.day + 1}), got day {result.parsed_datetime.day}"
     
-    async def test_evening_at_morning_rolls_to_tomorrow(self, parser, mock_past_time):
-        """Test that 'вечером' at 10:30am rolls over to tomorrow evening."""
-        with patch('bot.services.parser.datetime.now', return_value=mock_past_time):
+    async def test_evening_after_evening_rolls_to_tomorrow(self, parser):
+        """Test that 'вечером' at 10:30pm (past 7pm) rolls over to tomorrow evening."""
+        past_evening_time = datetime(2026, 3, 28, 22, 30, tzinfo=pytz.timezone("Europe/Moscow"))
+        class MockDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return past_evening_time
+                
+        with patch('bot.services.parser.datetime', MockDatetime):
             result = await parser.parse("вечером", "Europe/Moscow")
         
         assert result.parsed_datetime is not None
         # Should be tomorrow evening (19:00), not today
-        assert result.parsed_datetime.day == mock_past_time.day + 1, \
-            f"Expected tomorrow (day {mock_past_time.day + 1}), got day {result.parsed_datetime.day}"
+        assert result.parsed_datetime.day == past_evening_time.day + 1, \
+            f"Expected tomorrow (day {past_evening_time.day + 1}), got day {result.parsed_datetime.day}"
     
     async def test_morning_at_same_hour_stays_today(self, parser):
         """Test that 'вечером' at 7pm stays today (not rolled over)."""
         evening_time = datetime(2026, 3, 28, 19, 0, tzinfo=pytz.timezone("Europe/Moscow"))
         
-        with patch('bot.services.parser.datetime.now', return_value=evening_time):
+        class MockDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return evening_time
+                
+        with patch('bot.services.parser.datetime', MockDatetime):
             result = await parser.parse("вечером", "Europe/Moscow")
         
         assert result.parsed_datetime is not None

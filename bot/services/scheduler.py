@@ -63,93 +63,7 @@ from bot.lexicon import get_l10n
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# JOB TARGET FUNCTION (Called by APScheduler)
-# =============================================================================
 
-async def execute_reminder_job(reminder_id: int, bot_token: str, is_nagging_execution: bool = False) -> None:
-    """
-    APScheduler job target function for executing reminder notifications.
-    
-    This function is called by APScheduler at the scheduled time to:
-      1. Fetch the reminder from database
-      2. Create a fresh Bot instance from token (to avoid pickle issues)
-      3. Send a Telegram notification to the user
-      4. Handle recurring task rescheduling (if applicable)
-      5. Schedule nagging follow-ups (if nagging mode enabled)
-    
-    Args:
-        reminder_id: ID of the reminder to execute
-        bot_token: Telegram Bot API token for creating fresh Bot instance
-        is_nagging_execution: True if this is a nagging follow-up job
-        
-    Returns:
-        None
-    
-    Side Effects:
-        Sends Telegram message, updates database for recurring tasks
-    
-    Raises:
-        No exceptions - all errors are logged internally
-    
-    BUG FIX APPLIED:
-      Previously didn't check if reminder was completed before nag execution.
-      Now checks status to prevent duplicate nag messages after task completion.
-      
-    ARCHITECTURE NOTE:
-      We pass bot_token as an argument instead of storing Bot globally.
-      This avoids pickle errors when storing jobs in APScheduler jobstore.
-    """
-    # Create fresh Bot instance from token (at execution time, not stored in job)
-    bot = Bot(token=bot_token)
-    
-    try:
-        await _execute_reminder_internal(reminder_id, bot, is_nagging_execution=is_nagging_execution)
-    finally:
-        # Always close session to avoid resource leaks
-        try:
-            await bot.session.close()
-        except Exception as e:
-            logger.debug(f"Error closing Bot session: {e}")
-
-
-# =============================================================================
-# INTERNAL EXECUTION HELPER (No dependencies on global state)
-# =============================================================================
-
-async def _execute_reminder_internal(reminder_id: int, bot: Bot, is_nagging_execution: bool = False) -> None:
-    """
-    APScheduler job target - executes when scheduled time arrives.
-    
-    This function runs outside the request context (no middleware), so it
-    opens its own database session directly. It handles:
-      1. Fetching reminder from database
-      2. Sending Telegram notification
-      3. Rescheduling recurring tasks
-      4. Scheduling nagging follow-ups (if enabled)
-    
-    Session lifecycle:
-      - ``async with session_pool()`` creates session
-      - Auto-commits on clean exit, rolls back on exception
-      - MUST NOT call session.commit() manually inside block
-    
-    Args:
-        reminder_id: ID of the reminder to execute
-        bot: Telegram Bot instance for sending messages
-        is_nagging_execution: True if this is a nagging follow-up
-        
-    Returns:
-        None
-    
-    Side Effects:
-      Sends Telegram message, updates database for recurring tasks
-      
-    BUG FIXES APPLIED:
-      ✅ Checks reminder.status before nag execution (prevents duplicate nags)
-      ✅ Handles timezone-aware datetimes correctly in recurrence calc
-      ✅ Added idempotency guard against rapid double-taps
-      ✅ Improved error logging with context information
-    """
 
 
 # =============================================================================
@@ -252,11 +166,10 @@ class SchedulerService:
                 run_date = run_date.replace(tzinfo=timezone.utc)
             
             self.scheduler.add_job(
-                execute_reminder_job,  # Job target function
+                self._execute_reminder,  # Job target function
                 "date",  # Date-based trigger (fires at specific datetime)
                 run_date=run_date,  # When to fire the job
-                args=[reminder_id, self.bot_token, False],  # Args for job target:
-                                                          #   [reminder_id, bot_token, is_nagging_execution=False]
+                args=[reminder_id, False],  # Args for job target: [reminder_id, is_nagging_execution=False]
                 id=str(reminder_id),  # Job ID matches reminder_id (for removal)
                 replace_existing=True,  # Replace if job with same ID exists
             )
@@ -492,10 +405,10 @@ class SchedulerService:
                         )
                         
                         self.scheduler.add_job(
-                            execute_reminder_job,  # Job target function
+                            self._execute_reminder,  # Job target function
                             "date",  # Date-based trigger
                             run_date=next_nag,  # When to fire (timezone-aware)
-                            args=[reminder_id, self.bot_token, True],  # Args: [id, bot_token, is_nagging=True]
+                            args=[reminder_id, True],  # Args: [id, is_nagging=True]
                             id=f"nag_{reminder_id}",  # Unique ID for nagging job
                             replace_existing=True,  # Replace if already scheduled
                         )

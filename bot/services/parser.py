@@ -80,8 +80,9 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _process_hour_expression(
-    normalized_text: str, 
-    clean_text: str, 
+    hour: int,
+    minute: int,
+    matched_text: str, 
     timezone: str, 
     now: datetime
 ) -> Optional[datetime]:
@@ -91,24 +92,18 @@ def _process_hour_expression(
     This helper method handles AM/PM conversion and creates timezone-aware datetime objects.
     
     Args:
-        normalized_text: Lowercased text with time expression
-        clean_text: Text with some expressions already removed by Natasha
+        hour: The parsed hour value
+        minute: The parsed minute value
+        matched_text: The substring that matched the hour expression
         timezone: User's timezone string (e.g., "Europe/Moscow")
         now: Current datetime for date components
         
     Returns:
         Parsed datetime object or None if no valid match found
     """
-    hour_str = normalized_text.split()[-1]  # Get the last word (should be the hour)
-    
-    try:
-        hour = int(hour_str)
-    except ValueError:
-        return None
-    
     # Check for AM/PM indicators in the text
-    has_pm = "pm" in normalized_text.lower() or "вечера" in normalized_text.lower()
-    has_am = "am" in normalized_text.lower() or "утра" in normalized_text.lower()
+    has_pm = "pm" in matched_text.lower() or "вечера" in matched_text.lower()
+    has_am = "am" in matched_text.lower() or "утра" in matched_text.lower() or "ночи" in matched_text.lower()
     
     # Determine if input is already 24-hour format (hour >= 13) or needs conversion
     is_24h_format = hour >= 13
@@ -125,15 +120,6 @@ def _process_hour_expression(
         else:  # has_am
             period_hour = hour % 12 or 12
     
-    # Determine minute based on AM/PM indicators
-    if has_am or "утра" in normalized_text.lower():
-        minute = 0
-    elif has_pm or "вечера" in normalized_text.lower():
-        minute = 0
-    else:
-        # No AM/PM indicator - use :00 for simple hour-only expressions
-        minute = 0
-    
     dt = datetime(
         year=now.year,
         month=now.month,
@@ -144,7 +130,7 @@ def _process_hour_expression(
     )
     
     # FIX: If the parsed time is in the past, roll over to tomorrow
-    if dt <= now:
+    if dt < now:
         dt = dt.replace(day=dt.day + 1)
 
     return dt
@@ -370,11 +356,15 @@ class InputParser:
             clean_text = normalized_text
 
         # --- Stage 3: dateparser: resolve to an actual datetime object ---
+        # Get current time for dateparser relative base
+        now_for_dp = datetime.now(pytz.timezone(timezone))
+        
         settings: dict = {
             "PREFER_DATES_FROM": "future",  # Only parse future dates (no past)
             "TIMEZONE": timezone,  # User's timezone for correct interpretation
             "RETURN_AS_TIMEZONE_AWARE": True,  # Return tz-aware datetime objects
             "PREFER_DAY_OF_MONTH": "current",  # Use current month/day when ambiguous
+            "RELATIVE_BASE": now_for_dp,  # Use our mocked time as base for relative dates
         }
         
         dp_matches = dateparser.search.search_dates(
@@ -408,19 +398,22 @@ class InputParser:
             
             now = datetime.now(pytz.timezone(timezone))
             
-            # Pattern for Russian/English hour-only expressions with preposition
-            # Matches: "в 23", "at 9", "в 10 утра", "in 5pm", etc.
+            # Pattern for Russian/English hour-only expressions with optional preposition
+            # Matches: "в 23", "at 9", "9 утра", "в 10 утра", "in 10", "19:00", "в 19:00", etc.
             hour_pattern = re.compile(
-                r"(?:^|\s)(?:в|at)\s+(\d{1,2})(?:\s+(утра|послеобеденно|вечера|ночи|am|pm))?",
+                r"(?:^|\s)(?:(?:в|at|in)\s+)?(\d{1,2})(?:[:.](\d{2}))?(?:\s+(утра|послеобеденно|вечера|ночи|am|pm))?(?=\s|$)",
                 re.IGNORECASE
             )
             
             hour_match = hour_pattern.search(normalized_text)
             
             if hour_match:
+                hour = int(hour_match.group(1))
+                minute = int(hour_match.group(2)) if hour_match.group(2) else 0
+                
                 # Process matched hour expression using helper function
                 result_dt = _process_hour_expression(
-                    normalized_text, clean_text, timezone, now=now
+                    hour, minute, hour_match.group(0), timezone, now=now
                 )
                 
                 if result_dt:
@@ -478,16 +471,19 @@ class InputParser:
                 logger.debug("Parser: Trying 'в X часов' regex fallback...")
             
             hour_match = re.search(
-                r"в\s+(\d{1,2})\s*(утра|послеобеденно|вечера|ночи|часов?)?",
+                r"в\s+(\d{1,2})(?:[:.](\d{2}))?\s*(утра|послеобеденно|вечера|ночи|часов?)?",
                 normalized_text,
                 re.IGNORECASE
             )
             
             if hour_match:
+                hour = int(hour_match.group(1))
+                minute = int(hour_match.group(2)) if hour_match.group(2) else 0
+                
                 # Process matched hour expression using helper function
                 now = datetime.now(pytz.timezone(timezone))
                 result_dt = _process_hour_expression(
-                    normalized_text, clean_text, timezone, now=now
+                    hour, minute, hour_match.group(0), timezone, now=now
                 )
                 
                 if result_dt:

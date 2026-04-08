@@ -40,19 +40,13 @@ from bot.middlewares.database import DatabaseMiddleware
 @pytest.fixture
 def mock_session_pool():
     """Create a mock session pool factory."""
-    async def mock_context_manager():
+    def mock_context_manager():
         session = MagicMock()
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
-        
-        # Mock DAOs
-        from bot.database.dao.user import UserDAO
-        from bot.database.dao.reminder import ReminderDAO
-        
-        user_dao = UserDAO(session)
-        reminder_dao = ReminderDAO(session)
-        
-        yield session, user_dao, reminder_dao
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+        return session
     
     return mock_context_manager
 
@@ -77,7 +71,7 @@ class TestWhitelistMiddleware:
         mock_event.from_user = MagicMock(id=123456)
         
         # Mock data dict (middleware will populate it)
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
@@ -94,7 +88,7 @@ class TestWhitelistMiddleware:
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=999999)  # Admin ID
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
@@ -116,7 +110,7 @@ class TestWhitelistMiddleware:
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=555555)  # Not whitelisted, not admin
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
@@ -132,7 +126,8 @@ class TestWhitelistMiddleware:
 class TestDatabaseMiddleware:
     """Test database dependency injection functionality."""
     
-    async def test_injects_session_into_data(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_injects_session_into_data(self, MockUserDAO, mock_session_pool):
         """DatabaseMiddleware should inject session into data dict."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -144,18 +139,27 @@ class TestDatabaseMiddleware:
         session = MagicMock()
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+        
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
         
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
+        assert result is not None, "Middleware returned None, indicating failure in setup"
         assert "SESSION_ID:" in result
 
 
-    async def test_injects_user_dao_into_data(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_injects_user_dao_into_data(self, MockUserDAO, mock_session_pool):
         """DatabaseMiddleware should inject user_dao into data dict."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -167,17 +171,24 @@ class TestDatabaseMiddleware:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
+        
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
+        assert result is not None, "Middleware returned None, indicating failure in setup"
         assert "USER_DAO_TYPE:" in result
 
 
-    async def test_injects_reminder_dao_into_data(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_injects_reminder_dao_into_data(self, MockUserDAO, mock_session_pool):
         """DatabaseMiddleware should inject reminder_dao into data dict."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -189,17 +200,24 @@ class TestDatabaseMiddleware:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
+        
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
+        assert result is not None, "Middleware returned None, indicating failure in setup"
         assert "REMINDER_DAO_TYPE:" in result
 
 
-    async def test_injects_resolved_user_into_data(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_injects_resolved_user_into_data(self, MockUserDAO, mock_session_pool):
         """DatabaseMiddleware should inject resolved User object into data."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -216,13 +234,19 @@ class TestDatabaseMiddleware:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
+        
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
+        assert result is not None, "Middleware returned None"
         assert user_injected, "User should be injected into data"
 
 
@@ -258,7 +282,7 @@ class TestMiddlewareOrder:
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=555555)  # Unauthorized
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         # Apply whitelist middleware first (as in __main__.py)
         result1 = await whitelist_mw(mock_handler, mock_event, data)
@@ -268,6 +292,7 @@ class TestMiddlewareOrder:
         
         # Now test with authorized user - both middlewares should run
         mock_event.from_user = MagicMock(id=123456)  # Authorized
+        data["event_from_user"] = mock_event.from_user
         
         result2 = await whitelist_mw(mock_handler, mock_event, data)
         
@@ -282,7 +307,8 @@ class TestMiddlewareOrder:
 class TestUnitOfWorkPattern:
     """Test that commit/rollback happens correctly."""
     
-    async def test_commit_on_success(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_commit_on_success(self, MockUserDAO, mock_session_pool):
         """Session should be committed on successful handler execution."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -301,17 +327,24 @@ class TestUnitOfWorkPattern:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
+        
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         
+        assert result is not None, "Middleware returned None"
         assert commit_called, "Commit should be called on success"
 
 
-    async def test_rollback_on_exception(self, mock_session_pool):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_rollback_on_exception(self, MockUserDAO, mock_session_pool):
         """Session should be rolled back on handler exception."""
         middleware = DatabaseMiddleware(session_pool=mock_session_pool)
         
@@ -325,10 +358,15 @@ class TestUnitOfWorkPattern:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
+        
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         # Should raise exception but rollback should happen
         with pytest.raises(ValueError):
@@ -342,60 +380,39 @@ class TestUnitOfWorkPattern:
 class TestLocalizationInjection:
     """Test that l10n dictionary is injected into handlers."""
     
-    async def test_injects_l10n_into_data(self):
+    @patch('bot.middlewares.database.UserDAO')
+    async def test_injects_l10n_into_data(self, MockUserDAO):
         """DatabaseMiddleware should inject l10n dict into data."""
         
+        from contextlib import asynccontextmanager
+        
         # Mock session pool
+        @asynccontextmanager
         async def mock_context_manager():
             session = MagicMock()
             session.__aenter__ = AsyncMock(return_value=session)
             session.__aexit__ = AsyncMock(return_value=None)
+            session.commit = AsyncMock()
+            session.rollback = AsyncMock()
+            yield session
             
-            from bot.database.dao.user import UserDAO
-            from bot.database.dao.reminder import ReminderDAO
-            
-            user_dao = UserDAO(session)
-            reminder_dao = ReminderDAO(session)
-            
-            # Mock get_or_create to return a user with language set
-            async def mock_get_or_create(*args, **kwargs):
-                user = MagicMock()
-                user.id = args[0] if args else 123456
-                user.language = "ru"
-                return user
-            
-            user_dao.get_or_create = mock_get_or_create
-            
-            yield session, user_dao, reminder_dao
-        
         middleware = DatabaseMiddleware(session_pool=mock_context_manager)
         
         async def mock_handler(event, data):
             assert "l10n" in data, "Localization dict should be injected into data"
             return f"L10N_KEYS: {list(data['l10n'].keys())[:3]}"  # First 3 keys
         
-        session = MagicMock()
-        session.__aenter__ = AsyncMock(return_value=session)
-        session.__aexit__ = AsyncMock(return_value=None)
+        mock_user_dao = MagicMock()
+        mock_user = MagicMock(id=123456, language="ru")
+        mock_user_dao.get_or_create = AsyncMock(return_value=mock_user)
+        MockUserDAO.return_value = mock_user_dao
         
-        from bot.database.dao.user import UserDAO
-        from bot.database.dao.reminder import ReminderDAO
-        
-        user_dao = UserDAO(session)
-        reminder_dao = ReminderDAO(session)
-        
-        async def mock_get_or_create(*args, **kwargs):
-            user = MagicMock()
-            user.id = args[0] if args else 123456
-            user.language = "ru"
-            return user
-        
-        user_dao.get_or_create = mock_get_or_create
+
         
         mock_event = MagicMock()
         mock_event.from_user = MagicMock(id=123456)
         
-        data: Dict[str, Any] = {}
+        data: Dict[str, Any] = {"event_from_user": mock_event.from_user}
         
         result = await middleware(mock_handler, mock_event, data)
         

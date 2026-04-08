@@ -54,10 +54,10 @@ class TestWhitespaceOnly:
     async def test_single_space(self, parser):
         """Single space should not crash the parser."""
         
-        with pytest.raises(Exception) as exc_info:
-            await parser.parse(" ", "Europe/Moscow")
+        result = await parser.parse(" ", "Europe/Moscow")
         
         # Should handle gracefully (may raise or return None datetime)
+        assert result.parsed_datetime is None
 
 
 class TestVeryLongTaskDescription:
@@ -141,8 +141,8 @@ class TestNumbersOnly:
     async def test_single_number(self, parser):
         """Single number should be handled gracefully."""
         
-        with pytest.raises(Exception) as exc_info:
-            await parser.parse("123", "Europe/Moscow")
+        result = await parser.parse("123", "Europe/Moscow")
+        assert result.parsed_datetime is None
 
 
 class TestEmojiHandling:

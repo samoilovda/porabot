@@ -65,8 +65,15 @@ async def _send_safe(bot: Bot, user_id: int, text: str) -> None:
 # Main job function (canonical — registered by setup_daily_briefs)
 # ---------------------------------------------------------------------------
 
-async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
+async def process_daily_briefs() -> None:
     """Process morning/evening briefs for all users with active tasks."""
+    from bot.services.scheduler import _instance
+    if not _instance:
+        logger.error("Failed to process daily briefs: SchedulerService not initialized")
+        return
+    
+    bot = _instance.bot
+    session_pool_factory = _instance.session_pool
     logger.info("Starting hourly daily briefs check...")
 
     try:
@@ -121,7 +128,7 @@ async def process_daily_briefs(bot: Bot, session_pool_factory) -> None:
 # Scheduler registration
 # ---------------------------------------------------------------------------
 
-def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory) -> None:
+def setup_daily_briefs(scheduler) -> None:
     """Register the hourly cron job for daily briefs. Call once at startup."""
     logger.info("Registering hourly daily briefs cron job")
     scheduler.add_job(
@@ -130,5 +137,4 @@ def setup_daily_briefs(scheduler, bot: Bot, session_pool_factory) -> None:
         minute=0,
         id="hourly_daily_briefs",
         replace_existing=True,
-        args=[bot, session_pool_factory],
     )

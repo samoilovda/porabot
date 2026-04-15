@@ -58,7 +58,7 @@ async def main() -> None:
         pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)
-    setup_daily_briefs(scheduler, bot, session_pool)
+    setup_daily_briefs(scheduler)
     logger.info("Scheduler configured.")
 
     # Middleware — order matters: whitelist first (fast reject), then DB injection

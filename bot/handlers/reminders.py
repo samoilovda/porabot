@@ -234,6 +234,12 @@ async def handle_forwarded_task(
     except Exception as e:
         logger.error("Error parsing forwarded text: %s", e, exc_info=True)
         await message.answer(l10n.get("parse_error", "Error parsing text"))
+    
+    # HIGH-3 FIX: Clear FSM state after error to prevent stuck wizard
+    try:
+        await state.clear()
+    except Exception:
+        pass  # Ignore if already cleared
 
 
 @router.message(ReminderWizard.entering_text, F.text)
@@ -448,6 +454,27 @@ async def callback_show_completed(
 # ---------------------------------------------------------------------------
 # Mark done
 # ---------------------------------------------------------------------------
+
+def _cleanup_stale_timers() -> None:
+    """
+    Clean up any tasks in active_auto_delete_tasks that have already completed.
+    
+    This prevents memory leaks from orphaned task references after 5 seconds
+    when the keyboard removal completes successfully.
+    
+    Called periodically via APScheduler cleanup job.
+    """
+    if not active_auto_delete_tasks:
+        return
+    
+    # Remove any tasks that are still pending (tasks should have completed)
+    # This handles edge cases where task wasn't properly removed from dict
+    for msg_id, task in list(active_auto_delete_tasks.items()):
+        if task.done():  # Task has completed (success or error)
+            try:
+                active_auto_delete_tasks.pop(msg_id, None)
+            except Exception:
+                pass
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(

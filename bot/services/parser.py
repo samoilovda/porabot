@@ -204,7 +204,7 @@ class InputParser:
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             hour_match = re.search(
-                r"в\s+(\d{1,2})\s*(утра|послеобеденно|вечера|ночи|часов?)?",
+                r"в\s+(\d{1,2})(?:[:.](\d{2}))?\s*(утра|послеобеденно|вечера|ночи|часов?)?",
                 normalized_text,
                 re.IGNORECASE,
             )

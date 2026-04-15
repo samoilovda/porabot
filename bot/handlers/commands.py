@@ -50,5 +50,6 @@ async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any]) 
 async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
     text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
-    await callback.message.edit_text(text, reply_markup=get_main_menu_keyboard(l10n))
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()

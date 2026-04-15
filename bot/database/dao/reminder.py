@@ -363,21 +363,3 @@ class ReminderDAO(BaseDAO[Reminder]):
         if reminder:
             reminder.execution_time = new_time
             await self.session.flush()
-
-    async def get_by_id_or_none(self, reminder_id: int) -> Optional[Reminder]:
-        """
-        Fetch a single reminder (used by scheduler job wrapper).
-        
-        Convenience wrapper around get_by_id() that returns None instead of raising.
-        Useful for APScheduler job targets where we want to skip if record not found.
-        
-        Args:
-            reminder_id: Primary key of reminder to fetch
-            
-        Returns:
-            Reminder or None
-            
-        Example:
-            >>> reminder = await dao.get_by_id_or_none(456)  # May return None
-        """
-        return await self.get_by_id(reminder_id)

@@ -1,6 +1,7 @@
 """Handlers for base commands: /start, /help, /cancel."""
 
 import logging
+from typing import Any
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
@@ -12,7 +13,6 @@ from bot.database.models import User
 from bot.keyboards.reply import get_main_menu_keyboard
 from bot.keyboards.inline import get_language_selection_keyboard
 from bot.lexicon import get_l10n
-from typing import Any
 
 router = Router(name="commands")
 logger = logging.getLogger(__name__)
@@ -21,109 +21,34 @@ logger = logging.getLogger(__name__)
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
     await state.clear()
-    
-    # Onboarding: if language is not set, force selection
     if user.language is None:
-        await message.answer(
-            l10n["choose_language"],
-            reply_markup=get_language_selection_keyboard(l10n)
-        )
+        await message.answer(l10n["choose_language"], reply_markup=get_language_selection_keyboard(l10n))
         return
-
     text = l10n["cmd_start"].format(name=message.from_user.first_name)
     await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
 
 
 @router.callback_query(F.data.startswith("set_lang_"))
-async def callback_set_lang(
-    callback: CallbackQuery, user_dao: UserDAO, user: User
-) -> None:
+async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: User) -> None:
     lang_code = callback.data.split("set_lang_")[1]
-    
-    # Update language in DB
     await user_dao.update_language(user.id, lang_code)
-    
-    # Fetch new lexicon directly since we just changed it
     new_l10n = get_l10n(lang_code)
-    
     await callback.message.delete()
     await callback.message.answer(new_l10n["lang_set"])
-    
-    # Show main menu in the new language
     text = new_l10n["cmd_start"].format(name=callback.from_user.first_name)
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(new_l10n))
     await callback.answer()
 
 
-# =============================================================================
-# /cancel command handler (FIXED Phase 1 - FSM management)
-# =============================================================================
-
 @router.message(F.text == "/cancel")
-async def cmd_cancel(
-    message: Message, 
-    state: FSMContext, 
-    l10n: dict[str, Any]
-) -> None:
-    """
-    Cancel current reminder creation wizard.
-    
-    This handler clears the FSM state when user wants to abort creating a new reminder.
-    Returns user to main menu.
-    
-    Args:
-        message: Incoming Telegram message with /cancel command
-        state: FSMContext for state management
-        l10n: Localization dictionary
-        
-    Returns:
-        None
-    
-    Side Effects:
-      Clears FSM state, sends confirmation and shows main menu
-      
-    BUG FIX APPLIED (Phase 1):
-      Previously didn't have explicit /cancel handler. Users could get stuck in FSM states
-      with no escape route except restarting the bot or using /start command.
-      
-    EXAMPLE USAGE:
-        User types "/cancel" while in ReminderWizard.entering_text state
-        → State cleared, main menu shown
-    """
+async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
-    
-    text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
-    await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+    await message.answer(l10n.get("cmd_cancel", "Reminder creation cancelled."), reply_markup=get_main_menu_keyboard(l10n))
 
 
 @router.callback_query(F.data == "cancel_wizard")
-async def callback_cancel(
-    callback: CallbackQuery, 
-    state: FSMContext, 
-    l10n: dict[str, Any]
-) -> None:
-    """
-    Cancel reminder creation from inline keyboard.
-    
-    Alternative way to cancel via button press instead of /cancel command.
-    
-    Args:
-        callback: CallbackQuery with cancel_wizard data
-        state: FSMContext for state management
-        l10n: Localization dictionary
-        
-    Returns:
-        None
-    
-    Side Effects:
-      Clears FSM state, sends confirmation and shows main menu
-      
-    EXAMPLE USAGE:
-        User presses "❌ Cancel" button on inline keyboard
-        → State cleared, main menu shown
-    """
+async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
-    
     text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
     await callback.message.edit_text(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()

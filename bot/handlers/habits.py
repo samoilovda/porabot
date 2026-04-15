@@ -1,4 +1,8 @@
+"""Habits handler — one-tap shortcuts for common recurring tasks."""
+
+import logging
 from datetime import datetime, timedelta
+
 import pytz
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
@@ -10,16 +14,23 @@ from bot.services.scheduler import SchedulerService
 from bot.utils.time_ext import format_time
 
 router = Router(name="habits")
+logger = logging.getLogger(__name__)
+
+_HABIT_TEXTS = {
+    "water":   "💧 Выпить стакан воды",
+    "vit":     "💊 Принять витамины",
+    "stretch": "🧘 Размять спину",
+}
+
 
 @router.message(F.text.in_(["🫧 Привычки", "🫧 Habits"]))
 async def btn_habits(message: Message) -> None:
-    """Show shortcuts for common tasks (1 click creation)."""
+    """Show one-tap habit shortcuts."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="💧 Выпить воду (+1ч)",     callback_data="habit_water_1"))
+    builder.row(InlineKeyboardButton(text="💧 Выпить воду (+1ч)",      callback_data="habit_water_1"))
     builder.row(InlineKeyboardButton(text="💊 Принять витамины (+2ч)", callback_data="habit_vit_2"))
-    builder.row(InlineKeyboardButton(text="🧘 Размять спину (+3ч)",   callback_data="habit_stretch_3"))
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="habit_cancel"))
-    
+    builder.row(InlineKeyboardButton(text="🧘 Размять спину (+3ч)",    callback_data="habit_stretch_3"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена",                  callback_data="habit_cancel"))
     await message.answer("🫧 Выберите быструю привычку:", reply_markup=builder.as_markup())
 
 
@@ -28,35 +39,26 @@ async def callback_habit_create(
     callback: CallbackQuery,
     user: User,
     reminder_dao: ReminderDAO,
-    scheduler_service: SchedulerService
+    scheduler_service: SchedulerService,
 ) -> None:
+    """Create a habit reminder from a one-tap button."""
     if callback.data == "habit_cancel":
         return await callback.message.delete()
 
-    # Parse callback (format: habit_{name}_{hours})
     parts = callback.data.split("_")
     name = parts[1]
     hours = int(parts[2])
-    
-    habit_texts = {
-        "water": "💧 Выпить стакан воды",
-        "vit": "💊 Принять витамины",
-        "stretch": "🧘 Размять спину"
-    }
-    text = habit_texts.get(name, "Привычка")
-    
+    text = _HABIT_TEXTS.get(name, "Привычка")
+
     try:
         user_tz = pytz.timezone(user.timezone)
     except Exception:
         user_tz = pytz.UTC
-        
-    # FIX CRIT-2: keep timezone-aware datetime — do NOT strip tzinfo.
-    # APScheduler handles tz-aware run_date correctly.
+
+    # Keep timezone-aware datetime — APScheduler handles tz-aware run_date correctly.
     execution_time = datetime.now(user_tz) + timedelta(hours=hours)
 
-    # SECURITY FIX: Wrap in try-except to handle validation errors
     try:
-        # Save directly to DB, skipping FSM
         reminder = await reminder_dao.create_reminder(
             user_id=user.id,
             text=text,
@@ -64,21 +66,17 @@ async def callback_habit_create(
             is_recurring=False,
             is_nagging=False,
         )
-
-        # Schedule with tz-aware datetime
         scheduler_service.schedule_reminder(reminder.id, execution_time)
-        
         time_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         await callback.message.edit_text(
             f"✅ Привычка добавлена!\nНапомню в `{time_str}`: {text}",
             parse_mode="Markdown",
-            reply_markup=None
+            reply_markup=None,
         )
         await callback.answer("Привычка создана!")
     except ValueError as ve:
-        # Validation error (e.g., text too long - shouldn't happen with hardcoded text)
-        logger.error(f"Validation error creating habit for user {user.id}: {ve}")
+        logger.error("Validation error creating habit for user %s: %s", user.id, ve)
         await callback.answer("❌ Ошибка создания привычки", show_alert=True)
     except Exception as e:
-        logger.error(f"Error creating habit for user {user.id}: {e}", exc_info=True)
+        logger.error("Error creating habit for user %s: %s", user.id, e, exc_info=True)
         await callback.answer("❌ Ошибка создания привычки", show_alert=True)

@@ -7,6 +7,7 @@ No business logic lives here.
 
 import asyncio
 import logging
+import pickle
 import signal
 import sys
 
@@ -14,6 +15,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 from bot.config import config, validate_config
@@ -52,7 +54,7 @@ async def main() -> None:
 
     # Scheduler
     scheduler = AsyncIOScheduler(
-        jobstores={"default": MemoryJobStore()},   # In-memory storage (no pickle issues)
+        jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)},
         pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)

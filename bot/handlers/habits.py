@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+import pytz
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -109,19 +110,22 @@ async def state_habit_time(
         await message.answer("❌ I couldn't understand the time. Please try again (e.g. '10:00' or 'at 8pm'):")
         return
         
+    # Convert local execution time to UTC before storing in database!
+    execution_time_utc = result.parsed_datetime.astimezone(pytz.UTC)
+    
     # Schedule it as a strict daily recurring task with nagging enabled
     try:
         reminder = await reminder_dao.create_reminder(
             user_id=user.id,
             text=habit_text,
-            execution_time=result.parsed_datetime,
+            execution_time=execution_time_utc,
             is_recurring=True,
             rrule_string="FREQ=DAILY",
             is_nagging=True,
         )
-        scheduler_service.schedule_reminder(reminder.id, result.parsed_datetime)
+        scheduler_service.schedule_reminder(reminder.id, execution_time_utc)
         
-        time_str = format_time(result.parsed_datetime, user.timezone, user.show_utc_offset, "%H:%M")
+        time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
         await message.answer(
             f"✅ **Daily Habit Created!**\nI will remind you to **{habit_text}** every day at `{time_str}`.", 
             parse_mode="Markdown"

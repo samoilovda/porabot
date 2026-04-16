@@ -85,11 +85,11 @@ class InputParser:
     # ------------------------------------------------------------------
 
     def _apply_heuristics(self, text: str) -> str:
-        """Lower-case the text and apply heuristic replacements."""
-        normalized = text.lower()
+        """Apply heuristic replacements while preserving original casing."""
+        normalized = text
         for key, value in self._NORMALIZATIONS.items():
-            if key in normalized:
-                normalized = normalized.replace(key, value)
+            # Use case-insensitive substitution to match heuristics without forcing lowercase
+            normalized = re.sub(re.escape(key), value, normalized, flags=re.IGNORECASE)
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
         # "в 12" / "at 14" → "в 12:00" / "at 14:00" mapping (helps dateparser avoid treating lonely hours as years)

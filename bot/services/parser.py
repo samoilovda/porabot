@@ -92,6 +92,8 @@ class InputParser:
                 normalized = normalized.replace(key, value)
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
+        # "в 12" / "at 14" → "в 12:00" / "at 14:00" mapping (helps dateparser avoid treating lonely hours as years)
+        normalized = re.sub(r"(?i)\b(в|at)\s+(\d{1,2})\b(?!\s*[:.])", r"\1 \2:00", normalized)
         return normalized
 
     def _process_hour_expression(

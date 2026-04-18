@@ -38,8 +38,22 @@ def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
 async def init_db(engine: AsyncEngine) -> None:
     """Create all tables defined in models.py. Call once at startup."""
     from bot.database import models  # noqa: F401 — registers models in metadata
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Soft-migration for Custom Daily Briefs Feature
+        for col, col_type in [
+            ("briefs_enabled", "BOOLEAN DEFAULT 1"), 
+            ("morning_brief_hour", "INTEGER DEFAULT 9"), 
+            ("evening_brief_hour", "INTEGER DEFAULT 23")
+        ]:
+            try:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+            except OperationalError:
+                pass  # column already exists
 
 
 async def dispose_engine(engine: AsyncEngine) -> None:

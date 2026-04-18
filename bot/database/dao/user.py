@@ -48,3 +48,12 @@ class UserDAO(BaseDAO[User]):
         if user:
             user.show_utc_offset = show
             await self.session.flush()
+
+    async def update_briefs_settings(self, user_id: int, **kwargs) -> None:
+        """Update any custom daily brief settings dynamically."""
+        user = await self.get_by_id(user_id)
+        if user:
+            for key, value in kwargs.items():
+                if hasattr(user, key):
+                    setattr(user, key, value)
+            await self.session.flush()

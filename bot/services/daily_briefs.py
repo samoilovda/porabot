@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _build_morning_text(tasks, user, l10n: dict) -> str:
-    lines = ["🌅 **Доброе утро! План на сегодня:**\n"]
+    lines = [l10n.get("brief_morning", "🌅 **Доброе утро! План на сегодня:**\n")]
     for t in tasks:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
@@ -36,9 +36,9 @@ def _build_morning_text(tasks, user, l10n: dict) -> str:
 
 def _build_evening_text(completed, pending, user, l10n: dict) -> str:
     lines = [
-        "🌙 **Итоги дня:**",
-        f"✅ Выполнено: {len(completed)}",
-        f"⏳ Осталось/Пропущено: {len(pending)}\n",
+        l10n.get("brief_evening_title", "🌙 **Итоги дня:**"),
+        l10n.get("brief_evening_done", "✅ Выполнено: {count}").format(count=len(completed)),
+        l10n.get("brief_evening_pending", "⏳ Осталось/Пропущено: {count}\n").format(count=len(pending)),
     ]
     for t in completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
@@ -101,22 +101,27 @@ async def process_daily_briefs() -> None:
                     logger.warning("Invalid timezone '%s' for user %s, using UTC", user.timezone, user.id)
                     tz = pytz.UTC
 
+                if getattr(user, 'briefs_enabled', True) is False:
+                    continue
+                    
                 local_hour = datetime.now(tz).hour
-
                 reminder_dao = ReminderDAO(session)
+                
+                from bot.lexicon import get_l10n
+                l10n = get_l10n(user.language)
 
-                if local_hour == 9:
+                if local_hour == getattr(user, 'morning_brief_hour', 9):
                     tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if tasks:
-                        text = _build_morning_text(tasks, user, {})
+                        text = _build_morning_text(tasks, user, l10n)
                         await _send_safe(bot, user.id, text)
                         logger.info("Morning brief sent to user %s", user.id)
 
-                elif local_hour == 23:
+                elif local_hour == getattr(user, 'evening_brief_hour', 23):
                     completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
-                        text = _build_evening_text(completed, pending, user, {})
+                        text = _build_evening_text(completed, pending, user, l10n)
                         await _send_safe(bot, user.id, text)
                         logger.info("Evening brief sent to user %s", user.id)
 

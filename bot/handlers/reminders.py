@@ -489,7 +489,8 @@ async def callback_task_done(
         return
 
     await reminder_dao.mark_done(reminder_id)
-    scheduler_service.remove_reminder_job(reminder_id)
+    if not reminder.is_recurring:
+        scheduler_service.remove_reminder_job(reminder_id)
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:

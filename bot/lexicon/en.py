@@ -25,6 +25,15 @@ EN: dict[str, Any] = {
     "tz_success": "✅ Timezone: `{tz}`",
     "btn_toggle_utc_off": "🕒 Show UTC offset: OFF",
     "btn_toggle_utc_on": "🕒 Show UTC offset: ON",
+    
+    # Custom Daily Briefs Settings
+    "btn_briefs_setup": "📋 Briefs setup",
+    "btn_briefs_on": "🔔 Daily Briefs: ON",
+    "btn_briefs_off": "🔕 Daily Briefs: OFF",
+    "btn_morning_brief": "🌅 Morning: {hour:02d}:00",
+    "btn_evening_brief": "🌙 Evening: {hour:02d}:00",
+    "choose_hour": "Choose an hour:",
+    "btn_back_settings": "🔙 Back to settings",
 
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",
@@ -66,7 +75,11 @@ EN: dict[str, Any] = {
     "time_manual": "⌨️ Enter manually",
 
     # Reminders / Scheduler
-    "reminder_prefix": "🔔 **IT'S TIME!**\n",
+    "reminder_prefix": "🔔 ",
+    "brief_morning": "🌅 **Good morning! Plan for today:**\n",
+    "brief_evening_title": "🌙 **Day summary:**",
+    "brief_evening_done": "✅ Done: {count}",
+    "brief_evening_pending": "⏳ Remaining/Missed: {count}\n",
     "btn_done": "✅ Done",
     "btn_snooze": "⏰ Snooze",
     "task_done_reply": "✅ **Good job. I'll leave you alone.**",

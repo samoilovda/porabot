@@ -25,6 +25,15 @@ RU: dict[str, Any] = {
     "tz_success": "✅ Часовой пояс: `{tz}`",
     "btn_toggle_utc_off": "🕒 Показывать смещение UTC: ВЫКЛ",
     "btn_toggle_utc_on": "🕒 Показывать смещение UTC: ВКЛ",
+    
+    # Custom Daily Briefs Settings
+    "btn_briefs_setup": "📋 Настройка сводок",
+    "btn_briefs_on": "🔔 Ежедневные сводки: ВКЛ",
+    "btn_briefs_off": "🔕 Ежедневные сводки: ВЫКЛ",
+    "btn_morning_brief": "🌅 Утренняя: {hour:02d}:00",
+    "btn_evening_brief": "🌙 Вечерняя: {hour:02d}:00",
+    "choose_hour": "Выберите час:",
+    "btn_back_settings": "🔙 Назад в настройки",
 
     # Tasks List
     "no_tasks": "🎉 У тебя нет активных задач. Отдыхай!",
@@ -66,7 +75,11 @@ RU: dict[str, Any] = {
     "time_manual": "⌨️ Ввести вручную",
 
     # Reminders / Scheduler
-    "reminder_prefix": "🔔 **ПОРА!**\n",
+    "reminder_prefix": "🔔 ",
+    "brief_morning": "🌅 **Доброе утро! План на сегодня:**\n",
+    "brief_evening_title": "🌙 **Итоги дня:**",
+    "brief_evening_done": "✅ Выполнено: {count}",
+    "brief_evening_pending": "⏳ Осталось/Пропущено: {count}\n",
     "btn_done": "✅ Сделано",
     "btn_snooze": "⏰ Отложить",
     "task_done_reply": "✅ **Красавчик. Отстал.**",

@@ -79,12 +79,17 @@ async def process_daily_briefs() -> None:
     try:
         async with session_pool_factory() as session:
 
-            # Query only user IDs who have at least one active reminder
+            # BUG-C1 FIX: Only fetch users who have PENDING (active) reminders
+            # AND have briefs enabled. Previously also included "completed" which
+            # caused every past user to be processed every minute indefinitely.
             result = await session.execute(
                 select(User.id)
                 .distinct()
                 .join(Reminder)
-                .where(Reminder.status.in_(["pending", "completed"]))
+                .where(
+                    Reminder.status == "pending",
+                    User.briefs_enabled.is_(True),
+                )
             )
             user_ids = result.scalars().all()
 
@@ -94,15 +99,12 @@ async def process_daily_briefs() -> None:
                 user = await user_dao.get_by_id(uid)
                 if not user:
                     continue
-                
+                    
                 try:
                     tz = pytz.timezone(user.timezone)
                 except Exception:
                     logger.warning("Invalid timezone '%s' for user %s, using UTC", user.timezone, user.id)
                     tz = pytz.UTC
-
-                if getattr(user, 'briefs_enabled', True) is False:
-                    continue
                     
                 local_time_str = datetime.now(tz).strftime("%H:%M")
                 reminder_dao = ReminderDAO(session)

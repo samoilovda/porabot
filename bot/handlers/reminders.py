@@ -234,12 +234,7 @@ async def handle_forwarded_task(
     except Exception as e:
         logger.error("Error parsing forwarded text: %s", e, exc_info=True)
         await message.answer(l10n.get("parse_error", "Error parsing text"))
-    
-    # HIGH-3 FIX: Clear FSM state after error to prevent stuck wizard
-    try:
         await state.clear()
-    except Exception:
-        pass  # Ignore if already cleared
 
 
 @router.message(ReminderWizard.entering_text, F.text)

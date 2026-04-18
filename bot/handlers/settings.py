@@ -11,7 +11,6 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, get_language_selection_keyboard
-from bot.services.parser import InputParser
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -74,7 +73,8 @@ async def callback_briefs_setup(callback: CallbackQuery, user: User, l10n: dict[
     await callback.answer()
 
 @router.callback_query(F.data == "briefs_toggle")
-async def callback_briefs_toggle(callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any]) -> None:
+async def callback_briefs_toggle(callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext) -> None:
+    await state.clear()  # BUG-H3 FIX: clear any pending FSM state so next message isn't swallowed
     from bot.keyboards.inline import get_briefs_setup_keyboard
     enabled = not getattr(user, 'briefs_enabled', True)
     await user_dao.update_briefs_settings(user.id, briefs_enabled=enabled)
@@ -101,15 +101,23 @@ async def callback_briefs_edit_hour(callback: CallbackQuery, l10n: dict[str, Any
 async def state_briefs_set_time(message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]) -> None:
     if not message.text:
         return
-        
-    parser = InputParser()
-    result = await parser.parse(message.text, user.timezone)
     
-    if not result.parsed_datetime:
-        await message.answer("❌ I couldn't understand the time. Please try again (e.g. '09:30' or '23:45'):")
+    # BUG-H4 FIX: Strict HH:MM validation — the InputParser is designed for full
+    # reminder phrases, not time-only config. Freeform inputs like "in 30 minutes"
+    # would produce the wrong brief time with no feedback to the user.
+    import re
+    raw = message.text.strip()
+    match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
+    if not match:
+        await message.answer("❌ Please enter time in HH:MM format (e.g. `09:30` or `23:45`).", parse_mode="Markdown")
         return
-        
-    extracted_time_str = result.parsed_datetime.strftime("%H:%M")
+    
+    h, m = int(match.group(1)), int(match.group(2))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        await message.answer("❌ Invalid time. Hours must be 0–23, minutes 0–59.", parse_mode="Markdown")
+        return
+    
+    extracted_time_str = f"{h:02d}:{m:02d}"
     
     data = await state.get_data()
     target = data.get("brief_target")

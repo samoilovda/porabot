@@ -6,10 +6,15 @@ from typing import Any
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, get_language_selection_keyboard
+from bot.services.parser import InputParser
+
+class SettingsState(StatesGroup):
+    waiting_for_brief_time = State()
 
 router = Router(name="settings")
 logger = logging.getLogger(__name__)
@@ -59,11 +64,12 @@ async def callback_settings_back(callback: CallbackQuery, user: User, l10n: dict
     await callback.answer()
 
 @router.callback_query(F.data == "settings_briefs_setup")
-async def callback_briefs_setup(callback: CallbackQuery, user: User, l10n: dict[str, Any]) -> None:
+async def callback_briefs_setup(callback: CallbackQuery, user: User, l10n: dict[str, Any], state: FSMContext) -> None:
+    await state.clear()
     from bot.keyboards.inline import get_briefs_setup_keyboard
     enabled = getattr(user, 'briefs_enabled', True)
-    morning = getattr(user, 'morning_brief_hour', 9)
-    evening = getattr(user, 'evening_brief_hour', 23)
+    morning = getattr(user, 'morning_brief_time', "09:00")
+    evening = getattr(user, 'evening_brief_time', "23:00")
     await callback.message.edit_reply_markup(reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening))
     await callback.answer()
 
@@ -72,37 +78,55 @@ async def callback_briefs_toggle(callback: CallbackQuery, user: User, user_dao: 
     from bot.keyboards.inline import get_briefs_setup_keyboard
     enabled = not getattr(user, 'briefs_enabled', True)
     await user_dao.update_briefs_settings(user.id, briefs_enabled=enabled)
-    morning = getattr(user, 'morning_brief_hour', 9)
-    evening = getattr(user, 'evening_brief_hour', 23)
+    morning = getattr(user, 'morning_brief_time', "09:00")
+    evening = getattr(user, 'evening_brief_time', "23:00")
     await callback.message.edit_reply_markup(reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening))
     await callback.answer()
 
 @router.callback_query(F.data.in_(["briefs_edit_morning", "briefs_edit_evening"]))
-async def callback_briefs_edit_hour(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
-    from bot.keyboards.inline import get_hour_selection_keyboard
+async def callback_briefs_edit_hour(callback: CallbackQuery, l10n: dict[str, Any], state: FSMContext) -> None:
     target = callback.data.split("_")[-1]  # 'morning' or 'evening'
-    await callback.message.edit_text(l10n.get("choose_hour", "Choose hour:"), reply_markup=get_hour_selection_keyboard(l10n, target))
+    await state.update_data(brief_target=target)
+    await state.set_state(SettingsState.waiting_for_brief_time)
+    
+    # Needs to remove inline keyboard while waiting for input
+    await callback.message.edit_text(
+        l10n.get("choose_hour", "Please type the time (e.g. 09:30 or 23:45):"),
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("briefs_set_"))
-async def callback_briefs_set_hour(callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any]) -> None:
-    from bot.keyboards.inline import get_briefs_setup_keyboard
-    parts = callback.data.split("_")
-    target = parts[-2]
-    hour = int(parts[-1])
+@router.message(SettingsState.waiting_for_brief_time)
+async def state_briefs_set_time(message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]) -> None:
+    if not message.text:
+        return
+        
+    parser = InputParser()
+    result = await parser.parse(message.text, user.timezone)
+    
+    if not result.parsed_datetime:
+        await message.answer("❌ I couldn't understand the time. Please try again (e.g. '09:30' or '23:45'):")
+        return
+        
+    extracted_time_str = result.parsed_datetime.strftime("%H:%M")
+    
+    data = await state.get_data()
+    target = data.get("brief_target")
     
     if target == "morning":
-        await user_dao.update_briefs_settings(user.id, morning_brief_hour=hour)
-        user.morning_brief_hour = hour
+        await user_dao.update_briefs_settings(user.id, morning_brief_time=extracted_time_str)
+        user.morning_brief_time = extracted_time_str
     elif target == "evening":
-        await user_dao.update_briefs_settings(user.id, evening_brief_hour=hour)
-        user.evening_brief_hour = hour
+        await user_dao.update_briefs_settings(user.id, evening_brief_time=extracted_time_str)
+        user.evening_brief_time = extracted_time_str
         
-    enabled = getattr(user, 'briefs_enabled', True)
-    morning = getattr(user, 'morning_brief_hour', 9)
-    evening = getattr(user, 'evening_brief_hour', 23)
+    await state.clear()
     
-    # Needs to return to settings_text because previous message was "choose_hour"
+    enabled = getattr(user, 'briefs_enabled', True)
+    morning = getattr(user, 'morning_brief_time', "09:00")
+    evening = getattr(user, 'evening_brief_time', "23:00")
+    
+    from bot.keyboards.inline import get_briefs_setup_keyboard
     text = l10n["settings_text"].format(timezone=user.timezone)
-    await callback.message.edit_text(text, reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening), parse_mode="Markdown")
-    await callback.answer()
+    await message.answer(text, reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening), parse_mode="Markdown")

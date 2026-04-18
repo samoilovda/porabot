@@ -30,10 +30,10 @@ EN: dict[str, Any] = {
     "btn_briefs_setup": "📋 Briefs setup",
     "btn_briefs_on": "🔔 Daily Briefs: ON",
     "btn_briefs_off": "🔕 Daily Briefs: OFF",
-    "btn_morning_brief": "🌅 Morning: {hour:02d}:00",
-    "btn_evening_brief": "🌙 Evening: {hour:02d}:00",
-    "choose_hour": "Choose an hour:",
-    "btn_back_settings": "🔙 Back to settings",
+    "btn_morning_brief": "🌅 Morning: {time}",
+    "btn_evening_brief": "🌙 Evening: {time}",
+    "choose_hour": "Please type the exact time (e.g. '09:30' or '23:45'):",
+    "btn_back_settings": "🔙 Back",
 
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",

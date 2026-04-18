@@ -475,7 +475,7 @@ def get_language_selection_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
 # BRIEFS SETUP KEYBOARDS
 # =============================================================================
 
-def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_hr: int, evening_hr: int) -> InlineKeyboardMarkup:
+def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_str: str, evening_str: str) -> InlineKeyboardMarkup:
     """Keyboard for Custom Daily Briefs."""
     builder = InlineKeyboardBuilder()
     
@@ -483,24 +483,9 @@ def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_hr: i
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="briefs_toggle"))
     
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_morning_brief").format(hour=morning_hr), callback_data="briefs_edit_morning"),
-        InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(hour=evening_hr), callback_data="briefs_edit_evening")
+        InlineKeyboardButton(text=l10n.get("btn_morning_brief").format(time=morning_str), callback_data="briefs_edit_morning"),
+        InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening")
     )
     
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
-    return builder.as_markup()
-
-def get_hour_selection_keyboard(l10n: dict[str, Any], target: str) -> InlineKeyboardMarkup:
-    """Grid 00-23 for selecting a specific hour."""
-    builder = InlineKeyboardBuilder()
-    
-    # 00 to 23 grid (6x4)
-    buttons = []
-    for h in range(24):
-        buttons.append(InlineKeyboardButton(text=f"{h:02d}:00", callback_data=f"briefs_set_{target}_{h}"))
-        
-    for i in range(0, 24, 6):
-        builder.row(*buttons[i:i+6])
-        
-    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_briefs_setup"))
     return builder.as_markup()

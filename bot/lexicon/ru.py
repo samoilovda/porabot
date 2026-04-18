@@ -30,10 +30,10 @@ RU: dict[str, Any] = {
     "btn_briefs_setup": "📋 Настройка сводок",
     "btn_briefs_on": "🔔 Ежедневные сводки: ВКЛ",
     "btn_briefs_off": "🔕 Ежедневные сводки: ВЫКЛ",
-    "btn_morning_brief": "🌅 Утренняя: {hour:02d}:00",
-    "btn_evening_brief": "🌙 Вечерняя: {hour:02d}:00",
-    "choose_hour": "Выберите час:",
-    "btn_back_settings": "🔙 Назад в настройки",
+    "btn_morning_brief": "🌅 Утренняя: {time}",
+    "btn_evening_brief": "🌙 Вечерняя: {time}",
+    "choose_hour": "Напиши точное время для сводки (Например '09:30' или '23:45'):",
+    "btn_back_settings": "🔙 Назад",
 
     # Tasks List
     "no_tasks": "🎉 У тебя нет активных задач. Отдыхай!",

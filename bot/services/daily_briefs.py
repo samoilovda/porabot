@@ -104,20 +104,20 @@ async def process_daily_briefs() -> None:
                 if getattr(user, 'briefs_enabled', True) is False:
                     continue
                     
-                local_hour = datetime.now(tz).hour
+                local_time_str = datetime.now(tz).strftime("%H:%M")
                 reminder_dao = ReminderDAO(session)
                 
                 from bot.lexicon import get_l10n
                 l10n = get_l10n(user.language)
 
-                if local_hour == getattr(user, 'morning_brief_hour', 9):
+                if local_time_str == getattr(user, 'morning_brief_time', "09:00"):
                     tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if tasks:
                         text = _build_morning_text(tasks, user, l10n)
                         await _send_safe(bot, user.id, text)
                         logger.info("Morning brief sent to user %s", user.id)
 
-                elif local_hour == getattr(user, 'evening_brief_hour', 23):
+                elif local_time_str == getattr(user, 'evening_brief_time', "23:00"):
                     completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
@@ -134,12 +134,12 @@ async def process_daily_briefs() -> None:
 # ---------------------------------------------------------------------------
 
 def setup_daily_briefs(scheduler) -> None:
-    """Register the hourly cron job for daily briefs. Call once at startup."""
-    logger.info("Registering hourly daily briefs cron job")
+    """Register the minutely cron job for daily briefs. Call once at startup."""
+    logger.info("Registering minutely daily briefs cron job")
     scheduler.add_job(
         process_daily_briefs,
         "cron",
-        minute=0,
+        minute="*",
         id="hourly_daily_briefs",
         replace_existing=True,
     )

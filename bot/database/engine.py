@@ -48,7 +48,9 @@ async def init_db(engine: AsyncEngine) -> None:
         for col, col_type in [
             ("briefs_enabled", "BOOLEAN DEFAULT 1"), 
             ("morning_brief_hour", "INTEGER DEFAULT 9"), 
-            ("evening_brief_hour", "INTEGER DEFAULT 23")
+            ("evening_brief_hour", "INTEGER DEFAULT 23"),
+            ("morning_brief_time", "VARCHAR DEFAULT '09:00'"),
+            ("evening_brief_time", "VARCHAR DEFAULT '23:00'")
         ]:
             try:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))

@@ -13,6 +13,7 @@ import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.base import JobLookupError
 from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -81,6 +82,9 @@ class SchedulerService:
             logger.info("Scheduled reminder %s for %s (nagging=%s).", reminder_id, run_date, is_nagging)
         except Exception as e:
             logger.error("Failed to schedule reminder %s: %s", reminder_id, e, exc_info=True)
+            # Critical: propagate failure so callers can rollback DB/session changes
+            # instead of committing reminders that were never actually scheduled.
+            raise
 
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job and any nagging job for *reminder_id*."""
@@ -88,14 +92,14 @@ class SchedulerService:
             try:
                 self.scheduler.remove_job(job_id)
                 logger.debug("Removed job %s.", job_id)
-            except Exception:
+            except JobLookupError:
                 logger.debug("Job %s not found (already removed).", job_id)
 
     def remove_nagging_job(self, reminder_id: int) -> None:
         """Remove only the nagging follow-up job for *reminder_id*."""
         try:
             self.scheduler.remove_job(f"nag_{reminder_id}")
-        except Exception:
+        except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
 
     # ------------------------------------------------------------------
@@ -107,6 +111,8 @@ class SchedulerService:
         logger.info("Executing reminder %s (nagging=%s).", reminder_id, is_nagging_execution)
 
         async with self.session_pool() as session:
+            scheduled_main_job = False
+            scheduled_nagging_job = False
             try:
                 result = await session.execute(select(Reminder).where(Reminder.id == reminder_id))
                 reminder = result.scalar_one_or_none()
@@ -140,6 +146,7 @@ class SchedulerService:
                         if next_run:
                             reminder.execution_time = next_run
                             self.schedule_reminder(reminder_id, next_run, is_nagging=reminder.is_nagging)
+                            scheduled_main_job = True
                             logger.info("Rescheduled recurring reminder %s → %s.", reminder_id, next_run)
                         else:
                             logger.info("Recurring reminder %s has no future occurrences.", reminder_id)
@@ -159,12 +166,21 @@ class SchedulerService:
                         id=f"nag_{reminder_id}",
                         replace_existing=True,
                     )
+                    scheduled_nagging_job = True
                     logger.info("Scheduled nagging for reminder %s at %s.", reminder_id, next_nag)
 
                 await session.commit()
 
             except Exception as e:
+                await session.rollback()
+                # Critical: if DB state was rolled back, also remove newly created jobs
+                # to keep scheduler and DB state consistent.
+                if scheduled_main_job:
+                    self.remove_reminder_job(reminder_id)
+                elif scheduled_nagging_job:
+                    self.remove_nagging_job(reminder_id)
                 logger.error("Error executing reminder %s: %s", reminder_id, e, exc_info=True)
+                raise
 
     async def _send_telegram_message(
         self, user_id: int, text: str, l10n: dict, reply_markup=None

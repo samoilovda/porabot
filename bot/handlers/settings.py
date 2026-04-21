@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+import pytz
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -14,6 +15,7 @@ from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, g
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
+    waiting_for_timezone = State()
 
 router = Router(name="settings")
 logger = logging.getLogger(__name__)
@@ -38,22 +40,57 @@ async def callback_toggle_utc(callback: CallbackQuery, user_dao: UserDAO, user: 
 @router.callback_query(F.data == "settings_change_tz")
 async def callback_change_tz(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
     await callback.message.edit_text(l10n["choose_tz"], reply_markup=get_timezone_keyboard())
+    await callback.answer()
 
 
 @router.callback_query(F.data == "settings_change_lang")
 async def callback_change_lang(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
     await callback.message.edit_text(l10n["choose_language"], reply_markup=get_language_selection_keyboard(l10n))
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("set_tz_"))
-async def callback_set_tz(callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any]) -> None:
+async def callback_set_tz(
+    callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any], state: FSMContext
+) -> None:
     action = callback.data.split("set_tz_")[1]
     if action == "manual":
+        await state.set_state(SettingsState.waiting_for_timezone)
         await callback.message.edit_text(l10n["tz_manual_prompt"])
+        await callback.answer()
         return
     await user_dao.update_timezone(user.id, action)
     await callback.message.edit_text(l10n["tz_success"].format(tz=action), reply_markup=None)
     await callback.answer()
+
+
+@router.message(SettingsState.waiting_for_timezone, F.text)
+async def state_set_manual_timezone(
+    message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    tz_candidate = message.text.strip()
+    try:
+        pytz.timezone(tz_candidate)
+    except pytz.UnknownTimeZoneError:
+        await message.answer(
+            l10n.get(
+                "tz_invalid",
+                "❌ Unknown timezone. Please use a valid IANA timezone, e.g. `Europe/London`.",
+            ),
+            parse_mode="Markdown",
+        )
+        return
+
+    await user_dao.update_timezone(user.id, tz_candidate)
+    user.timezone = tz_candidate
+    await state.clear()
+
+    await message.answer(l10n["tz_success"].format(tz=tz_candidate), parse_mode="Markdown")
+    await message.answer(
+        l10n["settings_text"].format(timezone=user.timezone),
+        reply_markup=get_settings_keyboard(l10n, user.show_utc_offset),
+        parse_mode="Markdown",
+    )
 
 @router.callback_query(F.data == "settings_back")
 async def callback_settings_back(callback: CallbackQuery, user: User, l10n: dict[str, Any]) -> None:

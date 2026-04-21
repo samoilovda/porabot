@@ -187,11 +187,7 @@ async def cb_del_habit(callback: CallbackQuery, reminder_dao: ReminderDAO, sched
     task_id = int(callback.data.split("_")[-1])
     try:
         await reminder_dao.delete_by_id(task_id)
-        # Attempt to remove from scheduler if it exists. If it already fired or is missing, ignore.
-        try:
-            scheduler_service.scheduler.remove_job(str(task_id))
-        except Exception:
-            pass
+        scheduler_service.remove_reminder_job(task_id)
             
         await callback.answer("✅ Habit successfully deleted!", show_alert=True)
         await callback.message.delete()

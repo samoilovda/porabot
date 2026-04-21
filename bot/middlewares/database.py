@@ -51,6 +51,8 @@ class DatabaseMiddleware(BaseMiddleware):
                     l10n = get_l10n(user.language)
                 except Exception as e:
                     logger.error("Error resolving user %s: %s", tg_user.id, e, exc_info=True)
+                    # Keep session state clean if user bootstrap failed mid-transaction.
+                    await session.rollback()
                     if hasattr(event, "answer"):
                         try:
                             await event.answer("❌ Database error. Please try again later.")

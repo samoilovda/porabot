@@ -16,6 +16,7 @@ from typing import Any
 
 import pytz
 from aiogram import Router, F
+from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -33,6 +34,7 @@ from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
+from bot.utils.markdown import escape_markdown_v2
 from bot.utils.time_ext import format_time
 
 router = Router(name="reminders")
@@ -40,7 +42,7 @@ parser = InputParser()
 logger = logging.getLogger(__name__)
 
 # asyncio.Task registry for auto-removing inline keyboards after 5 s
-active_auto_delete_tasks: dict[int, asyncio.Task] = {}
+active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
 _MENU_TEXTS = frozenset([
     "➕ Новая задача", "📅 Мои задачи", "⚙️ Настройки",
@@ -66,6 +68,11 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return l10n["repeat_none"]
 
 
+def _message_task_key(message: Message) -> tuple[int, int]:
+    """Use chat+message id to avoid cross-chat key collisions."""
+    return (message.chat.id, message.message_id)
+
+
 async def _remove_keyboard_after_delay(message: Message, delay: int = 5) -> None:
     """Background task: remove an inline keyboard after *delay* seconds."""
     try:
@@ -76,12 +83,12 @@ async def _remove_keyboard_after_delay(message: Message, delay: int = 5) -> None
     except TelegramBadRequest:
         pass
     finally:
-        active_auto_delete_tasks.pop(message.message_id, None)
+        active_auto_delete_tasks.pop(_message_task_key(message), None)
 
 
 def _reset_auto_delete(message: Message) -> None:
     """Cancel the pending keyboard-removal task for *message* (if any)."""
-    task = active_auto_delete_tasks.get(message.message_id)
+    task = active_auto_delete_tasks.get(_message_task_key(message))
     if task and not task.done():
         task.cancel()
 
@@ -105,7 +112,6 @@ async def _save_and_show_edit(
         if new_reminder:
             new_reminder.reminder_text = text
             new_reminder.execution_time = execution_time
-            scheduler_service.remove_reminder_job(new_reminder.id)
         else:
             logger.warning("Reminder %s not found during edit.", edit_reminder_id)
             return
@@ -129,7 +135,9 @@ async def _save_and_show_edit(
         scheduler_service.schedule_reminder(new_reminder.id, new_reminder.execution_time, is_nagging=new_reminder.is_nagging)
     except Exception as e:
         logger.error("Failed to schedule reminder %s: %s", new_reminder.id, e, exc_info=True)
-        await reminder_dao.delete_by_id(new_reminder.id)
+        # Critical: rollback DAO changes when scheduling failed, otherwise reminder
+        # would be committed but never executed.
+        await reminder_dao.session.rollback()
         await source_message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
         await state.clear()
         return
@@ -138,6 +146,7 @@ async def _save_and_show_edit(
 
     date_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
     preview = l10n["preview"].format(text=new_reminder.reminder_text, time=date_str)
+    safe_preview = escape_markdown_v2(preview)
     keyboard = get_edit_keyboard(
         reminder_id=new_reminder.id,
         l10n=l10n,
@@ -145,10 +154,10 @@ async def _save_and_show_edit(
         is_nagging=new_reminder.is_nagging,
         rrule_text=_rrule_text(new_reminder, l10n),
     )
-    sent_msg = await source_message.answer(preview, reply_markup=keyboard, parse_mode="Markdown")
+    sent_msg = await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 
     task = asyncio.create_task(_remove_keyboard_after_delay(sent_msg, 5))
-    active_auto_delete_tasks[sent_msg.message_id] = task
+    active_auto_delete_tasks[_message_task_key(sent_msg)] = task
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +185,8 @@ async def btn_my_tasks(
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
 
-    await message.answer("\n".join(lines), reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="Markdown")
+    safe_text = escape_markdown_v2("\n".join(lines))
+    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +248,7 @@ async def handle_forwarded_task(
 
 
 @router.message(ReminderWizard.entering_text, F.text)
-@router.message(F.text)
+@router.message(StateFilter(None), F.text)
 async def handle_task_text(
     message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
     reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
@@ -301,6 +311,7 @@ async def callback_time_selected(
 
     if execution_time:
         await state.update_data(execution_time=execution_time.isoformat())
+        await callback.answer()
         await callback.message.delete()
         await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
     else:
@@ -327,6 +338,7 @@ async def callback_edit_edit(
         l10n["ask_time"].format(text=reminder.reminder_text),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n),
     )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_toggle_repeat_"))
@@ -354,12 +366,17 @@ async def callback_edit_repeat(
     reminder.rrule_string = rrule
     await reminder_dao.session.flush()
 
-    scheduler_service.remove_reminder_job(reminder.id)
-    scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+    try:
+        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+    except Exception:
+        await reminder_dao.session.rollback()
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
 
     await callback.message.edit_reply_markup(
         reply_markup=get_edit_keyboard(reminder.id, l10n, is_rec, reminder.is_nagging, next_key)
     )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_toggle_nagging_"))
@@ -373,11 +390,19 @@ async def callback_edit_nagging(
         return await callback.answer("Not found", show_alert=True)
 
     reminder.is_nagging = not reminder.is_nagging
-    scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+    try:
+        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+        if not reminder.is_nagging:
+            scheduler_service.remove_nagging_job(reminder.id)
+    except Exception:
+        await reminder_dao.session.rollback()
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
 
     await callback.message.edit_reply_markup(
         reply_markup=get_edit_keyboard(reminder.id, l10n, reminder.is_recurring, reminder.is_nagging, _rrule_text(reminder, l10n))
     )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_delete_"))
@@ -388,6 +413,7 @@ async def callback_edit_delete(
     reminder_id = int(callback.data.split("edit_delete_")[1])
     await reminder_dao.delete_by_id(reminder_id)
     scheduler_service.remove_reminder_job(reminder_id)
+    await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(l10n["task_deleted"], reply_markup=None)
 
 
@@ -408,6 +434,7 @@ async def callback_delete_task(
 
 @router.callback_query(F.data == "close_tasks")
 async def callback_close_tasks(callback: CallbackQuery) -> None:
+    await callback.answer()
     await callback.message.delete()
 
 
@@ -418,6 +445,7 @@ async def callback_refresh_tasks(
     tasks = await reminder_dao.get_user_reminders(user.id)
     if not tasks:
         await callback.message.edit_text(l10n["no_tasks"], reply_markup=None)
+        await callback.answer()
         return
 
     lines = [l10n["tasks_header"]]
@@ -425,7 +453,9 @@ async def callback_refresh_tasks(
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
 
-    await callback.message.edit_text("\n".join(lines), reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="Markdown")
+    safe_text = escape_markdown_v2("\n".join(lines))
+    await callback.message.edit_text(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "show_completed")
@@ -442,7 +472,8 @@ async def callback_show_completed(
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         lines.append(f"✅ `{dt_str}`: ~{task.reminder_text}~")
 
-    await callback.message.edit_text("\n".join(lines), reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="Markdown")
+    safe_text = escape_markdown_v2("\n".join(lines))
+    await callback.message.edit_text(safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="MarkdownV2")
     await callback.answer()
 
 
@@ -469,7 +500,7 @@ def _cleanup_stale_timers() -> None:
             try:
                 active_auto_delete_tasks.pop(msg_id, None)
             except Exception:
-                pass
+                logger.debug("Failed to cleanup stale auto-delete task for key %s", msg_id, exc_info=True)
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(
@@ -489,10 +520,11 @@ async def callback_task_done(
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:
+        done_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['task_done_reply']}")
         await callback.message.edit_text(
-            f"{callback.message.text}\n\n{l10n['task_done_reply']}",
+            done_text,
             reply_markup=None,
-            parse_mode="Markdown",
+            parse_mode="MarkdownV2",
         )
     except TelegramBadRequest:
         pass  # Concurrent tap — safe to ignore
@@ -508,6 +540,7 @@ async def callback_task_done(
 async def callback_snooze_show(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
     reminder_id = int(callback.data.split("snooze_show_")[1])
     await callback.message.edit_reply_markup(reply_markup=get_snooze_keyboard(reminder_id, l10n))
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("snooze_act_"))
@@ -536,6 +569,7 @@ async def callback_snooze_act(
             l10n["ask_time"].format(text=reminder.reminder_text),
             reply_markup=get_time_selection_keyboard(user.timezone, l10n),
         )
+        await callback.answer()
         return
 
     try:
@@ -558,12 +592,18 @@ async def callback_snooze_act(
         return
 
     reminder.execution_time = new_time
-    scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
+    try:
+        scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
+    except Exception:
+        await reminder_dao.session.rollback()
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
 
     friendly_time = format_time(new_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    snooze_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}")
     await callback.message.edit_text(
-        f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}",
+        snooze_text,
         reply_markup=None,
-        parse_mode="Markdown",
+        parse_mode="MarkdownV2",
     )
     await callback.answer("Snoozed!")

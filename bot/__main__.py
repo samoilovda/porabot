@@ -61,8 +61,9 @@ async def main() -> None:
     setup_daily_briefs(scheduler)
     logger.info("Scheduler configured.")
 
-    # Middleware — order matters: whitelist first (fast reject), then DB injection
-    dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
+    # Middleware — whitelist intentionally disabled (open access).
+    # To re-enable, restore WhitelistMiddleware registration before DatabaseMiddleware.
+    # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
 
     # Routers

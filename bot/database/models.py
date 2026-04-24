@@ -21,6 +21,11 @@ TABLE SCHEMA:
     ├── timezone TEXT DEFAULT 'UTC' (user's timezone string)
     ├── language TEXT (language code for i18n)
     ├── show_utc_offset BOOLEAN DEFAULT 0 (show +HH:MM offset in times)
+    ├── quiet_hours_enabled BOOLEAN DEFAULT 0
+    ├── quiet_hours_start TEXT DEFAULT '23:00'
+    ├── quiet_hours_end TEXT DEFAULT '07:00'
+    ├── missed_recovery_enabled BOOLEAN DEFAULT 1
+    ├── last_missed_recovery_date TEXT (YYYY-MM-DD in user's local timezone)
     └── created_at DATETIME (when user was added to DB)
   
   reminders table:
@@ -33,6 +38,10 @@ TABLE SCHEMA:
     ├── is_recurring BOOLEAN DEFAULT 0 (repeating task?)
     ├── rrule_string TEXT (iCalendar recurrence rule, e.g., "FREQ=DAILY")
     ├── is_nagging BOOLEAN DEFAULT 0 (send follow-ups every 5 min?)
+    ├── nagging_max_repeats INTEGER DEFAULT 3 (max number of follow-up nags)
+    ├── nagging_sent_count INTEGER DEFAULT 0 (already sent nags for current cycle)
+    ├── completed_for_execution_time DATETIME (hide completed recurring cycle from active list)
+    ├── last_completion_note TEXT (optional note after completion)
     ├── status      TEXT DEFAULT 'pending' ('pending' or 'completed')
     ├── completed_at DATETIME (when task was marked done)
     └── created_at DATETIME (when task was added to DB)
@@ -78,7 +87,7 @@ USAGE:
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 # Import Base from engine module (defines table metadata)
@@ -153,6 +162,15 @@ class User(Base):
         default=False,  # Don't clutter messages with +03:00 by default
         server_default="0"  # SQLite string literal for boolean
     )
+
+    # Quiet hours / sleep mode settings.
+    quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    quiet_hours_start: Mapped[str] = mapped_column(String, default="23:00", server_default="23:00")
+    quiet_hours_end: Mapped[str] = mapped_column(String, default="07:00", server_default="07:00")
+
+    # Missed-task recovery settings.
+    missed_recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    last_missed_recovery_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
@@ -208,6 +226,9 @@ class Reminder(Base):
                       Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
                       
         is_nagging      Should bot send follow-ups every 5 min until done?
+        nagging_max_repeats Maximum number of follow-up nags after main reminder
+        nagging_sent_count Already sent nagging follow-ups in current cycle
+        completed_for_execution_time Marks which recurring cycle is already completed
         
         status          Task state: 'pending' (waiting) or 'completed' (done)
                       Used for daily briefs and filtering
@@ -323,6 +344,35 @@ class Reminder(Base):
         Boolean, 
         default=False  # Nagging mode disabled by default
     )
+
+    # Maximum number of follow-up nagging messages after the main reminder.
+    # Example: 3 means user receives up to 3 extra nudges.
+    nagging_max_repeats: Mapped[int] = mapped_column(
+        Integer,
+        default=3,
+        server_default="3",
+        nullable=False,
+    )
+
+    # Number of follow-up nags already sent in the current cycle.
+    # Reset to 0 every time the main reminder fires.
+    nagging_sent_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
+    # For recurring reminders, stores the execution_time value that user has
+    # already completed. Active list hides reminders when this equals current
+    # execution_time, and shows them again after recurrence rolls forward.
+    completed_for_execution_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # Optional note attached when user marks task done.
+    last_completion_note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Task state: 'pending' (waiting) or 'completed' (done)
     # Used for daily briefs and filtering completed tasks

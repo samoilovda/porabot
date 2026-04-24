@@ -51,6 +51,10 @@ class UserDAO(BaseDAO[User]):
 
     async def update_briefs_settings(self, user_id: int, **kwargs) -> None:
         """Update any custom daily brief settings dynamically."""
+        await self.update_settings(user_id, **kwargs)
+
+    async def update_settings(self, user_id: int, **kwargs) -> None:
+        """Update arbitrary user settings fields dynamically."""
         user = await self.get_by_id(user_id)
         if user:
             for key, value in kwargs.items():

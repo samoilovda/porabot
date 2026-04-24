@@ -51,7 +51,7 @@ from typing import Optional, Sequence
 
 import pytz
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
@@ -110,6 +110,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         is_recurring: bool = False,
         rrule_string: Optional[str] = None,
         is_nagging: bool = False,
+        nagging_max_repeats: int = 3,
     ) -> Reminder:
         """
         Insert a new reminder and return it with populated `id`.
@@ -132,6 +133,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             rrule_string: iCalendar recurrence rule string for recurring tasks
                          Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
             is_nagging: Should bot send follow-ups every 5 min until done? Default: False
+            nagging_max_repeats: Maximum number of follow-up nags. Default: 3
             
         Returns:
             Reminder: The created reminder with all fields populated including id
@@ -158,6 +160,8 @@ class ReminderDAO(BaseDAO[Reminder]):
                 f"Reminder text too long ({len(text)} chars). "
                 f"Maximum allowed: {MAX_TEXT_LENGTH} chars."
             )
+        if nagging_max_repeats < 0:
+            raise ValueError("nagging_max_repeats cannot be negative.")
         
         reminder = Reminder(
             user_id=user_id,
@@ -168,6 +172,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             is_recurring=is_recurring,
             rrule_string=rrule_string,
             is_nagging=is_nagging,
+            nagging_max_repeats=nagging_max_repeats,
         )
         self.session.add(reminder)
         await self.session.flush()  # Flush to populate auto-generated ID
@@ -200,7 +205,13 @@ class ReminderDAO(BaseDAO[Reminder]):
             select(Reminder)
             .where(
                 Reminder.user_id == user_id,  # Filter by owner
-                Reminder.status == "pending"  # Only show pending tasks
+                Reminder.status == "pending",  # Only show pending tasks
+                # Hide recurring reminders already completed for current cycle.
+                # They become visible again after execution_time rolls forward.
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
             )
             .order_by(Reminder.execution_time)  # Order by when task fires (earliest first)
         )
@@ -208,10 +219,11 @@ class ReminderDAO(BaseDAO[Reminder]):
 
     async def mark_done(self, reminder_id: int) -> None:
         """
-        Soft delete a reminder by marking it completed.
+        Mark a reminder as done.
         
-        For recurring tasks, only updates completed_at timestamp - doesn't change status.
-        This allows daily briefs to show history while keeping task active for recurrence.
+        For one-time tasks, sets status='completed'.
+        For recurring tasks, keeps status='pending' but marks the current execution
+        slot as completed so active lists can hide it until next cycle.
         
         Args:
             reminder_id: Primary key of reminder to mark as done
@@ -220,7 +232,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             None
             
         Side Effects:
-          Updates status field and completed_at timestamp
+          Updates status/completion fields
         
         BUG FIX EDGE-5: Timezone-aware datetime handling
           Previously used deprecated datetime.utcnow(). Now uses pytz.UTC for clarity.
@@ -230,14 +242,36 @@ class ReminderDAO(BaseDAO[Reminder]):
         """
         reminder = await self.get_by_id(reminder_id)
         if reminder:
-            # For one-time tasks, mark as completed (soft delete)
-            if not reminder.is_recurring:
+            now_utc_naive = datetime.now(pytz.UTC).replace(tzinfo=None)
+            execution_time_cmp = reminder.execution_time
+            if execution_time_cmp.tzinfo is not None:
+                execution_time_cmp = execution_time_cmp.astimezone(pytz.UTC).replace(tzinfo=None)
+            if reminder.is_recurring:
+                # Recurring reminders stay active, but current execution slot
+                # disappears from active lists until execution_time moves forward.
+                reminder.status = "pending"
+                # If execution_time has already been rolled forward by scheduler
+                # (common path after reminder firing), do not hide the next cycle.
+                if execution_time_cmp <= now_utc_naive:
+                    reminder.completed_for_execution_time = reminder.execution_time
+                else:
+                    reminder.completed_for_execution_time = None
+            else:
                 reminder.status = "completed"
+                reminder.completed_for_execution_time = reminder.execution_time
             
-            # FIX EDGE-5: Store timezone-aware datetime for consistency
-            # Using naive datetime can cause issues when comparing with execution_time
-            reminder.completed_at = datetime.now(pytz.UTC)
+            # Store naive UTC datetime for consistency with execution_time field
+            # and local-day boundary queries converted to naive UTC.
+            reminder.completed_at = now_utc_naive
+            reminder.last_completion_note = None
             
+            await self.session.flush()
+
+    async def set_last_completion_note(self, reminder_id: int, note: str) -> None:
+        """Attach a note to the latest completion of a reminder."""
+        reminder = await self.get_by_id(reminder_id)
+        if reminder:
+            reminder.last_completion_note = note
             await self.session.flush()
 
     async def get_today_tasks_by_status(
@@ -289,16 +323,37 @@ class ReminderDAO(BaseDAO[Reminder]):
         start_utc = start_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
         end_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
 
-        result = await self.session.execute(
-            select(Reminder)
-            .where(
-                Reminder.user_id == user_id,  # Filter by owner
-                Reminder.status == status,   # Filter by status (pending/completed)
-                Reminder.execution_time >= start_utc,  # After midnight UTC
-                Reminder.execution_time < end_utc,     # Before next midnight UTC
+        if status == "completed":
+            # Completed list is based on completion moment, not current status,
+            # so recurring tasks that continue to next cycle still appear here.
+            stmt = (
+                select(Reminder)
+                .where(
+                    Reminder.user_id == user_id,
+                    Reminder.completed_at.is_not(None),
+                    Reminder.completed_at >= start_utc,
+                    Reminder.completed_at < end_utc,
+                )
+                .order_by(Reminder.completed_at.desc())
             )
-            .order_by(Reminder.execution_time)  # Order by when task fires
-        )
+        else:
+            stmt = (
+                select(Reminder)
+                .where(
+                    Reminder.user_id == user_id,  # Filter by owner
+                    Reminder.status == status,   # Filter by status (pending/completed)
+                    Reminder.execution_time >= start_utc,  # After midnight UTC
+                    Reminder.execution_time < end_utc,     # Before next midnight UTC
+                    # Same active-list clutter rule for daily briefs pending section.
+                    or_(
+                        Reminder.completed_for_execution_time.is_(None),
+                        Reminder.completed_for_execution_time < Reminder.execution_time,
+                    ),
+                )
+                .order_by(Reminder.execution_time)  # Order by when task fires
+            )
+
+        result = await self.session.execute(stmt)
         return result.scalars().all()
 
     async def get_today_pending_tasks(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
@@ -336,6 +391,125 @@ class ReminderDAO(BaseDAO[Reminder]):
             >>> completed = await dao.get_today_completed_tasks(123456, "Europe/Moscow")
         """
         return await self.get_today_tasks_by_status(user_id, user_tz_str, "completed")
+
+    async def get_recent_completed_tasks(
+        self,
+        user_id: int,
+        user_tz_str: str,
+        days: int = 7,
+    ) -> Sequence[Reminder]:
+        """
+        Get recently completed tasks for UI history (e.g., last 7 days).
+
+        Uses completion timestamp (completed_at), not status, so recurring
+        reminders are included in history even when they remain active.
+
+        Args:
+            user_id: Telegram user ID (foreign key)
+            user_tz_str: User's timezone string (e.g., "Europe/Moscow")
+            days: Rolling window size in days. Minimum: 1
+
+        Returns:
+            Sequence[Reminder]: Completed reminders in the rolling window,
+            newest first.
+        """
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+
+        days = max(1, int(days))
+        now_local = datetime.now(tz)
+        window_start_local = now_local - timedelta(days=days)
+
+        start_utc = window_start_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        end_utc = now_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.completed_at.is_not(None),
+                Reminder.completed_at >= start_utc,
+                Reminder.completed_at <= end_utc,
+            )
+            .order_by(Reminder.completed_at.desc())
+        )
+        return result.scalars().all()
+
+    async def get_overdue_pending_tasks(
+        self,
+        user_id: int,
+        *,
+        min_minutes_overdue: int = 30,
+        limit: Optional[int] = None,
+    ) -> Sequence[Reminder]:
+        """
+        Get pending tasks that are overdue by at least *min_minutes_overdue*.
+        """
+        threshold_utc = datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(minutes=max(0, min_minutes_overdue))
+        stmt = (
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.execution_time <= threshold_utc,
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
+            )
+            .order_by(Reminder.execution_time.asc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(max(1, int(limit)))
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_habit_motivation_stats(
+        self,
+        user_id: int,
+        user_tz_str: str,
+        *,
+        days: int = 7,
+    ) -> dict[str, int]:
+        """
+        Lightweight motivation metrics for habits dashboard.
+        """
+        days = max(1, int(days))
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+
+        now_local = datetime.now(tz)
+        start_utc = (now_local - timedelta(days=days)).astimezone(pytz.UTC).replace(tzinfo=None)
+
+        active_result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.is_recurring.is_(True),
+                Reminder.status == "pending",
+            )
+        )
+        active_habits = active_result.scalars().all()
+
+        completed_result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.is_recurring.is_(True),
+                Reminder.completed_at.is_not(None),
+                Reminder.completed_at >= start_utc,
+            )
+        )
+        completed_habits = completed_result.scalars().all()
+
+        return {
+            "active_count": len(active_habits),
+            "weekly_done": len(completed_habits),
+        }
 
     async def update_execution_time(
         self, reminder_id: int, new_time: datetime

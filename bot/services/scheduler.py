@@ -7,7 +7,7 @@ reach the service at call time. This is a known APScheduler tradeoff.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 
 import pytz
 from aiogram import Bot
@@ -24,6 +24,7 @@ from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
 
 logger = logging.getLogger(__name__)
+NAGGING_INTERVAL_MINUTES = 5
 
 # Module-level singleton — set by SchedulerService.__init__
 _instance = None
@@ -106,6 +107,49 @@ class SchedulerService:
     # Internal
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _parse_hhmm(raw: str, fallback: str) -> dt_time:
+        val = (raw or fallback).strip()
+        try:
+            hour_str, min_str = val.split(":", 1)
+            h = int(hour_str)
+            m = int(min_str)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return dt_time(hour=h, minute=m)
+        except Exception:
+            pass
+        fh, fm = fallback.split(":")
+        return dt_time(hour=int(fh), minute=int(fm))
+
+    def _is_quiet_hours_now(self, user, now_utc: datetime) -> bool:
+        if not bool(getattr(user, "quiet_hours_enabled", False)):
+            return False
+        try:
+            user_tz = pytz.timezone(user.timezone)
+        except Exception:
+            user_tz = pytz.UTC
+        now_local = now_utc.astimezone(user_tz)
+        start = self._parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
+        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+        current = now_local.time()
+        if start == end:
+            return True
+        if start < end:
+            return start <= current < end
+        return current >= start or current < end
+
+    def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
+        try:
+            user_tz = pytz.timezone(user.timezone)
+        except Exception:
+            user_tz = pytz.UTC
+        now_local = now_utc.astimezone(user_tz)
+        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+        candidate = now_local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+        if candidate <= now_local:
+            candidate += timedelta(days=1)
+        return candidate.astimezone(timezone.utc)
+
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""
         logger.info("Executing reminder %s (nagging=%s).", reminder_id, is_nagging_execution)
@@ -124,6 +168,9 @@ class SchedulerService:
                 if reminder.status == "completed":
                     logger.info("Reminder %s already completed — skipping.", reminder_id)
                     return
+                if is_nagging_execution and not reminder.is_nagging:
+                    logger.info("Skipping stale nagging execution for reminder %s (nagging disabled).", reminder_id)
+                    return
 
                 user_dao = UserDAO(session)
                 user = await user_dao.get_by_id(reminder.user_id)
@@ -131,9 +178,35 @@ class SchedulerService:
                     logger.warning("User %s not found for reminder %s.", reminder.user_id, reminder_id)
                     return
 
+                now_utc = datetime.now(timezone.utc)
+                if self._is_quiet_hours_now(user, now_utc):
+                    job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+                    resume_utc = self._next_quiet_end_utc(user, now_utc)
+                    self.scheduler.add_job(
+                        execute_reminder_job,
+                        "date",
+                        run_date=resume_utc,
+                        args=[reminder_id, is_nagging_execution],
+                        id=job_id,
+                        replace_existing=True,
+                    )
+                    logger.info(
+                        "Reminder %s deferred due to quiet hours. New run at %s (nagging=%s).",
+                        reminder_id,
+                        resume_utc,
+                        is_nagging_execution,
+                    )
+                    return
+
                 l10n = get_l10n(user.language)
                 keyboard = get_task_done_keyboard(reminder.id, l10n)
                 await self._send_telegram_message(reminder.user_id, reminder.reminder_text, l10n, keyboard)
+
+                if is_nagging_execution:
+                    reminder.nagging_sent_count = max(0, int(reminder.nagging_sent_count or 0)) + 1
+                else:
+                    # New reminder cycle starts with zero sent nagging follow-ups.
+                    reminder.nagging_sent_count = 0
 
                 # Recurring reschedule
                 if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
@@ -154,10 +227,12 @@ class SchedulerService:
                         logger.error("Invalid rrule for reminder %s: %s — disabling recurrence.", reminder_id, e)
                         reminder.is_recurring = False
                         reminder.rrule_string = None
-                # Nagging reschedule
-                if reminder.is_nagging and reminder.status != "completed":
+                # Nagging reschedule with per-reminder max repeats.
+                max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
+                sent_nags = max(0, int(reminder.nagging_sent_count or 0))
+                if reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
                     tz = reminder.execution_time.tzinfo or timezone.utc
-                    next_nag = datetime.now(tz) + timedelta(minutes=5)
+                    next_nag = datetime.now(tz) + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
                     self.scheduler.add_job(
                         execute_reminder_job,
                         "date",
@@ -168,6 +243,13 @@ class SchedulerService:
                     )
                     scheduled_nagging_job = True
                     logger.info("Scheduled nagging for reminder %s at %s.", reminder_id, next_nag)
+                elif reminder.is_nagging and reminder.status != "completed":
+                    logger.info(
+                        "Nagging limit reached for reminder %s (%s/%s); not scheduling more follow-ups.",
+                        reminder_id,
+                        sent_nags,
+                        max_nag_repeats,
+                    )
 
                 await session.commit()
 
@@ -191,7 +273,7 @@ class SchedulerService:
                 chat_id=user_id,
                 text=f"{l10n['reminder_prefix']}{text}",
                 reply_markup=reply_markup,
-                parse_mode="Markdown",
+                parse_mode=None,
             )
         except TelegramForbiddenError:
             logger.warning("User %s has blocked the bot.", user_id)

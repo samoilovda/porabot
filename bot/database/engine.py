@@ -50,10 +50,27 @@ async def init_db(engine: AsyncEngine) -> None:
             ("morning_brief_hour", "INTEGER DEFAULT 9"), 
             ("evening_brief_hour", "INTEGER DEFAULT 23"),
             ("morning_brief_time", "VARCHAR DEFAULT '09:00'"),
-            ("evening_brief_time", "VARCHAR DEFAULT '23:00'")
+            ("evening_brief_time", "VARCHAR DEFAULT '23:00'"),
+            ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
+            ("quiet_hours_start", "VARCHAR DEFAULT '23:00'"),
+            ("quiet_hours_end", "VARCHAR DEFAULT '07:00'"),
+            ("missed_recovery_enabled", "BOOLEAN DEFAULT 1"),
+            ("last_missed_recovery_date", "VARCHAR"),
         ]:
             try:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+            except OperationalError:
+                pass  # column already exists
+
+        # Soft-migration for nagging limits per reminder
+        for col, col_type in [
+            ("nagging_max_repeats", "INTEGER NOT NULL DEFAULT 3"),
+            ("nagging_sent_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("completed_for_execution_time", "DATETIME"),
+            ("last_completion_note", "VARCHAR"),
+        ]:
+            try:
+                await conn.execute(text(f"ALTER TABLE reminders ADD COLUMN {col} {col_type}"))
             except OperationalError:
                 pass  # column already exists
 

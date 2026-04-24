@@ -48,9 +48,13 @@ class ParsedInput:
     Attributes:
         clean_text:      Task description with time expressions removed.
         parsed_datetime: Timezone-aware datetime when found, else None.
+        confidence:      Parsing confidence in [0.0, 1.0].
+        parse_source:    Which stage produced datetime ("dateparser", "regex_*", "none").
     """
     clean_text: str
     parsed_datetime: Optional[datetime]
+    confidence: float = 0.0
+    parse_source: str = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -98,24 +102,28 @@ class InputParser:
 
     def _process_hour_expression(
         self,
-        normalized_text: str,
+        *,
+        hour: int,
+        minute: int,
+        period_token: Optional[str],
         timezone: str,
         now: datetime,
     ) -> Optional[datetime]:
-        """Parse a simple hour-only expression (e.g. "в 23", "в 10 утра") into a datetime."""
-        hour_str = normalized_text.split()[-1]
-        try:
-            hour = int(hour_str)
-        except ValueError:
+        """Parse hour(+optional minute/period) into next local datetime."""
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
             return None
 
-        has_pm = "pm" in normalized_text or "вечера" in normalized_text
-        has_am = "am" in normalized_text or "утра" in normalized_text
+        token = (period_token or "").lower()
+        has_pm = token in {"pm", "вечера", "послеобеденно"}
+        has_am = token in {"am", "утра", "ночи"}
         is_24h = hour >= 13
 
         period_hour = hour
         if not is_24h and (has_pm or has_am):
-            period_hour = hour + 12 if has_pm and hour != 12 else hour % 12 or 12
+            if has_pm and hour != 12:
+                period_hour = hour + 12
+            elif has_am and hour == 12:
+                period_hour = 0
 
         tz_obj = pytz.timezone(timezone)
         dt = tz_obj.localize(datetime(
@@ -123,7 +131,7 @@ class InputParser:
             month=now.month,
             day=now.day,
             hour=period_hour,
-            minute=0,
+            minute=minute,
         ))
         if dt <= now:
             dt = tz_obj.normalize(dt + timedelta(days=1))
@@ -160,9 +168,14 @@ class InputParser:
         )
 
         parsed_datetime: Optional[datetime] = None
+        confidence = 0.0
+        parse_source = "none"
+        normalized_changed = normalized_text != text
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
+            parse_source = "dateparser"
+            confidence = 0.75 if normalized_changed else 0.95
             if matched_substring in clean_text:
                 clean_text = clean_text.replace(matched_substring, "", 1)
 
@@ -175,9 +188,17 @@ class InputParser:
             )
             hour_match = hour_pattern.search(normalized_text)
             if hour_match:
-                result_dt = self._process_hour_expression(normalized_text, timezone, now)
+                result_dt = self._process_hour_expression(
+                    hour=int(hour_match.group(1)),
+                    minute=0,
+                    period_token=hour_match.group(2),
+                    timezone=timezone,
+                    now=now,
+                )
                 if result_dt:
                     parsed_datetime = result_dt
+                    parse_source = "regex_hour"
+                    confidence = 0.55
                     match_str = hour_match.group(0)
                     if match_str in clean_text:
                         clean_text = clean_text.replace(match_str, "", 1)
@@ -199,6 +220,8 @@ class InputParser:
                     parsed_datetime = now + timedelta(hours=amount)
                 else:  # дней, дня, день, сутки
                     parsed_datetime = now + timedelta(days=amount)
+                parse_source = "regex_duration"
+                confidence = 0.5
                 if duration_match.group(0) in clean_text:
                     clean_text = clean_text.replace(duration_match.group(0), "", 1)
 
@@ -211,9 +234,17 @@ class InputParser:
                 re.IGNORECASE,
             )
             if hour_match:
-                result_dt = self._process_hour_expression(normalized_text, timezone, now)
+                result_dt = self._process_hour_expression(
+                    hour=int(hour_match.group(1)),
+                    minute=int(hour_match.group(2) or 0),
+                    period_token=hour_match.group(3),
+                    timezone=timezone,
+                    now=now,
+                )
                 if result_dt:
                     parsed_datetime = result_dt
+                    parse_source = "regex_hour_alt"
+                    confidence = 0.5
                     if hour_match.group(0) in clean_text:
                         clean_text = clean_text.replace(hour_match.group(0), "", 1)
 
@@ -222,7 +253,12 @@ class InputParser:
         clean_text = " ".join(clean_text.split())
 
         logger.debug("Parser: clean_text=%r parsed_datetime=%s", clean_text, parsed_datetime)
-        return ParsedInput(clean_text=clean_text, parsed_datetime=parsed_datetime)
+        return ParsedInput(
+            clean_text=clean_text,
+            parsed_datetime=parsed_datetime,
+            confidence=confidence,
+            parse_source=parse_source,
+        )
 
     # ------------------------------------------------------------------
     # Public API

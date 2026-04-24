@@ -7,7 +7,7 @@ and sends the appropriate summary.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, time as dt_time
 
 import pytz
 from aiogram import Bot
@@ -47,6 +47,33 @@ def _build_evening_text(completed, pending, user, l10n: dict) -> str:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         lines.append(f"❌ {t.reminder_text} ({time_str})")  # BUG-4 fixed: closing paren added
     return "\n".join(lines)
+
+
+def _parse_hhmm(raw: str, fallback: str) -> dt_time:
+    value = (raw or fallback).strip()
+    try:
+        hh, mm = value.split(":", 1)
+        h = int(hh)
+        m = int(mm)
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return dt_time(hour=h, minute=m)
+    except Exception:
+        pass
+    fh, fm = fallback.split(":")
+    return dt_time(hour=int(fh), minute=int(fm))
+
+
+def _is_quiet_local(user, now_local: datetime) -> bool:
+    if not bool(getattr(user, "quiet_hours_enabled", False)):
+        return False
+    start = _parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
+    end = _parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+    current = now_local.time()
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str) -> None:
@@ -107,6 +134,8 @@ async def process_daily_briefs() -> None:
                     tz = pytz.UTC
                     
                 local_time_str = datetime.now(tz).strftime("%H:%M")
+                if _is_quiet_local(user, datetime.now(tz)):
+                    continue
                 reminder_dao = ReminderDAO(session)
                 
                 from bot.lexicon import get_l10n

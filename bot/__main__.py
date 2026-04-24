@@ -28,6 +28,7 @@ from bot.middlewares.whitelist import WhitelistMiddleware
 from bot.handlers import all_routers
 from bot.services.scheduler import SchedulerService
 from bot.services.daily_briefs import setup_daily_briefs
+from bot.services.missed_recovery import setup_missed_task_recovery
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +60,7 @@ async def main() -> None:
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)
     setup_daily_briefs(scheduler)
+    setup_missed_task_recovery(scheduler)
     logger.info("Scheduler configured.")
 
     # Middleware — whitelist intentionally disabled (open access).

@@ -139,6 +139,7 @@ def get_edit_keyboard(
     l10n: dict[str, Any],
     is_recurring: bool = False,
     is_nagging: bool = False,
+    nagging_max_repeats: int = 3,
     rrule_text: str = "Нет",
 ) -> InlineKeyboardMarkup:
     """
@@ -149,6 +150,7 @@ def get_edit_keyboard(
         l10n: Localization dictionary
         is_recurring: Whether this is a recurring task
         is_nagging: Whether nagging is enabled
+        nagging_max_repeats: Max number of nagging follow-up messages
         rrule_text: Recurrence rule text (e.g., "FREQ=DAILY")
 
     Returns:
@@ -176,6 +178,14 @@ def get_edit_keyboard(
         InlineKeyboardButton(
             text=l10n["btn_nagging_prefix"].format(icon=nagging_icon) + f" {nagging_status}",
             callback_data=f"edit_toggle_nagging_{reminder_id}",
+        )
+    )
+
+    # Per-task/habit nagging repeats limit.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n["btn_nagging_repeats_prefix"].format(count=max(0, int(nagging_max_repeats))),
+            callback_data=f"edit_set_nag_limit_{reminder_id}",
         )
     )
 
@@ -257,6 +267,51 @@ def get_task_done_keyboard(
     return builder.as_markup()
 
 
+def get_done_followup_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+    *,
+    is_recurring: bool = False,
+) -> InlineKeyboardMarkup:
+    """Keyboard shown after marking a task as done."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_done_add_note", "📝 Add note"), callback_data=f"done_note_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_done_undo", "↩ Undo"), callback_data=f"done_undo_{reminder_id}"),
+    )
+    if is_recurring:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_done_skip_next", "⏭ Skip next"),
+                callback_data=f"done_skip_next_{reminder_id}",
+            )
+        )
+    builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="done_close"))
+    return builder.as_markup()
+
+
+def get_parse_confirmation_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for low-confidence parser confirmations."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_yes", "✅ Yes"), callback_data="parse_confirm_yes"),
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_time", "🕒 Pick time"), callback_data="parse_confirm_pick_time"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_parse_confirm_cancel", "❌ Cancel"), callback_data="parse_confirm_cancel"))
+    return builder.as_markup()
+
+
+def get_missed_recovery_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for missed-task recovery digest."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_recovery_done_all", "✅ Done all"), callback_data="recovery_done_all"),
+        InlineKeyboardButton(text=l10n.get("btn_recovery_snooze_all", "⏰ +1h all"), callback_data="recovery_snooze_all"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"))
+    return builder.as_markup()
+
+
 # =============================================================================
 # SNOOZE KEYBOARD (alternative layout)
 # =============================================================================
@@ -326,7 +381,7 @@ def get_tasks_list_keyboard(
     """
     Keyboard for task list view.
 
-    Shows Done! and Delete buttons for each task, plus navigation controls.
+    Shows Done, Settings, and Delete buttons for each task, plus navigation controls.
 
     Args:
         tasks: List of Reminder objects (or dicts with 'id' and 'reminder_text')
@@ -359,6 +414,14 @@ def get_tasks_list_keyboard(
             InlineKeyboardButton(
                 text=f"{l10n['btn_done_task_prefix']} {text_preview}",
                 callback_data=f"done_task_{task.id}" if hasattr(task, 'id') else f"done_task_{task.get('id', '')}",
+            ),
+            InlineKeyboardButton(
+                text=l10n.get("btn_task_settings", "⚙️"),
+                callback_data=(
+                    f"task_settings_{task.id}"
+                    if hasattr(task, 'id')
+                    else f"task_settings_{task.get('id', '')}"
+                ),
             ),
             InlineKeyboardButton(
                 text=l10n["btn_delete"],
@@ -449,6 +512,13 @@ def get_settings_keyboard(
         )
     )
 
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_quiet_hours_setup", "😴 Quiet hours"),
+            callback_data="settings_quiet_setup",
+        )
+    )
+
     return builder.as_markup()
 
 
@@ -487,5 +557,24 @@ def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_str: 
         InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening")
     )
     
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
+    return builder.as_markup()
+
+
+def get_quiet_hours_setup_keyboard(
+    l10n: dict[str, Any],
+    *,
+    enabled: bool,
+    start_time: str,
+    end_time: str,
+) -> InlineKeyboardMarkup:
+    """Keyboard for Quiet Hours setup."""
+    builder = InlineKeyboardBuilder()
+    toggle_text = l10n.get("btn_quiet_on") if enabled else l10n.get("btn_quiet_off")
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="quiet_toggle"))
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_quiet_start").format(time=start_time), callback_data="quiet_edit_start"),
+        InlineKeyboardButton(text=l10n.get("btn_quiet_end").format(time=end_time), callback_data="quiet_edit_end"),
+    )
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()

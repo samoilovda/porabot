@@ -9,7 +9,9 @@ A smart Telegram bot for managing scheduled reminders and tasks with intelligent
 | **Smart NLP Parsing** | Understands natural language like "вечером", "завтра в 10 утра", "in 15 minutes" (Russian & English) |
 | **One-Time Tasks** | Create tasks that fire once at a specific time |
 | **Recurring Tasks** | Daily, weekly, or custom repetition patterns |
-| **Nagging Mode** | Bot sends follow-up notifications every 5 min until task is completed |
+| **Nagging Mode** | Bot sends follow-up notifications every 5 min, capped at 3 repeats by default (customizable per task/habit) |
+| **Quiet Hours** | Sleep mode suppresses reminders during a configured time window |
+| **Missed-Task Recovery** | Daily catch-up digest with one-tap "done all" or "snooze all" actions |
 | **Timezone Awareness** | All execution times stored in UTC but displayed in user's local timezone |
 | **Daily Briefs** | Morning (09:00) and evening (23:00) summary messages |
 | **Task Management** | View, edit, snooze, mark as done, or delete tasks via menu or text commands |
@@ -111,7 +113,9 @@ Click the menu button (or use `/menu`) to access:
 - **📅 My Tasks** — View all pending tasks, edit or delete them
 - **⏰ Snooze** — Delay task execution by 15 min / 1 hour / tomorrow
 - **✅ Mark Done** — Complete a task manually
-- **⚙️ Settings** — Change timezone, toggle nagging mode
+- **📜 Completed** — See completed items from the last 7 days
+- **⚙️ Settings** — Change timezone and adjust per-task/per-habit nagging behavior
+- **😴 Quiet Hours** — Configure sleep mode start/end and enable or disable it
 
 ### Editing Tasks
 
@@ -146,13 +150,13 @@ The bot uses a two-stage NLP approach:
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `users` | User profile data | id, username, timezone, show_utc_offset |
-| `reminders` | Task definitions | user_id, reminder_text, execution_time, status, is_recurring, rrule_string, is_nagging, completed_at |
+| `reminders` | Task definitions | user_id, reminder_text, execution_time, status, is_recurring, rrule_string, is_nagging, nagging_max_repeats, nagging_sent_count, completed_for_execution_time, completed_at |
 
 ### Scheduler Jobs
 
 - **Recurring Tasks** — APScheduler manages job persistence in separate SQLite DB
 - **Daily Briefs** — Hourly cron jobs send morning (09:00) and evening (23:00) summaries
-- **Nagging Mode** — Follow-up notifications every 5 minutes until task completion
+- **Nagging Mode** — Follow-up notifications every 5 minutes, limited by per-task repeat cap
 
 ## 🐛 Bug Fixes Applied (Phase 1)
 

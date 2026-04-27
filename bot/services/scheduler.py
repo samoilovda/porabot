@@ -22,6 +22,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
+from bot.utils.time_ext import to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -70,17 +71,17 @@ class SchedulerService:
         """Add (or replace) a one-shot date-trigger job for *reminder_id*."""
         if run_date.tzinfo is None:
             logger.warning("Reminder %s has naive run_date — assuming UTC.", reminder_id)
-            run_date = run_date.replace(tzinfo=timezone.utc)
+        run_date_utc = to_utc_aware(run_date)
         try:
             self.scheduler.add_job(
                 execute_reminder_job,
                 "date",
-                run_date=run_date,
+                run_date=run_date_utc,
                 args=[reminder_id, False],
                 id=str(reminder_id),
                 replace_existing=True,
             )
-            logger.info("Scheduled reminder %s for %s (nagging=%s).", reminder_id, run_date, is_nagging)
+            logger.info("Scheduled reminder %s for %s (nagging=%s).", reminder_id, run_date_utc, is_nagging)
         except Exception as e:
             logger.error("Failed to schedule reminder %s: %s", reminder_id, e, exc_info=True)
             # Critical: propagate failure so callers can rollback DB/session changes
@@ -217,10 +218,15 @@ class SchedulerService:
                         rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
                         next_run = rule.after(datetime.now(start_dt.tzinfo))
                         if next_run:
-                            reminder.execution_time = next_run
-                            self.schedule_reminder(reminder_id, next_run, is_nagging=reminder.is_nagging)
+                            next_run_utc_naive = to_utc_naive(next_run)
+                            reminder.execution_time = next_run_utc_naive
+                            self.schedule_reminder(
+                                reminder_id,
+                                to_utc_aware(next_run_utc_naive),
+                                is_nagging=reminder.is_nagging,
+                            )
                             scheduled_main_job = True
-                            logger.info("Rescheduled recurring reminder %s → %s.", reminder_id, next_run)
+                            logger.info("Rescheduled recurring reminder %s → %s.", reminder_id, next_run_utc_naive)
                         else:
                             logger.info("Recurring reminder %s has no future occurrences.", reminder_id)
                     except (ValueError, TypeError) as e:

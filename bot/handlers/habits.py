@@ -3,7 +3,6 @@
 import logging
 from typing import Any
 
-import pytz
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -14,7 +13,7 @@ from bot.database.models import User
 from bot.database.dao.reminder import ReminderDAO
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
-from bot.utils.time_ext import format_time
+from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -128,8 +127,8 @@ async def state_habit_time(
         await message.answer(l10n["habit_time_retry"])
         return
         
-    # Convert local execution time to UTC before storing in database!
-    execution_time_utc = result.parsed_datetime.astimezone(pytz.UTC)
+    # Normalize to UTC once and store as naive UTC in DB.
+    execution_time_utc = to_utc_naive(result.parsed_datetime)
     
     # Schedule it as a strict daily recurring task with nagging enabled
     try:
@@ -144,7 +143,7 @@ async def state_habit_time(
         )
         scheduler_service.schedule_reminder(
             reminder.id,
-            execution_time_utc,
+            to_utc_aware(execution_time_utc),
             is_nagging=reminder.is_nagging,
         )
         

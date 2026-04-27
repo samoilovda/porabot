@@ -38,7 +38,7 @@ from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown_v2
-from bot.utils.time_ext import format_time
+from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
 parser = InputParser()
@@ -55,7 +55,7 @@ _MAX_INPUT = 3000
 _NAG_LIMIT_MIN = 0
 _NAG_LIMIT_MAX = 20
 _COMPLETED_HISTORY_DAYS = 7
-_PARSE_CONFIDENCE_THRESHOLD = 0.8
+_PARSE_CONFIDENCE_THRESHOLD = 0.7
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,8 @@ async def _save_and_show_edit(
     """Persist reminder to DB, schedule it, send confirmation with edit keyboard."""
     data = await state.get_data()
     text = data.get("text")
-    execution_time = datetime.fromisoformat(data["execution_time"])
+    execution_time_raw = datetime.fromisoformat(data["execution_time"])
+    execution_time = to_utc_naive(execution_time_raw)
     edit_reminder_id = data.get("edit_reminder_id")
 
     if edit_reminder_id:
@@ -184,7 +185,11 @@ async def _save_and_show_edit(
             return
 
     try:
-        scheduler_service.schedule_reminder(new_reminder.id, new_reminder.execution_time, is_nagging=new_reminder.is_nagging)
+        scheduler_service.schedule_reminder(
+            new_reminder.id,
+            to_utc_aware(new_reminder.execution_time),
+            is_nagging=new_reminder.is_nagging,
+        )
     except Exception as e:
         logger.error("Failed to schedule reminder %s: %s", new_reminder.id, e, exc_info=True)
         # Critical: rollback DAO changes when scheduling failed, otherwise reminder
@@ -597,10 +602,15 @@ async def callback_recovery_done_all(
                 next_run = None
 
             if next_run:
-                task.execution_time = next_run
+                next_run_utc_naive = to_utc_naive(next_run)
+                task.execution_time = next_run_utc_naive
                 task.completed_for_execution_time = None
                 try:
-                    scheduler_service.schedule_reminder(task.id, next_run, is_nagging=task.is_nagging)
+                    scheduler_service.schedule_reminder(
+                        task.id,
+                        to_utc_aware(next_run_utc_naive),
+                        is_nagging=task.is_nagging,
+                    )
                 except Exception:
                     await reminder_dao.session.rollback()
                     return await callback.answer(
@@ -892,15 +902,20 @@ async def callback_done_skip_next(
         next_run = rule.after(start_dt)
         if not next_run:
             return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
-        reminder.execution_time = next_run
+        next_run_utc_naive = to_utc_naive(next_run)
+        reminder.execution_time = next_run_utc_naive
         reminder.completed_for_execution_time = None
-        scheduler_service.schedule_reminder(reminder.id, next_run, is_nagging=reminder.is_nagging)
+        scheduler_service.schedule_reminder(
+            reminder.id,
+            to_utc_aware(next_run_utc_naive),
+            is_nagging=reminder.is_nagging,
+        )
         scheduler_service.remove_nagging_job(reminder.id)
     except Exception:
         await reminder_dao.session.rollback()
         return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
 
-    next_str = format_time(next_run, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    next_str = format_time(next_run_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     await callback.message.answer(
         l10n.get("done_skip_next_done", "⏭ Next occurrence skipped. New time: {time}").format(time=next_str)
     )
@@ -1003,15 +1018,20 @@ async def callback_snooze_act(
         await callback.answer(l10n.get("unknown_snooze", "❌ Unknown action"), show_alert=True)
         return
 
-    reminder.execution_time = new_time
+    new_time_utc_naive = to_utc_naive(new_time)
+    reminder.execution_time = new_time_utc_naive
     try:
-        scheduler_service.schedule_reminder(reminder.id, new_time, is_nagging=reminder.is_nagging)
+        scheduler_service.schedule_reminder(
+            reminder.id,
+            to_utc_aware(new_time_utc_naive),
+            is_nagging=reminder.is_nagging,
+        )
     except Exception:
         await reminder_dao.session.rollback()
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
 
-    friendly_time = format_time(new_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     snooze_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}")
     await callback.message.edit_text(
         snooze_text,

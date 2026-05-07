@@ -140,7 +140,7 @@ RU: dict[str, Any] = {
 
     # Habits
     "habits_dashboard": "🫧 **Панель привычек**:\nВыбери шаблон или создай свою ежедневную привычку.",
-    "habit_motivation": "🔥 Импульс: {weekly_done} выполнений за 7 дней · {active_count} активных привычек",
+    "habit_motivation": "🔥 Импульс: {weekly_done} выполнений за 7 дней · {active_count} активных привычек · серия {best_current_streak} (рекорд {best_ever_streak})",
     "habit_preset_water": "💧 Пить воду",
     "habit_preset_workout": "🧘 Тренировка",
     "habit_preset_rest": "🛌 Отдых",
@@ -159,7 +159,7 @@ RU: dict[str, Any] = {
     "habit_create_failed_internal": "❌ Внутренняя ошибка при создании привычки.",
     "habit_no_active": "📋 Активных ежедневных привычек пока нет. Нажми «➕ Своя привычка» или выбери шаблон.",
     "habit_list_header": "📋 **Твои активные ежедневные привычки:**\n",
-    "habit_list_item": "{index}. **{habit}** (Каждый день в {time})",
+    "habit_list_item": "{index}. **{habit}** (Каждый день в {time}) · 🔥 {streak} (рекорд {best})",
     "habit_btn_delete_n": "❌ Удалить {index}",
     "habit_btn_back_dashboard": "🔙 Назад к панели",
     "habit_deleted_alert": "✅ Привычка удалена!",

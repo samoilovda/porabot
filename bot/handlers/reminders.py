@@ -75,6 +75,17 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return l10n["repeat_none"]
 
 
+def _is_habit_like(reminder) -> bool:
+    """Detect reminders that participate in habit streak tracking."""
+    return bool(
+        getattr(reminder, "is_habit", False)
+        or getattr(reminder, "habit_active_due_at", None) is not None
+        or getattr(reminder, "habit_last_completed_due_at", None) is not None
+        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+    )
+
+
 def _message_task_key(message: Message) -> tuple[int, int]:
     """Use chat+message id to avoid cross-chat key collisions."""
     return (message.chat.id, message.message_id)
@@ -481,6 +492,8 @@ async def callback_edit_nagging(
         scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
         if not reminder.is_nagging:
             reminder.nagging_sent_count = 0
+            reminder.last_nag_chat_id = None
+            reminder.last_nag_message_id = None
             scheduler_service.remove_nagging_job(reminder.id)
     except Exception:
         await reminder_dao.session.rollback()
@@ -647,8 +660,11 @@ async def callback_recovery_snooze_all(
     for task in overdue:
         task.execution_time = new_time
         task.completed_for_execution_time = None
+        task.last_nag_chat_id = None
+        task.last_nag_message_id = None
         try:
             scheduler_service.schedule_reminder(task.id, new_time, is_nagging=task.is_nagging)
+            scheduler_service.remove_nagging_job(task.id)
         except Exception:
             await reminder_dao.session.rollback()
             return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
@@ -725,6 +741,8 @@ async def state_nag_limit(
         or nag_limit == 0
         or reminder.nagging_sent_count >= nag_limit
     ):
+        reminder.last_nag_chat_id = None
+        reminder.last_nag_message_id = None
         scheduler_service.remove_nagging_job(reminder.id)
 
     await state.clear()
@@ -795,7 +813,22 @@ def _cleanup_stale_timers() -> None:
 async def callback_task_done(
     callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
 ) -> None:
-    reminder_id = int(callback.data.split("done_task_")[1])
+    payload = callback.data[len("done_task_"):]
+    parts = payload.split("_")
+    try:
+        reminder_id = int(parts[0])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Invalid action", show_alert=True)
+        return
+
+    cycle_due_at_utc_naive = None
+    if len(parts) >= 2:
+        try:
+            cycle_due_ts = int(parts[1])
+            cycle_due_at_utc_naive = datetime.fromtimestamp(cycle_due_ts, tz=timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            cycle_due_at_utc_naive = None
+
     reminder = await reminder_dao.get_by_id(reminder_id)
 
     # Idempotency: ignore rapid double-taps
@@ -810,6 +843,19 @@ async def callback_task_done(
     ):
         await callback.answer(l10n.get("already_done", "Already done ✅"))
         return
+
+    if _is_habit_like(reminder):
+        due_at = cycle_due_at_utc_naive or reminder.habit_active_due_at
+        if due_at is not None:
+            now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+            streak_result = await reminder_dao.apply_habit_streak_completion(
+                reminder.id,
+                due_at_utc_naive=due_at,
+                completed_at_utc_naive=now_utc_naive,
+            )
+            if streak_result.get("already_counted"):
+                await callback.answer(l10n.get("already_done", "Already done ✅"))
+                return
 
     await reminder_dao.mark_done(reminder_id)
     if not reminder.is_recurring:
@@ -905,6 +951,8 @@ async def callback_done_skip_next(
         next_run_utc_naive = to_utc_naive(next_run)
         reminder.execution_time = next_run_utc_naive
         reminder.completed_for_execution_time = None
+        reminder.last_nag_chat_id = None
+        reminder.last_nag_message_id = None
         scheduler_service.schedule_reminder(
             reminder.id,
             to_utc_aware(next_run_utc_naive),
@@ -938,6 +986,8 @@ async def callback_done_undo(
     reminder.completed_at = None
     reminder.completed_for_execution_time = None
     reminder.last_completion_note = None
+    reminder.last_nag_chat_id = None
+    reminder.last_nag_message_id = None
 
     now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
     execution_time_cmp = reminder.execution_time
@@ -1020,12 +1070,15 @@ async def callback_snooze_act(
 
     new_time_utc_naive = to_utc_naive(new_time)
     reminder.execution_time = new_time_utc_naive
+    reminder.last_nag_chat_id = None
+    reminder.last_nag_message_id = None
     try:
         scheduler_service.schedule_reminder(
             reminder.id,
             to_utc_aware(new_time_utc_naive),
             is_nagging=reminder.is_nagging,
         )
+        scheduler_service.remove_nagging_job(reminder.id)
     except Exception:
         await reminder_dao.session.rollback()
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)

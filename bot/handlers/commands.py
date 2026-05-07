@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.reply import get_main_menu_keyboard
-from bot.keyboards.inline import get_language_selection_keyboard
+from bot.keyboards.inline import get_language_selection_keyboard, get_timezone_keyboard
 from bot.lexicon import get_l10n
 
 router = Router(name="commands")
@@ -29,12 +29,21 @@ async def cmd_start(message: Message, state: FSMContext, user: User, l10n: dict[
 
 
 @router.callback_query(F.data.startswith("set_lang_"))
-async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: User) -> None:
+async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: User, state: FSMContext) -> None:
+    is_onboarding = user.language is None
     lang_code = callback.data.split("set_lang_")[1]
     await user_dao.update_language(user.id, lang_code)
+    user.language = lang_code
     new_l10n = get_l10n(lang_code)
     await callback.message.delete()
     await callback.message.answer(new_l10n["lang_set"])
+
+    if is_onboarding:
+        await state.update_data(onboarding_timezone=True)
+        await callback.message.answer(new_l10n["choose_tz"], reply_markup=get_timezone_keyboard())
+        await callback.answer()
+        return
+
     text = new_l10n["cmd_start"].format(name=callback.from_user.first_name)
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(new_l10n))
     await callback.answer()

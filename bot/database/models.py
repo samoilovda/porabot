@@ -335,9 +335,35 @@ class Reminder(Base):
         default=False  # One-time tasks are the default
     )
 
+    # True only for reminders created through Habits flow.
+    is_habit: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
+
     # iCalendar recurrence rule string for recurring tasks
     # Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
     rrule_string: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # Habit streak tracking.
+    habit_streak_current: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    habit_streak_best: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    # Due timestamp of the current active habit cycle (UTC naive).
+    habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Due timestamp of the last completed habit cycle (UTC naive).
+    habit_last_completed_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Should bot send follow-ups every 5 min until user marks task done?
     is_nagging: Mapped[bool] = mapped_column(
@@ -362,6 +388,12 @@ class Reminder(Base):
         server_default="0",
         nullable=False,
     )
+
+    # Last Telegram message used for nagging rotation (single active nag message).
+    # When sending a new nag, scheduler deletes this message first (best effort),
+    # then stores the new message id here.
+    last_nag_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    last_nag_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # For recurring reminders, stores the execution_time value that user has
     # already completed. Active list hides reminders when this equals current

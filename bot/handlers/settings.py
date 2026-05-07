@@ -12,6 +12,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, get_language_selection_keyboard
+from bot.keyboards.reply import get_main_menu_keyboard
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -73,6 +74,8 @@ async def callback_change_lang(callback: CallbackQuery, l10n: dict[str, Any]) ->
 async def callback_set_tz(
     callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any], state: FSMContext
 ) -> None:
+    state_data = await state.get_data()
+    is_onboarding_tz = bool(state_data.get("onboarding_timezone"))
     action = callback.data.split("set_tz_")[1]
     if action == "manual":
         await state.set_state(SettingsState.waiting_for_timezone)
@@ -80,7 +83,12 @@ async def callback_set_tz(
         await callback.answer()
         return
     await user_dao.update_timezone(user.id, action)
+    user.timezone = action
     await callback.message.edit_text(l10n["tz_success"].format(tz=action), reply_markup=None)
+    if is_onboarding_tz:
+        await state.clear()
+        text = l10n["cmd_start"].format(name=callback.from_user.first_name)
+        await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
 
 
@@ -101,16 +109,23 @@ async def state_set_manual_timezone(
         )
         return
 
+    state_data = await state.get_data()
+    is_onboarding_tz = bool(state_data.get("onboarding_timezone"))
+
     await user_dao.update_timezone(user.id, tz_candidate)
     user.timezone = tz_candidate
     await state.clear()
 
     await message.answer(l10n["tz_success"].format(tz=tz_candidate), parse_mode="Markdown")
-    await message.answer(
-        _render_settings_text(user, l10n),
-        reply_markup=get_settings_keyboard(l10n, user.show_utc_offset),
-        parse_mode="Markdown",
-    )
+    if is_onboarding_tz:
+        text = l10n["cmd_start"].format(name=message.from_user.first_name)
+        await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+    else:
+        await message.answer(
+            _render_settings_text(user, l10n),
+            reply_markup=get_settings_keyboard(l10n, user.show_utc_offset),
+            parse_mode="Markdown",
+        )
 
 @router.callback_query(F.data == "settings_back")
 async def callback_settings_back(callback: CallbackQuery, user: User, l10n: dict[str, Any]) -> None:

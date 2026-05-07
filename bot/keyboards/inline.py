@@ -213,6 +213,7 @@ def get_task_done_keyboard(
     reminder_id: int,
     l10n: dict[str, Any],
     show_time_of_day_options: bool = True,
+    cycle_due_ts: Optional[int] = None,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for marking a task as done or snoozing.
@@ -234,10 +235,13 @@ def get_task_done_keyboard(
     builder = InlineKeyboardBuilder()
 
     # Row 1: Primary action (mark as done)
+    done_callback = f"done_task_{reminder_id}"
+    if cycle_due_ts is not None:
+        done_callback = f"{done_callback}_{int(cycle_due_ts)}"
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_done"],
-            callback_data=f"done_task_{reminder_id}"
+            callback_data=done_callback,
         )
     )
 

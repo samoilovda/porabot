@@ -151,6 +151,16 @@ class SchedulerService:
             candidate += timedelta(days=1)
         return candidate.astimezone(timezone.utc)
 
+    @staticmethod
+    def _is_habit_like(reminder: Reminder) -> bool:
+        return bool(
+            reminder.is_habit
+            or reminder.habit_active_due_at is not None
+            or reminder.habit_last_completed_due_at is not None
+            or int(reminder.habit_streak_current or 0) > 0
+            or int(reminder.habit_streak_best or 0) > 0
+        )
+
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""
         logger.info("Executing reminder %s (nagging=%s).", reminder_id, is_nagging_execution)
@@ -199,9 +209,35 @@ class SchedulerService:
                     )
                     return
 
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                cycle_due_ts = None
+                if self._is_habit_like(reminder):
+                    if not is_nagging_execution:
+                        prev_due = reminder.habit_active_due_at
+                        if (
+                            prev_due is not None
+                            and reminder.habit_last_completed_due_at != prev_due
+                            and now_utc_naive >= (prev_due + timedelta(hours=24))
+                        ):
+                            reminder.habit_streak_current = 0
+
+                        current_due = reminder.execution_time
+                        if current_due.tzinfo is not None:
+                            current_due = current_due.astimezone(timezone.utc).replace(tzinfo=None)
+                        reminder.habit_active_due_at = current_due
+                    active_due = reminder.habit_active_due_at or reminder.execution_time
+                    if active_due.tzinfo is not None:
+                        active_due = active_due.astimezone(timezone.utc).replace(tzinfo=None)
+                    cycle_due_ts = int(active_due.replace(tzinfo=timezone.utc).timestamp())
+
                 l10n = get_l10n(user.language)
-                keyboard = get_task_done_keyboard(reminder.id, l10n)
-                await self._send_telegram_message(reminder.user_id, reminder.reminder_text, l10n, keyboard)
+                keyboard = get_task_done_keyboard(reminder.id, l10n, cycle_due_ts=cycle_due_ts)
+                await self._send_or_replace_nag_message(
+                    reminder=reminder,
+                    l10n=l10n,
+                    keyboard=keyboard,
+                    is_nagging_execution=is_nagging_execution,
+                )
 
                 if is_nagging_execution:
                     reminder.nagging_sent_count = max(0, int(reminder.nagging_sent_count or 0)) + 1
@@ -272,10 +308,13 @@ class SchedulerService:
 
     async def _send_telegram_message(
         self, user_id: int, text: str, l10n: dict, reply_markup=None
-    ) -> None:
-        """Send a reminder notification, suppressing bot-blocked and bad-request errors."""
+    ):
+        """Send a reminder notification, suppressing bot-blocked and bad-request errors.
+
+        Returns the Telegram Message object on success, otherwise None.
+        """
         try:
-            await self.bot.send_message(
+            return await self.bot.send_message(
                 chat_id=user_id,
                 text=f"{l10n['reminder_prefix']}{text}",
                 reply_markup=reply_markup,
@@ -287,3 +326,60 @@ class SchedulerService:
             logger.error("Bad request sending to %s: %s", user_id, e)
         except Exception as e:
             logger.error("Failed to send message to %s: %s", user_id, e, exc_info=True)
+        return None
+
+    async def _delete_telegram_message(self, chat_id: int, message_id: int) -> None:
+        """Best-effort Telegram message deletion helper."""
+        try:
+            await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except TelegramForbiddenError:
+            logger.warning("Cannot delete nag message %s in chat %s: bot blocked/forbidden.", message_id, chat_id)
+        except TelegramBadRequest as e:
+            logger.debug("Cannot delete nag message %s in chat %s: %s", message_id, chat_id, e)
+        except Exception as e:
+            logger.error(
+                "Unexpected error deleting nag message %s in chat %s: %s",
+                message_id,
+                chat_id,
+                e,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _clear_nag_tracking(reminder: Reminder) -> None:
+        reminder.last_nag_chat_id = None
+        reminder.last_nag_message_id = None
+
+    async def _send_or_replace_nag_message(
+        self,
+        *,
+        reminder: Reminder,
+        l10n: dict,
+        keyboard,
+        is_nagging_execution: bool,
+    ) -> None:
+        """For nagging reminders, keep only one active reminder message visible."""
+        if (
+            is_nagging_execution
+            and reminder.last_nag_chat_id is not None
+            and reminder.last_nag_message_id is not None
+        ):
+            await self._delete_telegram_message(
+                chat_id=int(reminder.last_nag_chat_id),
+                message_id=int(reminder.last_nag_message_id),
+            )
+
+        sent_message = await self._send_telegram_message(
+            reminder.user_id,
+            reminder.reminder_text,
+            l10n,
+            keyboard,
+        )
+
+        if not reminder.is_nagging:
+            self._clear_nag_tracking(reminder)
+            return
+
+        if sent_message is not None:
+            reminder.last_nag_chat_id = int(sent_message.chat.id)
+            reminder.last_nag_message_id = int(sent_message.message_id)

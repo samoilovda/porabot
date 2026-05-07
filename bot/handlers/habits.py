@@ -29,6 +29,28 @@ def _preset_habit_texts(l10n: dict[str, Any]) -> dict[str, str]:
         "rest": l10n["habit_preset_rest"],
     }
 
+def _habit_motivation_text(l10n: dict[str, Any], stats: dict[str, int]) -> str:
+    return l10n.get("habit_motivation", "").format(
+        weekly_done=stats.get("weekly_done", 0),
+        active_count=stats.get("active_count", 0),
+        best_current_streak=stats.get("best_current_streak", 0),
+        best_ever_streak=stats.get("best_ever_streak", 0),
+    )
+
+def _is_habit_entry(reminder) -> bool:
+    return bool(
+        getattr(reminder, "is_habit", False)
+        or (
+            bool(getattr(reminder, "is_recurring", False))
+            and bool(getattr(reminder, "is_nagging", False))
+            and str(getattr(reminder, "rrule_string", "") or "").upper().startswith("FREQ=DAILY")
+        )
+        or getattr(reminder, "habit_active_due_at", None) is not None
+        or getattr(reminder, "habit_last_completed_due_at", None) is not None
+        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+    )
+
 
 def get_habits_keyboard(l10n: dict[str, Any]) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
@@ -55,10 +77,7 @@ async def btn_habits(
     """Show the habits dashboard."""
     await state.clear()
     stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-    motivation = l10n.get("habit_motivation", "").format(
-        weekly_done=stats.get("weekly_done", 0),
-        active_count=stats.get("active_count", 0),
-    )
+    motivation = _habit_motivation_text(l10n, stats)
     text = l10n["habits_dashboard"]
     if motivation.strip():
         text = f"{text}\n\n{motivation}"
@@ -138,6 +157,7 @@ async def state_habit_time(
             execution_time=execution_time_utc,
             is_recurring=True,
             rrule_string="FREQ=DAILY",
+            is_habit=True,
             is_nagging=True,
             nagging_max_repeats=3,
         )
@@ -169,7 +189,7 @@ async def cb_habit_list(
 ) -> None:
     reminders = await reminder_dao.get_user_reminders(user.id)
     # Filter for active recurring tasks
-    habits = [r for r in reminders if r.is_recurring and r.status == "pending"]
+    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)]
     
     if not habits:
         await callback.message.edit_text(
@@ -186,7 +206,15 @@ async def cb_habit_list(
     
     for i, h in enumerate(habits, start=1):
         time_str = format_time(h.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        text_lines.append(l10n["habit_list_item"].format(index=i, habit=h.reminder_text, time=time_str))
+        text_lines.append(
+            l10n["habit_list_item"].format(
+                index=i,
+                habit=h.reminder_text,
+                time=time_str,
+                streak=max(0, int(h.habit_streak_current or 0)),
+                best=max(0, int(h.habit_streak_best or 0)),
+            )
+        )
         # Add deletion button
         builder.row(
             InlineKeyboardButton(
@@ -218,10 +246,7 @@ async def cb_habit_back_dash(
 ) -> None:
     await state.clear()
     stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-    motivation = l10n.get("habit_motivation", "").format(
-        weekly_done=stats.get("weekly_done", 0),
-        active_count=stats.get("active_count", 0),
-    )
+    motivation = _habit_motivation_text(l10n, stats)
     text = l10n["habits_dashboard"]
     if motivation.strip():
         text = f"{text}\n\n{motivation}"

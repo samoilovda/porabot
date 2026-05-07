@@ -140,7 +140,7 @@ EN: dict[str, Any] = {
 
     # Habits
     "habits_dashboard": "🫧 **Habits Dashboard**:\nChoose a preset or create your own custom daily habit.",
-    "habit_motivation": "🔥 Momentum: {weekly_done} completions in 7d · {active_count} active habits",
+    "habit_motivation": "🔥 Momentum: {weekly_done} completions in 7d · {active_count} active habits · streak {best_current_streak} (best {best_ever_streak})",
     "habit_preset_water": "💧 Drink water",
     "habit_preset_workout": "🧘 Workout",
     "habit_preset_rest": "🛌 Rest",
@@ -159,7 +159,7 @@ EN: dict[str, Any] = {
     "habit_create_failed_internal": "❌ Internal error creating habit.",
     "habit_no_active": "📋 You have no active daily habits. Click '➕ Custom Habit' or choose a preset to create one!",
     "habit_list_header": "📋 **Your Active Daily Habits:**\n",
-    "habit_list_item": "{index}. **{habit}** (Daily at {time})",
+    "habit_list_item": "{index}. **{habit}** (Daily at {time}) · 🔥 {streak} (best {best})",
     "habit_btn_delete_n": "❌ Delete {index}",
     "habit_btn_back_dashboard": "🔙 Back to Dashboard",
     "habit_deleted_alert": "✅ Habit successfully deleted!",

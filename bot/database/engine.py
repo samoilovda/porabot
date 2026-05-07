@@ -64,8 +64,15 @@ async def init_db(engine: AsyncEngine) -> None:
 
         # Soft-migration for nagging limits per reminder
         for col, col_type in [
+            ("is_habit", "BOOLEAN NOT NULL DEFAULT 0"),
             ("nagging_max_repeats", "INTEGER NOT NULL DEFAULT 3"),
             ("nagging_sent_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("habit_streak_current", "INTEGER NOT NULL DEFAULT 0"),
+            ("habit_streak_best", "INTEGER NOT NULL DEFAULT 0"),
+            ("habit_active_due_at", "DATETIME"),
+            ("habit_last_completed_due_at", "DATETIME"),
+            ("last_nag_chat_id", "BIGINT"),
+            ("last_nag_message_id", "INTEGER"),
             ("completed_for_execution_time", "DATETIME"),
             ("last_completion_note", "VARCHAR"),
         ]:
@@ -73,6 +80,25 @@ async def init_db(engine: AsyncEngine) -> None:
                 await conn.execute(text(f"ALTER TABLE reminders ADD COLUMN {col} {col_type}"))
             except OperationalError:
                 pass  # column already exists
+
+        # Backfill legacy habits created before `is_habit` existed.
+        # Heuristic: daily recurring + nagging reminders were produced by Habits flow.
+        try:
+            await conn.execute(
+                text(
+                    """
+                    UPDATE reminders
+                    SET is_habit = 1
+                    WHERE COALESCE(is_habit, 0) = 0
+                      AND COALESCE(is_recurring, 0) = 1
+                      AND COALESCE(is_nagging, 0) = 1
+                      AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
+                    """
+                )
+            )
+        except OperationalError:
+            # Extremely old schemas may temporarily miss one of these columns.
+            pass
 
 
 async def dispose_engine(engine: AsyncEngine) -> None:

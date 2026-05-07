@@ -109,6 +109,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         media_type: Optional[str] = None,
         is_recurring: bool = False,
         rrule_string: Optional[str] = None,
+        is_habit: bool = False,
         is_nagging: bool = False,
         nagging_max_repeats: int = 3,
     ) -> Reminder:
@@ -132,6 +133,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             is_recurring: Is this a repeating task? Default: False
             rrule_string: iCalendar recurrence rule string for recurring tasks
                          Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+            is_habit: Whether this reminder was created from Habits flow
             is_nagging: Should bot send follow-ups every 5 min until done? Default: False
             nagging_max_repeats: Maximum number of follow-up nags. Default: 3
             
@@ -171,6 +173,8 @@ class ReminderDAO(BaseDAO[Reminder]):
             media_type=media_type,
             is_recurring=is_recurring,
             rrule_string=rrule_string,
+            is_habit=is_habit,
+            habit_active_due_at=execution_time if is_habit else None,
             is_nagging=is_nagging,
             nagging_max_repeats=nagging_max_repeats,
         )
@@ -264,8 +268,67 @@ class ReminderDAO(BaseDAO[Reminder]):
             # and local-day boundary queries converted to naive UTC.
             reminder.completed_at = now_utc_naive
             reminder.last_completion_note = None
+            reminder.last_nag_chat_id = None
+            reminder.last_nag_message_id = None
             
             await self.session.flush()
+
+    async def apply_habit_streak_completion(
+        self,
+        reminder_id: int,
+        *,
+        due_at_utc_naive: datetime,
+        completed_at_utc_naive: datetime,
+    ) -> dict[str, bool]:
+        """
+        Update habit streak counters for one completed due cycle.
+
+        Completion counts toward streak only if done within 24h after due time.
+        """
+        reminder = await self.get_by_id(reminder_id)
+        is_habit_like = bool(
+            reminder
+            and (
+                reminder.is_habit
+                or reminder.habit_active_due_at is not None
+                or reminder.habit_last_completed_due_at is not None
+                or int(reminder.habit_streak_current or 0) > 0
+                or int(reminder.habit_streak_best or 0) > 0
+            )
+        )
+        if not reminder or not is_habit_like:
+            return {"already_counted": False, "counted": False, "late": False}
+
+        if due_at_utc_naive.tzinfo is not None:
+            due_at_utc_naive = due_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
+        if completed_at_utc_naive.tzinfo is not None:
+            completed_at_utc_naive = completed_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        last_done_due = reminder.habit_last_completed_due_at
+        if last_done_due and due_at_utc_naive <= last_done_due:
+            return {"already_counted": True, "counted": False, "late": False}
+
+        if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+            reminder.habit_streak_current = 0
+            await self.session.flush()
+            return {"already_counted": False, "counted": False, "late": True}
+
+        prev_due = reminder.habit_last_completed_due_at
+        if prev_due is None:
+            new_streak = 1
+        else:
+            gap = due_at_utc_naive - prev_due
+            # Accept DST-shifted daily windows (roughly 24h ± 12h).
+            if timedelta(hours=12) <= gap <= timedelta(hours=36):
+                new_streak = max(0, int(reminder.habit_streak_current or 0)) + 1
+            else:
+                new_streak = 1
+
+        reminder.habit_streak_current = new_streak
+        reminder.habit_streak_best = max(new_streak, max(0, int(reminder.habit_streak_best or 0)))
+        reminder.habit_last_completed_due_at = due_at_utc_naive
+        await self.session.flush()
+        return {"already_counted": False, "counted": True, "late": False}
 
     async def set_last_completion_note(self, reminder_id: int, note: str) -> None:
         """Attach a note to the latest completion of a reminder."""
@@ -490,6 +553,13 @@ class ReminderDAO(BaseDAO[Reminder]):
             .where(
                 Reminder.user_id == user_id,
                 Reminder.is_recurring.is_(True),
+                or_(
+                    Reminder.is_habit.is_(True),
+                    Reminder.habit_active_due_at.is_not(None),
+                    Reminder.habit_last_completed_due_at.is_not(None),
+                    Reminder.habit_streak_current > 0,
+                    Reminder.habit_streak_best > 0,
+                ),
                 Reminder.status == "pending",
             )
         )
@@ -500,6 +570,13 @@ class ReminderDAO(BaseDAO[Reminder]):
             .where(
                 Reminder.user_id == user_id,
                 Reminder.is_recurring.is_(True),
+                or_(
+                    Reminder.is_habit.is_(True),
+                    Reminder.habit_active_due_at.is_not(None),
+                    Reminder.habit_last_completed_due_at.is_not(None),
+                    Reminder.habit_streak_current > 0,
+                    Reminder.habit_streak_best > 0,
+                ),
                 Reminder.completed_at.is_not(None),
                 Reminder.completed_at >= start_utc,
             )
@@ -509,6 +586,8 @@ class ReminderDAO(BaseDAO[Reminder]):
         return {
             "active_count": len(active_habits),
             "weekly_done": len(completed_habits),
+            "best_current_streak": max((max(0, int(h.habit_streak_current or 0)) for h in active_habits), default=0),
+            "best_ever_streak": max((max(0, int(h.habit_streak_best or 0)) for h in active_habits), default=0),
         }
 
     async def update_execution_time(

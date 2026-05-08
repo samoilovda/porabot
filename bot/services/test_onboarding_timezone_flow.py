@@ -19,6 +19,7 @@ def _load_handler(module_rel_path: str, fn_name: str):
 
 callback_set_lang = _load_handler("bot/handlers/commands.py", "callback_set_lang")
 callback_set_tz = _load_handler("bot/handlers/settings.py", "callback_set_tz")
+resolve_timezone_candidate = _load_handler("bot/handlers/settings.py", "_resolve_timezone_candidate")
 
 
 async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
@@ -68,13 +69,21 @@ async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
 
     user_dao.update_timezone.assert_awaited_once_with(202, "Europe/Moscow")
     assert user.timezone == "Europe/Moscow"
-    message.edit_text.assert_awaited_once_with(
-        l10n["tz_success"].format(tz="Europe/Moscow"),
-        reply_markup=None,
-    )
+    assert message.edit_text.await_count == 1
+    assert message.edit_text.await_args.kwargs == {"reply_markup": None}
+    edit_text = message.edit_text.await_args.args[0]
+    assert edit_text.startswith(l10n["tz_success"].split("{tz}")[0])
+    assert "Europe/Moscow" in edit_text
+    assert "UTC+" in edit_text
     state.clear.assert_awaited_once()
     message.answer.assert_awaited_once_with(
         l10n["cmd_start"].format(name="Bob"),
         reply_markup=ANY,
     )
     callback.answer.assert_awaited_once()
+
+
+def test_manual_timezone_offset_resolution() -> None:
+    assert resolve_timezone_candidate("+5") == "Etc/GMT-5"
+    assert resolve_timezone_candidate("-6") == "Etc/GMT+6"
+    assert resolve_timezone_candidate("0") == "UTC"

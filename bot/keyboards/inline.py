@@ -53,11 +53,11 @@ def get_time_selection_keyboard(
 
     # Row 1: Delta buttons (add X minutes/hours to now)
     builder.row(
-        InlineKeyboardButton(text="+15м", callback_data="time_delta_15"),
-        InlineKeyboardButton(text="+30м", callback_data="time_delta_30"),
-        InlineKeyboardButton(text="+1ч", callback_data="time_delta_60"),
-        InlineKeyboardButton(text="+2ч", callback_data="time_delta_120"),
-        InlineKeyboardButton(text="+3ч", callback_data="time_delta_180"),
+        InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data="time_delta_15"),
+        InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data="time_delta_30"),
+        InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data="time_delta_60"),
+        InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data="time_delta_120"),
+        InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data="time_delta_180"),
     )
 
     # Row 2-3: Time-of-day slots (morning, day, evening, night)
@@ -111,7 +111,7 @@ def get_time_selection_keyboard(
     return builder.as_markup()
 
 
-def get_timezone_keyboard() -> InlineKeyboardMarkup:
+def get_timezone_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     """
     Keyboard for selecting timezone.
 
@@ -124,24 +124,24 @@ def get_timezone_keyboard() -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     zones = [
-        ("America/New_York", "US Eastern (EST/EDT)"),
-        ("America/Chicago", "US Central (CST/CDT)"),
-        ("America/Denver", "US Mountain (MST/MDT)"),
-        ("America/Los_Angeles", "US Pacific (PST/PDT)"),
-        ("Europe/London", "London (GMT/BST)"),
-        ("Europe/Berlin", "Berlin (CET/CEST)"),
-        ("Europe/Kyiv", "Kyiv"),
-        ("Europe/Moscow", "Moscow"),
-        ("Asia/Dubai", "Dubai"),
-        ("Asia/Almaty", "Almaty"),
-        ("Asia/Tokyo", "Tokyo"),
-        ("Asia/Singapore", "Singapore"),
-        ("UTC", "UTC"),
+        ("America/New_York", l10n.get("tz_label_america_new_york", "US Eastern (EST/EDT)")),
+        ("America/Chicago", l10n.get("tz_label_america_chicago", "US Central (CST/CDT)")),
+        ("America/Denver", l10n.get("tz_label_america_denver", "US Mountain (MST/MDT)")),
+        ("America/Los_Angeles", l10n.get("tz_label_america_los_angeles", "US Pacific (PST/PDT)")),
+        ("Europe/London", l10n.get("tz_label_europe_london", "London (GMT/BST)")),
+        ("Europe/Berlin", l10n.get("tz_label_europe_berlin", "Berlin (CET/CEST)")),
+        ("Europe/Kyiv", l10n.get("tz_label_europe_kyiv", "Kyiv")),
+        ("Europe/Moscow", l10n.get("tz_label_europe_moscow", "Moscow")),
+        ("Asia/Dubai", l10n.get("tz_label_asia_dubai", "Dubai")),
+        ("Asia/Almaty", l10n.get("tz_label_asia_almaty", "Almaty")),
+        ("Asia/Tokyo", l10n.get("tz_label_asia_tokyo", "Tokyo")),
+        ("Asia/Singapore", l10n.get("tz_label_asia_singapore", "Singapore")),
+        ("UTC", l10n.get("tz_label_utc", "UTC")),
     ]
     # Manual entry first, then popular presets.
     builder.row(
         InlineKeyboardButton(
-            text="⌨️ Enter manually",
+            text=l10n.get("tz_manual_button", "⌨️ Enter manually"),
             callback_data="set_tz_manual"
         )
     )

@@ -51,6 +51,8 @@ active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 _MENU_TEXTS = frozenset([
     "➕ Новая задача", "📅 Мои задачи", "⚙️ Настройки",
     "➕ New Task", "📅 My Tasks", "⚙️ Settings",
+    "➕ Nueva tarea", "📅 Mis tareas", "⚙️ Ajustes",
+    "🫧 Привычки", "🫧 Habits", "🫧 Hábitos",
 ])
 _MAX_INPUT = 3000
 _NAG_LIMIT_MIN = 0
@@ -137,7 +139,7 @@ async def _handle_parsed_result(
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
 ) -> None:
-    clean_text = result.clean_text or "Без названия"
+    clean_text = result.clean_text or l10n.get("task_untitled", "Untitled task")
     await state.update_data(text=clean_text, user_timezone=user.timezone, chat_id=source_message.chat.id)
 
     if result.parsed_datetime:
@@ -246,13 +248,13 @@ async def _save_and_show_edit(
 # Main menu buttons
 # ---------------------------------------------------------------------------
 
-@router.message(F.text.in_(["➕ Новая задача", "➕ New Task"]))
+@router.message(F.text.in_(["➕ Новая задача", "➕ New Task", "➕ Nueva tarea"]))
 async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.set_state(ReminderWizard.entering_text)
     await message.answer(l10n["enter_task"], parse_mode="Markdown")
 
 
-@router.message(F.text.in_(["📅 Мои задачи", "📅 My Tasks"]))
+@router.message(F.text.in_(["📅 Мои задачи", "📅 My Tasks", "📅 Mis tareas"]))
 async def btn_my_tasks(
     message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
@@ -407,7 +409,7 @@ async def callback_parse_confirm_pick_time(
     l10n: dict[str, Any],
 ) -> None:
     data = await state.get_data()
-    text = data.get("text", "Без названия")
+    text = data.get("text", l10n.get("task_untitled", "Untitled task"))
     await state.set_state(ReminderWizard.choosing_time)
     await callback.message.edit_text(
         l10n["ask_time"].format(text=text),
@@ -435,7 +437,7 @@ async def callback_edit_edit(
     reminder_id = int(callback.data.split("edit_edit_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
     await callback.message.edit_text(
@@ -453,7 +455,7 @@ async def callback_edit_repeat(
     reminder_id = int(callback.data.split("edit_toggle_repeat_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     options = {
         l10n["repeat_none"]:     (False, None),
@@ -498,7 +500,7 @@ async def callback_edit_nagging(
     reminder_id = int(callback.data.split("edit_toggle_nagging_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     reminder.is_nagging = not reminder.is_nagging
     try:
@@ -549,7 +551,7 @@ async def callback_task_settings(
     reminder_id = int(callback.data.split("task_settings_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await callback.message.answer(
         l10n["task_settings_title"].format(text=reminder.reminder_text),
@@ -697,7 +699,7 @@ async def callback_edit_set_nag_limit(
     reminder_id = int(callback.data.split("edit_set_nag_limit_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await state.set_state(ReminderWizard.waiting_for_nag_limit)
     await state.update_data(nag_limit_reminder_id=reminder.id)
@@ -744,7 +746,7 @@ async def state_nag_limit(
     reminder = await reminder_dao.get_by_id(int(reminder_id))
     if not reminder:
         await state.clear()
-        await message.answer("Not found")
+        await message.answer(l10n["item_not_found"])
         return
 
     reminder.nagging_max_repeats = nag_limit
@@ -835,7 +837,7 @@ async def callback_task_done(
     try:
         reminder_id = int(parts[0])
     except (IndexError, ValueError):
-        await callback.answer("❌ Invalid action", show_alert=True)
+        await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
     cycle_due_at_utc_naive = None
@@ -929,7 +931,7 @@ async def callback_done_note(
     reminder_id = int(callback.data.split("done_note_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.set_state(ReminderWizard.waiting_for_done_note)
     await state.update_data(done_note_reminder_id=reminder.id)
     await callback.message.answer(l10n.get("done_note_prompt", "Send a short completion note."))
@@ -1011,7 +1013,7 @@ async def callback_done_undo(
     reminder_id = int(callback.data.split("done_undo_")[1])
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Not found", show_alert=True)
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     reminder.status = "pending"
     reminder.completed_at = None
@@ -1064,11 +1066,11 @@ async def callback_snooze_act(
         action = parts[3]
     except (IndexError, ValueError) as e:
         logger.error("Malformed snooze callback data %r: %s", callback.data, e)
-        return await callback.answer("❌ Invalid action", show_alert=True)
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
 
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
-        return await callback.answer("Task not found.", show_alert=True)
+        return await callback.answer(l10n["task_not_found"], show_alert=True)
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
@@ -1122,4 +1124,4 @@ async def callback_snooze_act(
         reply_markup=None,
         parse_mode="MarkdownV2",
     )
-    await callback.answer("Snoozed!")
+    await callback.answer(l10n["snoozed_toast"])

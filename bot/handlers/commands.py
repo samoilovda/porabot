@@ -40,7 +40,7 @@ async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: Us
 
     if is_onboarding:
         await state.update_data(onboarding_timezone=True)
-        await callback.message.answer(new_l10n["choose_tz"], reply_markup=get_timezone_keyboard())
+        await callback.message.answer(new_l10n["choose_tz"], reply_markup=get_timezone_keyboard(new_l10n))
         await callback.answer()
         return
 

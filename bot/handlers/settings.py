@@ -1,6 +1,8 @@
 """Settings handlers — timezone, language, and UTC offset preferences."""
 
 import logging
+import re
+from datetime import datetime
 from typing import Any
 
 import pytz
@@ -29,40 +31,47 @@ class SettingsState(StatesGroup):
 router = Router(name="settings")
 logger = logging.getLogger(__name__)
 
-_TZ_ALIAS_TO_IANA = {
-    # US-friendly aliases
-    "ET": "America/New_York",
-    "EST": "America/New_York",
-    "EDT": "America/New_York",
-    "CT": "America/Chicago",
-    "CST": "America/Chicago",
-    "CDT": "America/Chicago",
-    "MT": "America/Denver",
-    "MST": "America/Denver",
-    "MDT": "America/Denver",
-    "PT": "America/Los_Angeles",
-    "PST": "America/Los_Angeles",
-    "PDT": "America/Los_Angeles",
-    # Global common
-    "UTC": "UTC",
-    "GMT": "UTC",
-}
-
-
 def _resolve_timezone_candidate(raw: str) -> str:
     """
-    Normalize manual timezone input to a canonical IANA timezone.
+    Normalize manual timezone input from UTC offset to a canonical IANA timezone.
 
-    Accepts full IANA names (Europe/Berlin) and common aliases (EST, PT, ET).
+    Supported manual formats:
+      - +5
+      - -6
+      - 0
+
+    Returns:
+      - UTC for 0
+      - Etc/GMT-5 for +5
+      - Etc/GMT+6 for -6
     """
     candidate = (raw or "").strip()
-    if not candidate:
+    if not re.fullmatch(r"[+-]?\d{1,2}", candidate):
         raise pytz.UnknownTimeZoneError(raw)
 
-    mapped = _TZ_ALIAS_TO_IANA.get(candidate.upper(), candidate)
-    # Validate timezone existence; raises UnknownTimeZoneError if invalid.
-    pytz.timezone(mapped)
-    return mapped
+    hours = int(candidate)
+    if hours < -12 or hours > 14:
+        raise pytz.UnknownTimeZoneError(raw)
+
+    if hours == 0:
+        return "UTC"
+
+    # NOTE: IANA Etc/GMT has reversed sign semantics by convention.
+    sign = "-" if hours > 0 else "+"
+    return f"Etc/GMT{sign}{abs(hours)}"
+
+
+def _format_tz_display_label(tz_name: str) -> str:
+    """Friendly timezone label with current UTC offset."""
+    try:
+        tz = pytz.timezone(tz_name)
+        now_local = datetime.now(tz)
+        raw = now_local.strftime("%z")  # +HHMM
+        if raw and len(raw) == 5:
+            return f"{tz_name} (UTC{raw[:3]}:{raw[3:]})"
+    except Exception:
+        pass
+    return tz_name
 
 
 def _quiet_hours_label(user: User, l10n: dict[str, Any]) -> str:
@@ -79,12 +88,12 @@ def _quiet_hours_label(user: User, l10n: dict[str, Any]) -> str:
 
 def _render_settings_text(user: User, l10n: dict[str, Any]) -> str:
     return l10n["settings_text"].format(
-        timezone=user.timezone,
+        timezone=_format_tz_display_label(user.timezone),
         quiet_hours=_quiet_hours_label(user, l10n),
     )
 
 
-@router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings"]))
+@router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings", "⚙️ Ajustes"]))
 async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
     await state.clear()  # Reset FSM if user navigates here mid-wizard
     text = _render_settings_text(user, l10n)
@@ -102,7 +111,7 @@ async def callback_toggle_utc(callback: CallbackQuery, user_dao: UserDAO, user: 
 
 @router.callback_query(F.data == "settings_change_tz")
 async def callback_change_tz(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
-    await callback.message.edit_text(l10n["choose_tz"], reply_markup=get_timezone_keyboard())
+    await callback.message.edit_text(l10n["choose_tz"], reply_markup=get_timezone_keyboard(l10n))
     await callback.answer()
 
 
@@ -168,7 +177,10 @@ async def callback_set_tz(
         return
     await user_dao.update_timezone(user.id, action)
     user.timezone = action
-    await callback.message.edit_text(l10n["tz_success"].format(tz=action), reply_markup=None)
+    await callback.message.edit_text(
+        l10n["tz_success"].format(tz=_format_tz_display_label(action)),
+        reply_markup=None,
+    )
     if is_onboarding_tz:
         await state.clear()
         text = l10n["cmd_start"].format(name=callback.from_user.first_name)
@@ -187,7 +199,7 @@ async def state_set_manual_timezone(
         await message.answer(
             l10n.get(
                 "tz_invalid",
-                "❌ Unknown timezone. Please use a valid IANA timezone, e.g. `Europe/London`.",
+                "❌ Invalid timezone offset. Use `+5`, `0`, or `-6`.",
             ),
             parse_mode="Markdown",
         )
@@ -200,7 +212,10 @@ async def state_set_manual_timezone(
     user.timezone = resolved_tz
     await state.clear()
 
-    await message.answer(l10n["tz_success"].format(tz=resolved_tz), parse_mode="Markdown")
+    await message.answer(
+        l10n["tz_success"].format(tz=_format_tz_display_label(resolved_tz)),
+        parse_mode="Markdown",
+    )
     if is_onboarding_tz:
         text = l10n["cmd_start"].format(name=message.from_user.first_name)
         await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
@@ -320,12 +335,12 @@ async def state_briefs_set_time(message: Message, state: FSMContext, user: User,
     raw = message.text.strip()
     match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
     if not match:
-        await message.answer("❌ Please enter time in HH:MM format (e.g. `09:30` or `23:45`).", parse_mode="Markdown")
+        await message.answer(l10n["brief_time_invalid_format"], parse_mode="Markdown")
         return
     
     h, m = int(match.group(1)), int(match.group(2))
     if not (0 <= h <= 23 and 0 <= m <= 59):
-        await message.answer("❌ Invalid time. Hours must be 0–23, minutes 0–59.", parse_mode="Markdown")
+        await message.answer(l10n["brief_time_invalid_value"], parse_mode="Markdown")
         return
     
     extracted_time_str = f"{h:02d}:{m:02d}"

@@ -39,7 +39,11 @@ class WhitelistMiddleware(BaseMiddleware):
 
         if tg_user.id not in self.allowed_users and tg_user.id != self.admin_id:
             logger.warning("Access denied: user %s (%s)", tg_user.id, tg_user.full_name)
-            msg = "🚧 Porabot находится в режиме закрытого бета-тестирования. У вас нет доступа."
+            msg = (
+                "🚧 Porabot is in closed beta. You don't have access yet.\n"
+                "🚧 Porabot находится в режиме закрытого бета-тестирования. У вас пока нет доступа.\n"
+                "🚧 Porabot está en beta cerrada. Todavía no tienes acceso."
+            )
             if isinstance(event, Message):
                 await event.answer(msg)
             elif isinstance(event, CallbackQuery):

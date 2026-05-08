@@ -124,7 +124,7 @@ def get_habits_keyboard(l10n: dict[str, Any]) -> InlineKeyboardBuilder:
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_cancel"], callback_data="habit_cancel"))
     return builder
 
-@router.message(F.text.in_(["🫧 Привычки", "🫧 Habits"]))
+@router.message(F.text.in_(["🫧 Привычки", "🫧 Habits", "🫧 Hábitos"]))
 async def btn_habits(
     message: Message,
     state: FSMContext,
@@ -224,7 +224,7 @@ async def cb_fluid_habit_mode(
     habit_text = data.get("habit_text", l10n["habit_default_name"])
     mode = callback.data.removeprefix("habit_fluid_mode_")
     if mode not in {"brief_only", "ask_time"}:
-        await callback.answer("❌ Invalid mode", show_alert=True)
+        await callback.answer(l10n["invalid_mode"], show_alert=True)
         return
 
     try:
@@ -421,7 +421,7 @@ async def cb_fluid_done(
     try:
         reminder_id = int(callback.data.split("fluid_done_")[1])
     except Exception:
-        await callback.answer("❌ Invalid action", show_alert=True)
+        await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
     done = await reminder_dao.mark_fluid_habit_done_today(reminder_id, user.timezone)
@@ -441,7 +441,7 @@ async def cb_fluid_pick_custom(callback: CallbackQuery, state: FSMContext, l10n:
     try:
         reminder_id = int(callback.data.split("fluid_pick_custom_")[1])
     except Exception:
-        await callback.answer("❌ Invalid action", show_alert=True)
+        await callback.answer(l10n["invalid_action"], show_alert=True)
         return
     await state.update_data(fluid_pick_reminder_id=reminder_id)
     await state.set_state(HabitState.waiting_for_fluid_time)
@@ -462,12 +462,12 @@ async def cb_fluid_pick_time(
         reminder_id = int(reminder_id_raw)
         hhmm = f"{hhmm_raw[:2]}:{hhmm_raw[2:]}"
     except Exception:
-        await callback.answer("❌ Invalid action", show_alert=True)
+        await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder or not reminder.is_fluid_habit:
-        await callback.answer("Not found", show_alert=True)
+        await callback.answer(l10n["item_not_found"], show_alert=True)
         return
 
     try:
@@ -522,7 +522,7 @@ async def state_fluid_pick_manual_time(
     reminder = await reminder_dao.get_by_id(int(reminder_id))
     if not reminder or not reminder.is_fluid_habit:
         await state.clear()
-        await message.answer("Not found")
+        await message.answer(l10n["item_not_found"])
         return
 
     hhmm = f"{hh:02d}:{mm:02d}"

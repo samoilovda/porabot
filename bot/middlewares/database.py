@@ -55,7 +55,12 @@ class DatabaseMiddleware(BaseMiddleware):
                     await session.rollback()
                     if hasattr(event, "answer"):
                         try:
-                            await event.answer("❌ Database error. Please try again later.")
+                            await event.answer(
+                                l10n.get(
+                                    "db_error",
+                                    "❌ Database error. Please try again later.",
+                                )
+                            )
                         except Exception as send_err:
                             logger.warning("Could not send DB error message to user %s: %s", tg_user.id, send_err)
                     return None

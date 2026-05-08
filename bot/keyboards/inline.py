@@ -10,6 +10,19 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.utils.time_ext import format_time
 
 
+def _format_utc_offset(tz_name: str) -> str:
+    """Return current UTC offset label like UTC+03:00 for a timezone."""
+    try:
+        tz = pytz.timezone(tz_name)
+        now_local = datetime.now(tz)
+        raw = now_local.strftime("%z")  # +HHMM
+        if raw and len(raw) == 5:
+            return f"UTC{raw[:3]}:{raw[3:]}"
+    except Exception:
+        pass
+    return "UTC+00:00"
+
+
 # =============================================================================
 # TIME SELECTION KEYBOARDS
 # =============================================================================
@@ -111,22 +124,30 @@ def get_timezone_keyboard() -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     zones = [
-        ("Europe/Moscow", "Москва"),
-        ("Europe/Kiev", "Киев"),
-        ("Europe/Minsk", "Минск"),
-        ("Asia/Almaty", "Алматы"),
-        ("Asia/Tashkent", "Ташкент"),
-        ("Asia/Yekaterinburg", "Екатеринбург"),
+        ("America/New_York", "US Eastern (EST/EDT)"),
+        ("America/Chicago", "US Central (CST/CDT)"),
+        ("America/Denver", "US Mountain (MST/MDT)"),
+        ("America/Los_Angeles", "US Pacific (PST/PDT)"),
+        ("Europe/London", "London (GMT/BST)"),
+        ("Europe/Berlin", "Berlin (CET/CEST)"),
+        ("Europe/Kyiv", "Kyiv"),
+        ("Europe/Moscow", "Moscow"),
+        ("Asia/Dubai", "Dubai"),
+        ("Asia/Almaty", "Almaty"),
+        ("Asia/Tokyo", "Tokyo"),
+        ("Asia/Singapore", "Singapore"),
         ("UTC", "UTC"),
     ]
-    for tz, label in zones:
-        builder.row(InlineKeyboardButton(text=label, callback_data=f"set_tz_{tz}"))
+    # Manual entry first, then popular presets.
     builder.row(
         InlineKeyboardButton(
-            text="⌨️ Ввести город вручную",
+            text="⌨️ Enter manually",
             callback_data="set_tz_manual"
         )
     )
+    for tz, label in zones:
+        offset = _format_utc_offset(tz)
+        builder.row(InlineKeyboardButton(text=f"{label} ({offset})", callback_data=f"set_tz_{tz}"))
     return builder.as_markup()
 
 
@@ -464,6 +485,42 @@ def get_completed_tasks_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_fluid_pick_time_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for selecting today's reminder time for fluid habit."""
+    builder = InlineKeyboardBuilder()
+    for label in ("09:00", "12:00", "15:00", "18:00", "21:00"):
+        callback_time = label.replace(":", "")
+        builder.row(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"fluid_pick_{reminder_id}_{callback_time}",
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("fluid_time_custom", "⌨️ Custom time"),
+            callback_data=f"fluid_pick_custom_{reminder_id}",
+        )
+    )
+    return builder.as_markup()
+
+
+def get_fluid_completion_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard asking completion for fluid habits in evening."""
+    builder = InlineKeyboardBuilder()
+    for task in tasks:
+        task_id = task.id if hasattr(task, "id") else task.get("id")
+        text = task.reminder_text if hasattr(task, "reminder_text") else str(task.get("reminder_text", "Habit"))
+        preview = (text[:24] + "…") if len(text) > 24 else text
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("fluid_done_btn_prefix", "✅ Done: ") + preview,
+                callback_data=f"fluid_done_{task_id}",
+            )
+        )
+    return builder.as_markup()
+
+
 # =============================================================================
 # SETTINGS KEYBOARD
 # =============================================================================
@@ -523,6 +580,29 @@ def get_settings_keyboard(
         )
     )
 
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_clear_all", "🗑 Clear all"),
+            callback_data="settings_clear_all",
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_clear_all_confirm_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Confirmation keyboard for full account reset."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_clear_all_confirm", "✅ Yes, clear all"),
+            callback_data="settings_clear_all_confirm",
+        ),
+        InlineKeyboardButton(
+            text=l10n.get("btn_clear_all_cancel", "↩ Cancel"),
+            callback_data="settings_back",
+        ),
+    )
     return builder.as_markup()
 
 
@@ -542,6 +622,9 @@ def get_language_selection_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
     builder.row(
         InlineKeyboardButton(text=l10n["lang_ru"], callback_data="set_lang_ru"),
         InlineKeyboardButton(text=l10n["lang_en"], callback_data="set_lang_en"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["lang_es"], callback_data="set_lang_es"),
     )
     return builder.as_markup()
 

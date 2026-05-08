@@ -153,6 +153,8 @@ class SchedulerService:
 
     @staticmethod
     def _is_habit_like(reminder: Reminder) -> bool:
+        if reminder.is_fluid_habit:
+            return False
         return bool(
             reminder.is_habit
             or reminder.habit_active_due_at is not None

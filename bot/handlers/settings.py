@@ -10,9 +10,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.dao.user import UserDAO
+from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
-from bot.keyboards.inline import get_timezone_keyboard, get_settings_keyboard, get_language_selection_keyboard
+from bot.keyboards.inline import (
+    get_timezone_keyboard,
+    get_settings_keyboard,
+    get_language_selection_keyboard,
+    get_clear_all_confirm_keyboard,
+)
 from bot.keyboards.reply import get_main_menu_keyboard
+from bot.services.scheduler import SchedulerService
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -21,6 +28,41 @@ class SettingsState(StatesGroup):
 
 router = Router(name="settings")
 logger = logging.getLogger(__name__)
+
+_TZ_ALIAS_TO_IANA = {
+    # US-friendly aliases
+    "ET": "America/New_York",
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "CT": "America/Chicago",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "MT": "America/Denver",
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "PT": "America/Los_Angeles",
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+    # Global common
+    "UTC": "UTC",
+    "GMT": "UTC",
+}
+
+
+def _resolve_timezone_candidate(raw: str) -> str:
+    """
+    Normalize manual timezone input to a canonical IANA timezone.
+
+    Accepts full IANA names (Europe/Berlin) and common aliases (EST, PT, ET).
+    """
+    candidate = (raw or "").strip()
+    if not candidate:
+        raise pytz.UnknownTimeZoneError(raw)
+
+    mapped = _TZ_ALIAS_TO_IANA.get(candidate.upper(), candidate)
+    # Validate timezone existence; raises UnknownTimeZoneError if invalid.
+    pytz.timezone(mapped)
+    return mapped
 
 
 def _quiet_hours_label(user: User, l10n: dict[str, Any]) -> str:
@@ -70,6 +112,48 @@ async def callback_change_lang(callback: CallbackQuery, l10n: dict[str, Any]) ->
     await callback.answer()
 
 
+@router.callback_query(F.data == "settings_clear_all")
+async def callback_clear_all_prompt(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    await callback.message.edit_text(
+        l10n.get(
+            "clear_all_confirm_text",
+            "⚠️ This will delete all your tasks, habits, and settings permanently.\n\nAre you sure?",
+        ),
+        reply_markup=get_clear_all_confirm_keyboard(l10n),
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings_clear_all_confirm")
+async def callback_clear_all_confirm(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    user_dao: UserDAO,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
+) -> None:
+    reminders = await reminder_dao.get_all(user_id=user.id)
+    for task in reminders:
+        scheduler_service.remove_reminder_job(task.id)
+        await reminder_dao.delete_by_id(task.id)
+
+    await user_dao.delete_by_id(user.id)
+    await state.clear()
+
+    await callback.message.edit_text(
+        l10n.get("clear_all_done", "✅ All data deleted. Starting from scratch."),
+        reply_markup=None,
+    )
+    await callback.message.answer(
+        l10n["choose_language"],
+        reply_markup=get_language_selection_keyboard(l10n),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("set_tz_"))
 async def callback_set_tz(
     callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any], state: FSMContext
@@ -98,7 +182,7 @@ async def state_set_manual_timezone(
 ) -> None:
     tz_candidate = message.text.strip()
     try:
-        pytz.timezone(tz_candidate)
+        resolved_tz = _resolve_timezone_candidate(tz_candidate)
     except pytz.UnknownTimeZoneError:
         await message.answer(
             l10n.get(
@@ -112,11 +196,11 @@ async def state_set_manual_timezone(
     state_data = await state.get_data()
     is_onboarding_tz = bool(state_data.get("onboarding_timezone"))
 
-    await user_dao.update_timezone(user.id, tz_candidate)
-    user.timezone = tz_candidate
+    await user_dao.update_timezone(user.id, resolved_tz)
+    user.timezone = resolved_tz
     await state.clear()
 
-    await message.answer(l10n["tz_success"].format(tz=tz_candidate), parse_mode="Markdown")
+    await message.answer(l10n["tz_success"].format(tz=resolved_tz), parse_mode="Markdown")
     if is_onboarding_tz:
         text = l10n["cmd_start"].format(name=message.from_user.first_name)
         await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))

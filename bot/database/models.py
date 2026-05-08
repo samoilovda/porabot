@@ -342,6 +342,15 @@ class Reminder(Base):
         server_default="0",
         nullable=False,
     )
+    # Daily "fluid" habits: not fixed time, completed within local day.
+    is_fluid_habit: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
+    # Fluid reminder mode: "brief_only" | "ask_time".
+    fluid_mode: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # iCalendar recurrence rule string for recurring tasks
     # Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
@@ -364,6 +373,22 @@ class Reminder(Base):
     habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the last completed habit cycle (UTC naive).
     habit_last_completed_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Fluid habit streaks are day-based (local date strings YYYY-MM-DD).
+    fluid_streak_current: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    fluid_streak_best: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    fluid_last_completed_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fluid_planned_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fluid_planned_time: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Should bot send follow-ups every 5 min until user marks task done?
     is_nagging: Mapped[bool] = mapped_column(

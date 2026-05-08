@@ -11,6 +11,7 @@ All handlers receive dependencies via DatabaseMiddleware injection:
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -77,6 +78,8 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
 
 def _is_habit_like(reminder) -> bool:
     """Detect reminders that participate in habit streak tracking."""
+    if getattr(reminder, "is_fluid_habit", False):
+        return False
     return bool(
         getattr(reminder, "is_habit", False)
         or getattr(reminder, "habit_active_due_at", None) is not None
@@ -113,6 +116,16 @@ def _reset_auto_delete(message: Message) -> None:
 
 def _format_parse_confidence(confidence: float) -> int:
     return max(0, min(100, int(round(confidence * 100))))
+
+
+def _pick_done_reply(l10n: dict[str, Any]) -> str:
+    """Return a randomized done-reply phrase with compatibility fallback."""
+    options = l10n.get("task_done_replies")
+    if isinstance(options, list):
+        normalized = [str(item) for item in options if item]
+        if normalized:
+            return random.choice(normalized)
+    return str(l10n.get("task_done_reply", "✅ **Great!**"))
 
 
 async def _handle_parsed_result(
@@ -811,7 +824,11 @@ def _cleanup_stale_timers() -> None:
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    user: User,
+    l10n: dict[str, Any],
 ) -> None:
     payload = callback.data[len("done_task_"):]
     parts = payload.split("_")
@@ -844,6 +861,20 @@ async def callback_task_done(
         await callback.answer(l10n.get("already_done", "Already done ✅"))
         return
 
+    if getattr(reminder, "is_fluid_habit", False):
+        newly_done = await reminder_dao.mark_fluid_habit_done_today(reminder.id, user.timezone)
+        scheduler_service.remove_nagging_job(reminder.id)
+        if not newly_done:
+            await callback.answer(l10n.get("already_done", "Already done ✅"))
+            return
+        try:
+            done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
+            await callback.message.edit_text(done_text, reply_markup=None, parse_mode="MarkdownV2")
+        except TelegramBadRequest:
+            pass
+        await callback.answer(l10n["btn_done"])
+        return
+
     if _is_habit_like(reminder):
         due_at = cycle_due_at_utc_naive or reminder.habit_active_due_at
         if due_at is not None:
@@ -863,7 +894,7 @@ async def callback_task_done(
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:
-        done_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['task_done_reply']}")
+        done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
         await callback.message.edit_text(
             done_text,
             reply_markup=get_done_followup_keyboard(

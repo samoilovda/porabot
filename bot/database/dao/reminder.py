@@ -110,6 +110,8 @@ class ReminderDAO(BaseDAO[Reminder]):
         is_recurring: bool = False,
         rrule_string: Optional[str] = None,
         is_habit: bool = False,
+        is_fluid_habit: bool = False,
+        fluid_mode: Optional[str] = None,
         is_nagging: bool = False,
         nagging_max_repeats: int = 3,
     ) -> Reminder:
@@ -134,6 +136,8 @@ class ReminderDAO(BaseDAO[Reminder]):
             rrule_string: iCalendar recurrence rule string for recurring tasks
                          Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
             is_habit: Whether this reminder was created from Habits flow
+            is_fluid_habit: Whether this is a fluid (day-based) habit
+            fluid_mode: Fluid mode - "brief_only" or "ask_time"
             is_nagging: Should bot send follow-ups every 5 min until done? Default: False
             nagging_max_repeats: Maximum number of follow-up nags. Default: 3
             
@@ -173,7 +177,9 @@ class ReminderDAO(BaseDAO[Reminder]):
             media_type=media_type,
             is_recurring=is_recurring,
             rrule_string=rrule_string,
-            is_habit=is_habit,
+            is_habit=(is_habit or is_fluid_habit),
+            is_fluid_habit=is_fluid_habit,
+            fluid_mode=fluid_mode,
             habit_active_due_at=execution_time if is_habit else None,
             is_nagging=is_nagging,
             nagging_max_repeats=nagging_max_repeats,
@@ -210,6 +216,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             .where(
                 Reminder.user_id == user_id,  # Filter by owner
                 Reminder.status == "pending",  # Only show pending tasks
+                Reminder.is_fluid_habit.is_(False),  # Fluid habits live in Habits UI
                 # Hide recurring reminders already completed for current cycle.
                 # They become visible again after execution_time rolls forward.
                 or_(
@@ -289,11 +296,14 @@ class ReminderDAO(BaseDAO[Reminder]):
         is_habit_like = bool(
             reminder
             and (
-                reminder.is_habit
-                or reminder.habit_active_due_at is not None
-                or reminder.habit_last_completed_due_at is not None
-                or int(reminder.habit_streak_current or 0) > 0
-                or int(reminder.habit_streak_best or 0) > 0
+                not bool(getattr(reminder, "is_fluid_habit", False))
+                and (
+                bool(getattr(reminder, "is_habit", False))
+                or getattr(reminder, "habit_active_due_at", None) is not None
+                or getattr(reminder, "habit_last_completed_due_at", None) is not None
+                or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+                or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+                )
             )
         )
         if not reminder or not is_habit_like:
@@ -393,6 +403,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 select(Reminder)
                 .where(
                     Reminder.user_id == user_id,
+                    Reminder.is_fluid_habit.is_(False),
                     Reminder.completed_at.is_not(None),
                     Reminder.completed_at >= start_utc,
                     Reminder.completed_at < end_utc,
@@ -404,6 +415,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 select(Reminder)
                 .where(
                     Reminder.user_id == user_id,  # Filter by owner
+                    Reminder.is_fluid_habit.is_(False),
                     Reminder.status == status,   # Filter by status (pending/completed)
                     Reminder.execution_time >= start_utc,  # After midnight UTC
                     Reminder.execution_time < end_utc,     # Before next midnight UTC
@@ -492,6 +504,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             select(Reminder)
             .where(
                 Reminder.user_id == user_id,
+                Reminder.is_fluid_habit.is_(False),
                 Reminder.completed_at.is_not(None),
                 Reminder.completed_at >= start_utc,
                 Reminder.completed_at <= end_utc,
@@ -516,6 +529,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             .where(
                 Reminder.user_id == user_id,
                 Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
                 Reminder.execution_time <= threshold_utc,
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
@@ -583,12 +597,95 @@ class ReminderDAO(BaseDAO[Reminder]):
         )
         completed_habits = completed_result.scalars().all()
 
+        def _current_streak(h) -> int:
+            if getattr(h, "is_fluid_habit", False):
+                return max(0, int(h.fluid_streak_current or 0))
+            return max(0, int(h.habit_streak_current or 0))
+
+        def _best_streak(h) -> int:
+            if getattr(h, "is_fluid_habit", False):
+                return max(0, int(h.fluid_streak_best or 0))
+            return max(0, int(h.habit_streak_best or 0))
+
         return {
             "active_count": len(active_habits),
             "weekly_done": len(completed_habits),
-            "best_current_streak": max((max(0, int(h.habit_streak_current or 0)) for h in active_habits), default=0),
-            "best_ever_streak": max((max(0, int(h.habit_streak_best or 0)) for h in active_habits), default=0),
+            "best_current_streak": max((_current_streak(h) for h in active_habits), default=0),
+            "best_ever_streak": max((_best_streak(h) for h in active_habits), default=0),
         }
+
+    async def get_active_fluid_habits(self, user_id: int) -> Sequence[Reminder]:
+        """Return active fluid habits for a user."""
+        result = await self.session.execute(
+            select(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(True),
+            )
+        )
+        return result.scalars().all()
+
+    async def mark_fluid_habit_done_today(self, reminder_id: int, user_tz_str: str) -> bool:
+        """
+        Mark fluid habit as completed for user's current local day.
+
+        Returns True when completion was newly recorded, False if already done today.
+        """
+        reminder = await self.get_by_id(reminder_id)
+        if not reminder or not reminder.is_fluid_habit:
+            return False
+
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+
+        today_local = datetime.now(tz).date()
+        today_str = today_local.isoformat()
+        if reminder.fluid_last_completed_date == today_str:
+            return False
+
+        prev_str = reminder.fluid_last_completed_date
+        new_streak = 1
+        if prev_str:
+            try:
+                prev_date = datetime.strptime(prev_str, "%Y-%m-%d").date()
+            except ValueError:
+                prev_date = None
+            if prev_date is not None and prev_date == (today_local - timedelta(days=1)):
+                new_streak = max(0, int(reminder.fluid_streak_current or 0)) + 1
+
+        reminder.fluid_streak_current = new_streak
+        reminder.fluid_streak_best = max(new_streak, max(0, int(reminder.fluid_streak_best or 0)))
+        reminder.fluid_last_completed_date = today_str
+        reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
+        await self.session.flush()
+        return True
+
+    async def reset_stale_fluid_streak_if_needed(self, reminder_id: int, user_tz_str: str) -> None:
+        """Reset current fluid streak when user has already missed more than one day."""
+        reminder = await self.get_by_id(reminder_id)
+        if not reminder or not reminder.is_fluid_habit:
+            return
+
+        last = reminder.fluid_last_completed_date
+        if not last:
+            return
+
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+
+        today_local = datetime.now(tz).date()
+        try:
+            last_date = datetime.strptime(last, "%Y-%m-%d").date()
+        except ValueError:
+            return
+
+        if (today_local - last_date).days > 1 and int(reminder.fluid_streak_current or 0) != 0:
+            reminder.fluid_streak_current = 0
+            await self.session.flush()
 
     async def update_execution_time(
         self, reminder_id: int, new_time: datetime

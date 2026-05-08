@@ -17,6 +17,7 @@ from sqlalchemy import select
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
+from bot.keyboards.inline import get_fluid_completion_keyboard, get_fluid_pick_time_keyboard
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -76,10 +77,10 @@ def _is_quiet_local(user, now_local: datetime) -> bool:
     return current >= start or current < end
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str) -> None:
+async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> None:
     """Send a message, silently suppressing bot-blocked and bad-request errors."""
     try:
-        await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
     except TelegramBadRequest as e:
@@ -140,6 +141,8 @@ async def process_daily_briefs() -> None:
                 
                 from bot.lexicon import get_l10n
                 l10n = get_l10n(user.language)
+                fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
+                today_str = datetime.now(tz).date().isoformat()
 
                 if local_time_str == getattr(user, 'morning_brief_time', "09:00"):
                     tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
@@ -148,13 +151,45 @@ async def process_daily_briefs() -> None:
                         await _send_safe(bot, user.id, text)
                         logger.info("Morning brief sent to user %s", user.id)
 
+                    fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
+                    if fluid_brief_only:
+                        lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
+                        for h in fluid_brief_only:
+                            lines.append(f"▫️ {h.reminder_text}")
+                        await _send_safe(bot, user.id, "\n".join(lines))
+
+                    for h in fluid_habits:
+                        if (h.fluid_mode or "brief_only") != "ask_time":
+                            continue
+                        if h.fluid_planned_date == today_str:
+                            continue
+                        await _send_safe(
+                            bot,
+                            user.id,
+                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=h.reminder_text),
+                            reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
+                        )
+                        logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
+
                 elif local_time_str == getattr(user, 'evening_brief_time', "23:00"):
+                    for h in fluid_habits:
+                        await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
+
                     completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
                         text = _build_evening_text(completed, pending, user, l10n)
                         await _send_safe(bot, user.id, text)
                         logger.info("Evening brief sent to user %s", user.id)
+
+                    pending_fluid = [h for h in fluid_habits if h.fluid_last_completed_date != today_str]
+                    if pending_fluid:
+                        await _send_safe(
+                            bot,
+                            user.id,
+                            l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
+                            reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                        )
 
     except Exception as e:
         logger.error("Error in daily briefs job: %s", e, exc_info=True)

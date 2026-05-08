@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -111,6 +111,27 @@ async def test_non_habit_daily_reminder_does_not_mutate_streak() -> None:
 
     assert result == {"already_counted": False, "counted": False, "late": False}
     session.flush.assert_not_awaited()
+
+
+async def test_fluid_habit_day_based_streak_updates() -> None:
+    today = datetime.now(timezone.utc).date()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    reminder = SimpleNamespace(
+        is_fluid_habit=True,
+        fluid_streak_current=3,
+        fluid_streak_best=3,
+        fluid_last_completed_date=yesterday,
+        completed_at=None,
+    )
+    dao, session = _make_dao(reminder)
+
+    done = await dao.mark_fluid_habit_done_today(1, "UTC")
+
+    assert done is True
+    assert reminder.fluid_streak_current == 4
+    assert reminder.fluid_streak_best == 4
+    assert reminder.fluid_last_completed_date == today.isoformat()
+    session.flush.assert_awaited()
 
 
 def test_done_button_can_embed_cycle_due_timestamp() -> None:

@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from bot.lexicon.en import EN
 from bot.lexicon.ru import RU
+from bot.lexicon.es import ES
 
 # Default language string if None is provided
 DEFAULT_LANG = "ru"
@@ -11,6 +12,7 @@ DEFAULT_LANG = "ru"
 _LEXICONS: dict[str, dict[str, Any]] = {
     "ru": RU,
     "en": EN,
+    "es": ES,
 }
 
 def get_l10n(language_code: Optional[str]) -> dict[str, Any]:

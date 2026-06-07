@@ -1,6 +1,8 @@
 """Time utilities for UTC normalization, display formatting, and timezone resolution."""
 
+import re
 from datetime import datetime, timezone
+from typing import Optional, Tuple
 import pytz
 
 
@@ -25,6 +27,27 @@ def resolve_tz(tz_str: str) -> pytz.BaseTzInfo:
         return pytz.timezone(tz_str)
     except pytz.UnknownTimeZoneError:
         return pytz.UTC
+
+
+def parse_hhmm(raw: str) -> Optional[Tuple[int, int]]:
+    """Parse a HH:MM string and return (hour, minute) or None if invalid.
+
+    Accepts 1–2 digit hours (0–23) and exactly 2 digit minutes (0–59).
+    Leading/trailing whitespace is ignored.
+
+    Examples::
+
+        parse_hhmm("09:30")  → (9, 30)
+        parse_hhmm("9:5")    → None   # minutes must be 2 digits
+        parse_hhmm("25:00")  → None   # hour out of range
+    """
+    match = re.match(r'^(\d{1,2}):(\d{2})$', raw.strip())
+    if not match:
+        return None
+    h, m = int(match.group(1)), int(match.group(2))
+    if 0 <= h <= 23 and 0 <= m <= 59:
+        return h, m
+    return None
 
 
 def format_time(

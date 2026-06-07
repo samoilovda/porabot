@@ -37,7 +37,7 @@ from bot.callbacks import (
     TimeFixedCallback,
 )
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import User
+from bot.database.models import ReminderStatus, User
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_done_followup_keyboard,
@@ -853,7 +853,7 @@ async def callback_task_done(
     # Idempotency: ignore rapid double-taps
     if (
         not reminder
-        or reminder.status == "completed"
+        or reminder.status == ReminderStatus.COMPLETED
         or (
             reminder.is_recurring
             and reminder.completed_for_execution_time is not None
@@ -1023,7 +1023,7 @@ async def callback_done_undo(
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
-    reminder.status = "pending"
+    reminder.status = ReminderStatus.PENDING
     reminder.completed_at = None
     reminder.completed_for_execution_time = None
     reminder.last_completion_note = None

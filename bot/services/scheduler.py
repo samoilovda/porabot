@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database.dao.user import UserDAO
-from bot.database.models import Reminder
+from bot.database.models import Reminder, ReminderStatus
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
 from bot.utils.habits_utils import is_habit_like as _is_habit_like_util
@@ -165,7 +165,7 @@ class SchedulerService:
                     logger.warning("Reminder %s not found — skipping.", reminder_id)
                     return
 
-                if reminder.status == "completed":
+                if reminder.status == ReminderStatus.COMPLETED:
                     logger.info("Reminder %s already completed — skipping.", reminder_id)
                     return
                 if is_nagging_execution and not reminder.is_nagging:
@@ -257,7 +257,7 @@ class SchedulerService:
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))
-                if reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
+                if reminder.is_nagging and reminder.status != ReminderStatus.COMPLETED and sent_nags < max_nag_repeats:
                     tz = reminder.execution_time.tzinfo or timezone.utc
                     next_nag = datetime.now(tz) + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
                     self.scheduler.add_job(
@@ -270,7 +270,7 @@ class SchedulerService:
                     )
                     scheduled_nagging_job = True
                     logger.info("Scheduled nagging for reminder %s at %s.", reminder_id, next_nag)
-                elif reminder.is_nagging and reminder.status != "completed":
+                elif reminder.is_nagging and reminder.status != ReminderStatus.COMPLETED:
                     logger.info(
                         "Nagging limit reached for reminder %s (%s/%s); not scheduling more follow-ups.",
                         reminder_id,

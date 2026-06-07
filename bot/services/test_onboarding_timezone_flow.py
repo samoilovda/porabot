@@ -3,6 +3,7 @@ from unittest.mock import ANY, AsyncMock
 import importlib.util
 from pathlib import Path
 
+from bot.callbacks import SetLangCallback, SetTimezoneCallback
 from bot.lexicon import get_l10n
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,7 +35,8 @@ async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
         answer=AsyncMock(),
     )
 
-    await callback_set_lang(callback=callback, user_dao=user_dao, user=user, state=state)
+    callback_data = SetLangCallback(lang="en")
+    await callback_set_lang(callback=callback, callback_data=callback_data, user_dao=user_dao, user=user, state=state)
 
     l10n = get_l10n("en")
     user_dao.update_language.assert_awaited_once_with(101, "en")
@@ -65,7 +67,8 @@ async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
     )
     l10n = get_l10n("en")
 
-    await callback_set_tz(callback=callback, user_dao=user_dao, user=user, l10n=l10n, state=state)
+    callback_data = SetTimezoneCallback(tz="Europe/Moscow")
+    await callback_set_tz(callback=callback, callback_data=callback_data, user_dao=user_dao, user=user, l10n=l10n, state=state)
 
     user_dao.update_timezone.assert_awaited_once_with(202, "Europe/Moscow")
     assert user.timezone == "Europe/Moscow"

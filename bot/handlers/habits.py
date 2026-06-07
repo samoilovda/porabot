@@ -20,13 +20,13 @@ from bot.callbacks import (
     HabitPresetCallback,
     TaskSettingsCallback,
 )
-from bot.database.models import User
+from bot.database.models import ReminderStatus, User
 from bot.database.dao.reminder import ReminderDAO
 from bot.keyboards.inline import get_fluid_pick_time_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.habits_utils import is_habit_entry
-from bot.utils.time_ext import format_time, resolve_tz, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import format_time, parse_hhmm, resolve_tz, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -317,7 +317,7 @@ async def cb_habit_list(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any]
 ) -> None:
     reminders = await reminder_dao.get_user_reminders(user.id)
-    habits = [r for r in reminders if r.status == "pending" and is_habit_entry(r)]
+    habits = [r for r in reminders if r.status == ReminderStatus.PENDING and is_habit_entry(r)]
 
     if not habits:
         await callback.message.edit_text(
@@ -470,15 +470,11 @@ async def state_fluid_pick_manual_time(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    raw = (message.text or "").strip()
-    parts = raw.split(":")
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+    parsed = parse_hhmm(message.text or "")
+    if parsed is None:
         await message.answer(l10n["fluid_time_invalid"], parse_mode="Markdown")
         return
-    hh, mm = int(parts[0]), int(parts[1])
-    if not (0 <= hh <= 23 and 0 <= mm <= 59):
-        await message.answer(l10n["fluid_time_invalid"], parse_mode="Markdown")
-        return
+    hh, mm = parsed
 
     data = await state.get_data()
     reminder_id = data.get("fluid_pick_reminder_id")

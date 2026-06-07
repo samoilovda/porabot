@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+pytest.importorskip("natasha")
+
 from bot.lexicon import get_l10n
 
 

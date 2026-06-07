@@ -135,6 +135,8 @@ async def test_fluid_habit_day_based_streak_updates() -> None:
 
 
 def test_done_button_can_embed_cycle_due_timestamp() -> None:
+    from bot.callbacks import DoneTaskCallback
     markup = get_task_done_keyboard(123, {"btn_done": "Done", "snooze_15m": "+15m", "snooze_30m": "+30m", "snooze_1h": "+1h", "snooze_2h": "+2h", "snooze_1d": "+1d", "snooze_custom": "Custom"}, cycle_due_ts=1700000000)
     first_button = markup.inline_keyboard[0][0]
-    assert first_button.callback_data == "done_task_123_1700000000"
+    expected = DoneTaskCallback(reminder_id=123, cycle_due_ts=1700000000).pack()
+    assert first_button.callback_data == expected

@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
-from bot.database.models import Reminder, User
+from bot.database.models import Reminder, ReminderStatus, User
 from bot.keyboards.inline import get_fluid_completion_keyboard, get_fluid_pick_time_keyboard
 from bot.utils.time_ext import format_time
 
@@ -115,7 +115,7 @@ async def process_daily_briefs() -> None:
                 .distinct()
                 .join(Reminder)
                 .where(
-                    Reminder.status == "pending",
+                    Reminder.status == ReminderStatus.PENDING,
                     User.briefs_enabled.is_(True),
                 )
             )

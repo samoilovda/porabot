@@ -23,6 +23,7 @@ from bot.keyboards.inline import (
 )
 from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.scheduler import SchedulerService
+from bot.utils.time_ext import parse_hhmm
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -334,21 +335,12 @@ async def state_briefs_set_time(message: Message, state: FSMContext, user: User,
     if not message.text:
         return
     
-    # BUG-H4 FIX: Strict HH:MM validation — the InputParser is designed for full
-    # reminder phrases, not time-only config. Freeform inputs like "in 30 minutes"
-    # would produce the wrong brief time with no feedback to the user.
-    import re
-    raw = message.text.strip()
-    match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
-    if not match:
+    parsed = parse_hhmm(message.text)
+    if parsed is None:
         await message.answer(l10n["brief_time_invalid_format"], parse_mode="Markdown")
         return
-    
-    h, m = int(match.group(1)), int(match.group(2))
-    if not (0 <= h <= 23 and 0 <= m <= 59):
-        await message.answer(l10n["brief_time_invalid_value"], parse_mode="Markdown")
-        return
-    
+
+    h, m = parsed
     extracted_time_str = f"{h:02d}:{m:02d}"
     
     data = await state.get_data()
@@ -379,19 +371,12 @@ async def state_set_quiet_time(
     if not message.text:
         return
 
-    import re
-
-    raw = message.text.strip()
-    match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
-    if not match:
+    parsed = parse_hhmm(message.text or "")
+    if parsed is None:
         await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format."), parse_mode="Markdown")
         return
 
-    h, m = int(match.group(1)), int(match.group(2))
-    if not (0 <= h <= 23 and 0 <= m <= 59):
-        await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format."), parse_mode="Markdown")
-        return
-
+    h, m = parsed
     value = f"{h:02d}:{m:02d}"
     data = await state.get_data()
     target = data.get("quiet_target")

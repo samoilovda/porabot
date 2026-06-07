@@ -63,9 +63,12 @@ async def main() -> None:
     setup_missed_task_recovery(scheduler)
     logger.info("Scheduler configured.")
 
-    # Middleware — whitelist intentionally disabled (open access).
-    # To re-enable, restore WhitelistMiddleware registration before DatabaseMiddleware.
-    # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
+    # Middleware — order matters: whitelist (if enabled) runs before DB to skip DB overhead.
+    if config.ACCESS_MODE == "whitelist":
+        logger.info("Access control: whitelist mode (admin=%s, %d allowed users).", config.ADMIN_ID, len(config.ALLOWED_USERS))
+        dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
+    else:
+        logger.info("Access control: open mode.")
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
 
     # Routers

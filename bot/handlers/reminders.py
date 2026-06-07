@@ -21,8 +21,21 @@ from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from dateutil.rrule import rrulestr
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.callbacks import (
+    DeleteTaskCallback,
+    DoneNoteCallback,
+    DoneSkipNextCallback,
+    DoneTaskCallback,
+    DoneUndoCallback,
+    EditReminderCallback,
+    SnoozeActCallback,
+    SnoozeShowCallback,
+    TaskSettingsCallback,
+    TimeDeltaCallback,
+    TimeFixedCallback,
+)
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
@@ -38,14 +51,16 @@ from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
+from bot.utils.habits_utils import is_habit_like
 from bot.utils.markdown import escape_markdown_v2
-from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
+from bot.utils.recurrence import next_rrule_occurrence
+from bot.utils.time_ext import format_time, resolve_tz, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
 parser = InputParser()
 logger = logging.getLogger(__name__)
 
-# asyncio.Task registry for auto-removing inline keyboards after 5 s
+# asyncio.Task registry for auto-removing inline keyboards after a short delay
 active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
 _MENU_TEXTS = frozenset([
@@ -76,19 +91,6 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     if "WEEKLY" in reminder.rrule_string:
         return l10n["repeat_week"]
     return l10n["repeat_none"]
-
-
-def _is_habit_like(reminder) -> bool:
-    """Detect reminders that participate in habit streak tracking."""
-    if getattr(reminder, "is_fluid_habit", False):
-        return False
-    return bool(
-        getattr(reminder, "is_habit", False)
-        or getattr(reminder, "habit_active_due_at", None) is not None
-        or getattr(reminder, "habit_last_completed_due_at", None) is not None
-        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-    )
 
 
 def _message_task_key(message: Message) -> tuple[int, int]:
@@ -128,6 +130,37 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
         if normalized:
             return random.choice(normalized)
     return str(l10n.get("task_done_reply", "✅ **Great!**"))
+
+
+async def _schedule_reminder_safe(
+    *,
+    reminder_id: int,
+    execution_time: datetime,
+    is_nagging: bool,
+    scheduler_service: SchedulerService,
+    session: AsyncSession,
+    callback: CallbackQuery,
+    l10n: dict[str, Any],
+) -> bool:
+    """Schedule a reminder; on failure rollback the session and answer with an error.
+
+    Returns True on success, False on failure (caller should return early).
+    """
+    try:
+        scheduler_service.schedule_reminder(
+            reminder_id,
+            to_utc_aware(execution_time),
+            is_nagging=is_nagging,
+        )
+        return True
+    except Exception as e:
+        logger.error("Failed to schedule reminder %s: %s", reminder_id, e, exc_info=True)
+        await session.rollback()
+        await callback.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule. Please try again."),
+            show_alert=True,
+        )
+        return False
 
 
 async def _handle_parsed_result(
@@ -218,8 +251,6 @@ async def _save_and_show_edit(
         )
     except Exception as e:
         logger.error("Failed to schedule reminder %s: %s", new_reminder.id, e, exc_info=True)
-        # Critical: rollback DAO changes when scheduling failed, otherwise reminder
-        # would be committed but never executed.
         await reminder_dao.session.rollback()
         await source_message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
         await state.clear()
@@ -301,11 +332,7 @@ async def handle_forwarded_task(
         elif fwd.type == "chat":
             origin_name = getattr(fwd, "sender_chat").title if getattr(fwd, "sender_chat", None) else "Group"
 
-    if origin_name:
-        prefix = f"👤 {'Forwarded from' if user.language == 'en' else 'Переслано от'} {origin_name}:\n"
-    else:
-        prefix = ""
-
+    prefix = f"👤 {'Forwarded from' if user.language == 'en' else 'Переслано от'} {origin_name}:\n" if origin_name else ""
     full_text = f"{prefix}{text}".strip()
 
     if len(full_text) > _MAX_INPUT:
@@ -348,53 +375,78 @@ async def handle_task_text(
 
 
 # ---------------------------------------------------------------------------
-# FSM: time selection
+# FSM: time selection (four dedicated handlers replace the old combined one)
 # ---------------------------------------------------------------------------
 
-@router.callback_query(ReminderWizard.choosing_time, F.data.startswith("time_"))
-async def callback_time_selected(
-    callback: CallbackQuery, state: FSMContext, user: User, l10n: dict[str, Any],
-    reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+@router.callback_query(ReminderWizard.choosing_time, TimeDeltaCallback.filter())
+async def callback_time_delta(
+    callback: CallbackQuery,
+    callback_data: TimeDeltaCallback,
+    state: FSMContext,
+    user: User,
+    l10n: dict[str, Any],
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
 ) -> None:
-    """Resolve the chosen time option and persist the reminder."""
-    data_str = callback.data
-    try:
-        tz = pytz.timezone(user.timezone)
-    except Exception:
-        tz = pytz.UTC
-    now = datetime.now(tz)
-    execution_time = None
-
-    if "delta" in data_str:
-        minutes = int(data_str.split("_")[-1])
-        execution_time = now + timedelta(minutes=minutes)
-    elif "fixed" in data_str:
-        execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
-    elif "tomorrow" in data_str:
-        execution_time = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    elif "manual" in data_str:
-        await callback.answer()
-        await callback.message.edit_text(l10n["try_again_manual"])
-        return
-
-    if execution_time:
-        await state.update_data(execution_time=execution_time.isoformat())
-        await callback.answer()
-        await callback.message.delete()
-        await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
-    else:
-        await callback.answer(l10n.get("parse_error", "❌ Unknown option"), show_alert=True)
-        await state.clear()
+    tz = resolve_tz(user.timezone)
+    execution_time = datetime.now(tz) + timedelta(minutes=callback_data.minutes)
+    await state.update_data(execution_time=execution_time.isoformat())
+    await callback.answer()
+    await callback.message.delete()
+    await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
 
 
-@router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_yes")
-async def callback_parse_confirm_yes(
+@router.callback_query(ReminderWizard.choosing_time, TimeFixedCallback.filter())
+async def callback_time_fixed(
+    callback: CallbackQuery,
+    callback_data: TimeFixedCallback,
+    state: FSMContext,
+    user: User,
+    l10n: dict[str, Any],
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+) -> None:
+    execution_time = datetime.fromtimestamp(callback_data.ts, tz=timezone.utc)
+    await state.update_data(execution_time=execution_time.isoformat())
+    await callback.answer()
+    await callback.message.delete()
+    await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
+
+
+@router.callback_query(ReminderWizard.choosing_time, F.data == "time_tomorrow")
+async def callback_time_tomorrow(
     callback: CallbackQuery,
     state: FSMContext,
     user: User,
     l10n: dict[str, Any],
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+) -> None:
+    tz = resolve_tz(user.timezone)
+    now = datetime.now(tz)
+    execution_time = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    await state.update_data(execution_time=execution_time.isoformat())
+    await callback.answer()
+    await callback.message.delete()
+    await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
+
+
+@router.callback_query(ReminderWizard.choosing_time, F.data == "time_manual")
+async def callback_time_manual(
+    callback: CallbackQuery, l10n: dict[str, Any]
+) -> None:
+    await callback.answer()
+    await callback.message.edit_text(l10n["try_again_manual"])
+
+
+# ---------------------------------------------------------------------------
+# Parse-confirmation callbacks
+# ---------------------------------------------------------------------------
+
+@router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_yes")
+async def callback_parse_confirm_yes(
+    callback: CallbackQuery, state: FSMContext, user: User, l10n: dict[str, Any],
+    reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
 ) -> None:
     await callback.answer()
     await callback.message.delete()
@@ -403,10 +455,7 @@ async def callback_parse_confirm_yes(
 
 @router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_pick_time")
 async def callback_parse_confirm_pick_time(
-    callback: CallbackQuery,
-    state: FSMContext,
-    user: User,
-    l10n: dict[str, Any],
+    callback: CallbackQuery, state: FSMContext, user: User, l10n: dict[str, Any],
 ) -> None:
     data = await state.get_data()
     text = data.get("text", l10n.get("task_untitled", "Untitled task"))
@@ -426,34 +475,19 @@ async def callback_parse_confirm_cancel(callback: CallbackQuery, state: FSMConte
 
 
 # ---------------------------------------------------------------------------
-# Edit keyboard callbacks
+# Edit keyboard callbacks (typed via EditReminderCallback)
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data.startswith("edit_edit_"))
-async def callback_edit_edit(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, state: FSMContext, l10n: dict[str, Any], user: User
-) -> None:
-    _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_edit_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
-    if not reminder:
-        return await callback.answer(l10n["item_not_found"], show_alert=True)
-    await state.set_state(ReminderWizard.choosing_time)
-    await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
-    await callback.message.edit_text(
-        l10n["ask_time"].format(text=reminder.reminder_text),
-        reply_markup=get_time_selection_keyboard(user.timezone, l10n),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("edit_toggle_repeat_"))
+@router.callback_query(EditReminderCallback.filter(F.action == "toggle_repeat"))
 async def callback_edit_repeat(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    callback_data: EditReminderCallback,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_toggle_repeat_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
@@ -463,116 +497,203 @@ async def callback_edit_repeat(
         l10n["repeat_weekdays"]: (True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
         l10n["repeat_week"]:     (True, "FREQ=WEEKLY"),
     }
-    current_key = next((k for k, v in options.items() if reminder.is_recurring and reminder.rrule_string == v[1]), l10n["repeat_none"])
+    current_key = next(
+        (k for k, v in options.items() if reminder.is_recurring and reminder.rrule_string == v[1]),
+        l10n["repeat_none"],
+    )
     keys = list(options)
     next_key = keys[(keys.index(current_key) + 1) % len(keys)]
     is_rec, rrule = options[next_key]
 
     reminder.is_recurring = is_rec
     reminder.rrule_string = rrule
-    await reminder_dao.session.flush()
 
-    try:
-        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
-    except Exception:
-        await reminder_dao.session.rollback()
-        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+    ok = await _schedule_reminder_safe(
+        reminder_id=reminder.id,
+        execution_time=reminder.execution_time,
+        is_nagging=reminder.is_nagging,
+        scheduler_service=scheduler_service,
+        session=reminder_dao.session,
+        callback=callback,
+        l10n=l10n,
+    )
+    if not ok:
         return
 
     await callback.message.edit_reply_markup(
         reply_markup=get_edit_keyboard(
-            reminder.id,
-            l10n,
-            is_rec,
-            reminder.is_nagging,
-            reminder.nagging_max_repeats,
-            next_key,
+            reminder.id, l10n, is_rec, reminder.is_nagging, reminder.nagging_max_repeats, next_key,
         )
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("edit_toggle_nagging_"))
+@router.callback_query(EditReminderCallback.filter(F.action == "toggle_nagging"))
 async def callback_edit_nagging(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    callback_data: EditReminderCallback,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_toggle_nagging_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     reminder.is_nagging = not reminder.is_nagging
-    try:
-        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
-        if not reminder.is_nagging:
-            reminder.nagging_sent_count = 0
-            reminder.last_nag_chat_id = None
-            reminder.last_nag_message_id = None
-            scheduler_service.remove_nagging_job(reminder.id)
-    except Exception:
-        await reminder_dao.session.rollback()
-        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+
+    ok = await _schedule_reminder_safe(
+        reminder_id=reminder.id,
+        execution_time=reminder.execution_time,
+        is_nagging=reminder.is_nagging,
+        scheduler_service=scheduler_service,
+        session=reminder_dao.session,
+        callback=callback,
+        l10n=l10n,
+    )
+    if not ok:
         return
+
+    if not reminder.is_nagging:
+        reminder.nagging_sent_count = 0
+        reminder.last_nag_chat_id = None
+        reminder.last_nag_message_id = None
+        scheduler_service.remove_nagging_job(reminder.id)
 
     await callback.message.edit_reply_markup(
         reply_markup=get_edit_keyboard(
-            reminder.id,
-            l10n,
-            reminder.is_recurring,
-            reminder.is_nagging,
-            reminder.nagging_max_repeats,
-            _rrule_text(reminder, l10n),
+            reminder.id, l10n, reminder.is_recurring, reminder.is_nagging,
+            reminder.nagging_max_repeats, _rrule_text(reminder, l10n),
         )
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("edit_delete_"))
+@router.callback_query(EditReminderCallback.filter(F.action == "delete"))
 async def callback_edit_delete(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    callback_data: EditReminderCallback,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_delete_")[1])
-    await reminder_dao.delete_by_id(reminder_id)
-    scheduler_service.remove_reminder_job(reminder_id)
+    await reminder_dao.delete_by_id(callback_data.reminder_id)
+    scheduler_service.remove_reminder_job(callback_data.reminder_id)
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(l10n["task_deleted"], reply_markup=None)
+
+
+@router.callback_query(EditReminderCallback.filter(F.action == "set_nag_limit"))
+async def callback_edit_set_nag_limit(
+    callback: CallbackQuery,
+    callback_data: EditReminderCallback,
+    state: FSMContext,
+    reminder_dao: ReminderDAO,
+    l10n: dict[str, Any],
+) -> None:
+    _reset_auto_delete(callback.message)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
+    if not reminder:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+
+    await state.set_state(ReminderWizard.waiting_for_nag_limit)
+    await state.update_data(nag_limit_reminder_id=reminder.id)
+    await callback.message.answer(
+        l10n["nagging_limit_prompt"].format(
+            count=max(0, int(reminder.nagging_max_repeats)),
+            min=_NAG_LIMIT_MIN,
+            max=_NAG_LIMIT_MAX,
+        )
+    )
+    await callback.answer()
+
+
+@router.message(ReminderWizard.waiting_for_nag_limit, F.text)
+async def state_nag_limit(
+    message: Message,
+    state: FSMContext,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
+) -> None:
+    raw_value = message.text.strip() if message.text else ""
+    try:
+        nag_limit = int(raw_value)
+    except ValueError:
+        await message.answer(l10n["nagging_limit_invalid"].format(min=_NAG_LIMIT_MIN, max=_NAG_LIMIT_MAX))
+        return
+
+    if nag_limit < _NAG_LIMIT_MIN or nag_limit > _NAG_LIMIT_MAX:
+        await message.answer(l10n["nagging_limit_invalid"].format(min=_NAG_LIMIT_MIN, max=_NAG_LIMIT_MAX))
+        return
+
+    state_data = await state.get_data()
+    reminder_id = state_data.get("nag_limit_reminder_id")
+    if not reminder_id:
+        await state.clear()
+        await message.answer(l10n.get("parse_error", "Error parsing text. Check the format."))
+        return
+
+    reminder = await reminder_dao.get_by_id(int(reminder_id))
+    if not reminder:
+        await state.clear()
+        await message.answer(l10n["item_not_found"])
+        return
+
+    reminder.nagging_max_repeats = nag_limit
+    reminder.nagging_sent_count = min(max(0, int(reminder.nagging_sent_count)), nag_limit)
+    if not reminder.is_nagging or nag_limit == 0 or reminder.nagging_sent_count >= nag_limit:
+        reminder.last_nag_chat_id = None
+        reminder.last_nag_message_id = None
+        scheduler_service.remove_nagging_job(reminder.id)
+
+    await state.clear()
+    await message.answer(
+        l10n["nagging_limit_updated"].format(count=nag_limit),
+        reply_markup=get_edit_keyboard(
+            reminder.id, l10n, reminder.is_recurring, reminder.is_nagging,
+            reminder.nagging_max_repeats, _rrule_text(reminder, l10n),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Task list callbacks
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data.startswith("task_settings_"))
+@router.callback_query(TaskSettingsCallback.filter())
 async def callback_task_settings(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    callback_data: TaskSettingsCallback,
+    reminder_dao: ReminderDAO,
+    l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("task_settings_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await callback.message.answer(
         l10n["task_settings_title"].format(text=reminder.reminder_text),
         reply_markup=get_edit_keyboard(
-            reminder.id,
-            l10n,
-            reminder.is_recurring,
-            reminder.is_nagging,
-            reminder.nagging_max_repeats,
-            _rrule_text(reminder, l10n),
+            reminder.id, l10n, reminder.is_recurring, reminder.is_nagging,
+            reminder.nagging_max_repeats, _rrule_text(reminder, l10n),
         ),
     )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("del_task_"))
+
+@router.callback_query(DeleteTaskCallback.filter())
 async def callback_delete_task(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    callback_data: DeleteTaskCallback,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
-    task_id = int(callback.data.split("del_task_")[1])
-    await reminder_dao.delete_by_id(task_id)
-    scheduler_service.remove_reminder_job(task_id)
+    await reminder_dao.delete_by_id(callback_data.reminder_id)
+    scheduler_service.remove_reminder_job(callback_data.reminder_id)
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(l10n["task_deleted"], reply_markup=None)
 
@@ -620,31 +741,22 @@ async def callback_recovery_done_all(
     for task in overdue:
         await reminder_dao.mark_done(task.id)
         if task.is_recurring and task.rrule_string:
-            start_dt = task.execution_time
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=timezone.utc)
-            try:
-                rule = rrulestr(task.rrule_string, dtstart=start_dt)
-                next_run = rule.after(now_utc)
-            except Exception:
-                next_run = None
-
+            next_run = next_rrule_occurrence(task.rrule_string, task.execution_time, now_utc)
             if next_run:
                 next_run_utc_naive = to_utc_naive(next_run)
                 task.execution_time = next_run_utc_naive
                 task.completed_for_execution_time = None
-                try:
-                    scheduler_service.schedule_reminder(
-                        task.id,
-                        to_utc_aware(next_run_utc_naive),
-                        is_nagging=task.is_nagging,
-                    )
-                except Exception:
-                    await reminder_dao.session.rollback()
-                    return await callback.answer(
-                        l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."),
-                        show_alert=True,
-                    )
+                ok = await _schedule_reminder_safe(
+                    reminder_id=task.id,
+                    execution_time=next_run_utc_naive,
+                    is_nagging=task.is_nagging,
+                    scheduler_service=scheduler_service,
+                    session=reminder_dao.session,
+                    callback=callback,
+                    l10n=l10n,
+                )
+                if not ok:
+                    return
             else:
                 scheduler_service.remove_reminder_job(task.id)
         else:
@@ -671,18 +783,24 @@ async def callback_recovery_snooze_all(
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
 
-    new_time = datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1)
+    new_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
     for task in overdue:
         task.execution_time = new_time
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None
         task.last_nag_message_id = None
-        try:
-            scheduler_service.schedule_reminder(task.id, new_time, is_nagging=task.is_nagging)
-            scheduler_service.remove_nagging_job(task.id)
-        except Exception:
-            await reminder_dao.session.rollback()
-            return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
+        ok = await _schedule_reminder_safe(
+            reminder_id=task.id,
+            execution_time=new_time,
+            is_nagging=task.is_nagging,
+            scheduler_service=scheduler_service,
+            session=reminder_dao.session,
+            callback=callback,
+            l10n=l10n,
+        )
+        if not ok:
+            return
+        scheduler_service.remove_nagging_job(task.id)
 
     await callback.message.edit_text(
         l10n.get("recovery_snooze_all_done", "⏰ Snoozed {count} overdue tasks by 1 hour.").format(count=len(overdue)),
@@ -691,98 +809,11 @@ async def callback_recovery_snooze_all(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("edit_set_nag_limit_"))
-async def callback_edit_set_nag_limit(
-    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, l10n: dict[str, Any]
-) -> None:
-    _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_set_nag_limit_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
-    if not reminder:
-        return await callback.answer(l10n["item_not_found"], show_alert=True)
-
-    await state.set_state(ReminderWizard.waiting_for_nag_limit)
-    await state.update_data(nag_limit_reminder_id=reminder.id)
-    await callback.message.answer(
-        l10n["nagging_limit_prompt"].format(
-            count=max(0, int(reminder.nagging_max_repeats)),
-            min=_NAG_LIMIT_MIN,
-            max=_NAG_LIMIT_MAX,
-        )
-    )
-    await callback.answer()
-
-
-@router.message(ReminderWizard.waiting_for_nag_limit, F.text)
-async def state_nag_limit(
-    message: Message,
-    state: FSMContext,
-    reminder_dao: ReminderDAO,
-    scheduler_service: SchedulerService,
-    l10n: dict[str, Any],
-) -> None:
-    raw_value = message.text.strip() if message.text else ""
-    try:
-        nag_limit = int(raw_value)
-    except ValueError:
-        await message.answer(
-            l10n["nagging_limit_invalid"].format(min=_NAG_LIMIT_MIN, max=_NAG_LIMIT_MAX)
-        )
-        return
-
-    if nag_limit < _NAG_LIMIT_MIN or nag_limit > _NAG_LIMIT_MAX:
-        await message.answer(
-            l10n["nagging_limit_invalid"].format(min=_NAG_LIMIT_MIN, max=_NAG_LIMIT_MAX)
-        )
-        return
-
-    state_data = await state.get_data()
-    reminder_id = state_data.get("nag_limit_reminder_id")
-    if not reminder_id:
-        await state.clear()
-        await message.answer(l10n.get("parse_error", "Error parsing text. Check the format."))
-        return
-
-    reminder = await reminder_dao.get_by_id(int(reminder_id))
-    if not reminder:
-        await state.clear()
-        await message.answer(l10n["item_not_found"])
-        return
-
-    reminder.nagging_max_repeats = nag_limit
-    reminder.nagging_sent_count = min(max(0, int(reminder.nagging_sent_count)), nag_limit)
-    if (
-        not reminder.is_nagging
-        or nag_limit == 0
-        or reminder.nagging_sent_count >= nag_limit
-    ):
-        reminder.last_nag_chat_id = None
-        reminder.last_nag_message_id = None
-        scheduler_service.remove_nagging_job(reminder.id)
-
-    await state.clear()
-    await message.answer(
-        l10n["nagging_limit_updated"].format(count=nag_limit),
-        reply_markup=get_edit_keyboard(
-            reminder.id,
-            l10n,
-            reminder.is_recurring,
-            reminder.is_nagging,
-            reminder.nagging_max_repeats,
-            _rrule_text(reminder, l10n),
-        ),
-    )
-
-
 @router.callback_query(F.data == "show_completed")
 async def callback_show_completed(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    completed = await reminder_dao.get_recent_completed_tasks(
-        user.id,
-        user.timezone,
-        days=_COMPLETED_HISTORY_DAYS,
-    )
+    completed = await reminder_dao.get_recent_completed_tasks(user.id, user.timezone, days=_COMPLETED_HISTORY_DAYS)
     if not completed:
         await callback.answer(l10n["no_completed_tasks"], show_alert=True)
         return
@@ -803,50 +834,19 @@ async def callback_show_completed(
 # Mark done
 # ---------------------------------------------------------------------------
 
-def _cleanup_stale_timers() -> None:
-    """
-    Clean up any tasks in active_auto_delete_tasks that have already completed.
-    
-    This prevents memory leaks from orphaned task references after 5 seconds
-    when the keyboard removal completes successfully.
-    
-    Called periodically via APScheduler cleanup job.
-    """
-    if not active_auto_delete_tasks:
-        return
-    
-    # Remove any tasks that are still pending (tasks should have completed)
-    # This handles edge cases where task wasn't properly removed from dict
-    for msg_id, task in list(active_auto_delete_tasks.items()):
-        if task.done():  # Task has completed (success or error)
-            try:
-                active_auto_delete_tasks.pop(msg_id, None)
-            except Exception:
-                logger.debug("Failed to cleanup stale auto-delete task for key %s", msg_id, exc_info=True)
-
-@router.callback_query(F.data.startswith("done_task_"))
+@router.callback_query(DoneTaskCallback.filter())
 async def callback_task_done(
     callback: CallbackQuery,
+    callback_data: DoneTaskCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    payload = callback.data[len("done_task_"):]
-    parts = payload.split("_")
-    try:
-        reminder_id = int(parts[0])
-    except (IndexError, ValueError):
-        await callback.answer(l10n["invalid_action"], show_alert=True)
-        return
-
+    reminder_id = callback_data.reminder_id
     cycle_due_at_utc_naive = None
-    if len(parts) >= 2:
-        try:
-            cycle_due_ts = int(parts[1])
-            cycle_due_at_utc_naive = datetime.fromtimestamp(cycle_due_ts, tz=timezone.utc).replace(tzinfo=None)
-        except ValueError:
-            cycle_due_at_utc_naive = None
+    if callback_data.cycle_due_ts is not None:
+        cycle_due_at_utc_naive = datetime.fromtimestamp(callback_data.cycle_due_ts, tz=timezone.utc).replace(tzinfo=None)
 
     reminder = await reminder_dao.get_by_id(reminder_id)
 
@@ -877,7 +877,7 @@ async def callback_task_done(
         await callback.answer(l10n["btn_done"])
         return
 
-    if _is_habit_like(reminder):
+    if is_habit_like(reminder):
         due_at = cycle_due_at_utc_naive or reminder.habit_active_due_at
         if due_at is not None:
             now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -921,15 +921,15 @@ async def callback_done_close(callback: CallbackQuery) -> None:
         pass
 
 
-@router.callback_query(F.data.startswith("done_note_"))
+@router.callback_query(DoneNoteCallback.filter())
 async def callback_done_note(
     callback: CallbackQuery,
+    callback_data: DoneNoteCallback,
     state: FSMContext,
     reminder_dao: ReminderDAO,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_note_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.set_state(ReminderWizard.waiting_for_done_note)
@@ -959,42 +959,50 @@ async def state_done_note(
     await message.answer(l10n.get("done_note_saved", "✅ Note saved."))
 
 
-@router.callback_query(F.data.startswith("done_skip_next_"))
+@router.callback_query(DoneSkipNextCallback.filter())
 async def callback_done_skip_next(
     callback: CallbackQuery,
+    callback_data: DoneSkipNextCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_skip_next_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder or not reminder.is_recurring or not reminder.rrule_string:
-        return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
+        return await callback.answer(
+            l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True
+        )
 
+    now_utc = datetime.now(timezone.utc)
     start_dt = reminder.execution_time
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-    try:
-        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
-        next_run = rule.after(start_dt)
-        if not next_run:
-            return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
-        next_run_utc_naive = to_utc_naive(next_run)
-        reminder.execution_time = next_run_utc_naive
-        reminder.completed_for_execution_time = None
-        reminder.last_nag_chat_id = None
-        reminder.last_nag_message_id = None
-        scheduler_service.schedule_reminder(
-            reminder.id,
-            to_utc_aware(next_run_utc_naive),
-            is_nagging=reminder.is_nagging,
+    next_run = next_rrule_occurrence(reminder.rrule_string, start_dt, start_dt)
+    if not next_run:
+        return await callback.answer(
+            l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True
         )
-        scheduler_service.remove_nagging_job(reminder.id)
-    except Exception:
-        await reminder_dao.session.rollback()
-        return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
+
+    next_run_utc_naive = to_utc_naive(next_run)
+    reminder.execution_time = next_run_utc_naive
+    reminder.completed_for_execution_time = None
+    reminder.last_nag_chat_id = None
+    reminder.last_nag_message_id = None
+
+    ok = await _schedule_reminder_safe(
+        reminder_id=reminder.id,
+        execution_time=next_run_utc_naive,
+        is_nagging=reminder.is_nagging,
+        scheduler_service=scheduler_service,
+        session=reminder_dao.session,
+        callback=callback,
+        l10n=l10n,
+    )
+    if not ok:
+        return
+    scheduler_service.remove_nagging_job(reminder.id)
 
     next_str = format_time(next_run_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     await callback.message.answer(
@@ -1003,15 +1011,15 @@ async def callback_done_skip_next(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("done_undo_"))
+@router.callback_query(DoneUndoCallback.filter())
 async def callback_done_undo(
     callback: CallbackQuery,
+    callback_data: DoneUndoCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_undo_")[1])
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
@@ -1022,17 +1030,24 @@ async def callback_done_undo(
     reminder.last_nag_chat_id = None
     reminder.last_nag_message_id = None
 
-    now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
-    execution_time_cmp = reminder.execution_time
-    if execution_time_cmp.tzinfo is not None:
-        execution_time_cmp = execution_time_cmp.astimezone(pytz.UTC).replace(tzinfo=None)
-    if execution_time_cmp <= now_utc:
-        reminder.execution_time = now_utc + timedelta(minutes=15)
-    try:
-        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
-    except Exception:
-        await reminder_dao.session.rollback()
-        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    exec_cmp = reminder.execution_time
+    if exec_cmp.tzinfo is not None:
+        exec_cmp = exec_cmp.astimezone(timezone.utc).replace(tzinfo=None)
+    if exec_cmp <= now_utc_naive:
+        reminder.execution_time = now_utc_naive + timedelta(minutes=15)
+
+    ok = await _schedule_reminder_safe(
+        reminder_id=reminder.id,
+        execution_time=reminder.execution_time,
+        is_nagging=reminder.is_nagging,
+        scheduler_service=scheduler_service,
+        session=reminder_dao.session,
+        callback=callback,
+        l10n=l10n,
+    )
+    if not ok:
+        return
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -1046,31 +1061,31 @@ async def callback_done_undo(
 # Snooze
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data.startswith("snooze_show_"))
-async def callback_snooze_show(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
-    reminder_id = int(callback.data.split("snooze_show_")[1])
-    await callback.message.edit_reply_markup(reply_markup=get_snooze_keyboard(reminder_id, l10n))
+@router.callback_query(SnoozeShowCallback.filter())
+async def callback_snooze_show(
+    callback: CallbackQuery,
+    callback_data: SnoozeShowCallback,
+    l10n: dict[str, Any],
+) -> None:
+    await callback.message.edit_reply_markup(reply_markup=get_snooze_keyboard(callback_data.reminder_id, l10n))
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("snooze_act_"))
+@router.callback_query(SnoozeActCallback.filter())
 async def callback_snooze_act(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
-    state: FSMContext, user: User, l10n: dict[str, Any],
+    callback: CallbackQuery,
+    callback_data: SnoozeActCallback,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    state: FSMContext,
+    user: User,
+    l10n: dict[str, Any],
 ) -> None:
-    try:
-        parts = callback.data.split("_", 3)
-        if len(parts) < 4:
-            raise ValueError("Too few parts in callback data")
-        reminder_id = int(parts[2])
-        action = parts[3]
-    except (IndexError, ValueError) as e:
-        logger.error("Malformed snooze callback data %r: %s", callback.data, e)
-        return await callback.answer(l10n["invalid_action"], show_alert=True)
-
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
     if not reminder:
         return await callback.answer(l10n["task_not_found"], show_alert=True)
+
+    action = callback_data.action
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
@@ -1082,13 +1097,16 @@ async def callback_snooze_act(
         await callback.answer()
         return
 
-    try:
-        user_tz = pytz.timezone(user.timezone)
-    except Exception:
-        user_tz = pytz.UTC
-    now = datetime.now(user_tz)
+    tz = resolve_tz(user.timezone)
+    now = datetime.now(tz)
 
-    delta_map = {"15m": timedelta(minutes=15), "30m": timedelta(minutes=30), "1h": timedelta(hours=1), "2h": timedelta(hours=2), "1d": timedelta(days=1)}
+    delta_map = {
+        "15m": timedelta(minutes=15),
+        "30m": timedelta(minutes=30),
+        "1h":  timedelta(hours=1),
+        "2h":  timedelta(hours=2),
+        "1d":  timedelta(days=1),
+    }
     hour_map = {"morning": 9, "day": 13, "evening": 19, "night": 23}
 
     if action in delta_map:
@@ -1105,23 +1123,21 @@ async def callback_snooze_act(
     reminder.execution_time = new_time_utc_naive
     reminder.last_nag_chat_id = None
     reminder.last_nag_message_id = None
-    try:
-        scheduler_service.schedule_reminder(
-            reminder.id,
-            to_utc_aware(new_time_utc_naive),
-            is_nagging=reminder.is_nagging,
-        )
-        scheduler_service.remove_nagging_job(reminder.id)
-    except Exception:
-        await reminder_dao.session.rollback()
-        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+
+    ok = await _schedule_reminder_safe(
+        reminder_id=reminder.id,
+        execution_time=new_time_utc_naive,
+        is_nagging=reminder.is_nagging,
+        scheduler_service=scheduler_service,
+        session=reminder_dao.session,
+        callback=callback,
+        l10n=l10n,
+    )
+    if not ok:
         return
+    scheduler_service.remove_nagging_job(reminder.id)
 
     friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     snooze_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}")
-    await callback.message.edit_text(
-        snooze_text,
-        reply_markup=None,
-        parse_mode="MarkdownV2",
-    )
+    await callback.message.edit_text(snooze_text, reply_markup=None, parse_mode="MarkdownV2")
     await callback.answer(l10n["snoozed_toast"])

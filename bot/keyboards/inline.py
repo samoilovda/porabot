@@ -1,13 +1,39 @@
-"""Inline keyboards for Porabot."""
+"""Inline keyboards for Porabot.
 
+All dynamic callback data is built with typed CallbackData factories from
+``bot.callbacks`` instead of raw f-strings, eliminating format drift bugs
+and keeping every payload well under Telegram's 64-byte limit.
+"""
+
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from datetime import datetime, timedelta
 
 import pytz
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot.utils.time_ext import format_time
+from bot.callbacks import (
+    DelHabitCallback,
+    DeleteTaskCallback,
+    DoneNoteCallback,
+    DoneSkipNextCallback,
+    DoneTaskCallback,
+    DoneUndoCallback,
+    EditReminderCallback,
+    FluidDoneCallback,
+    FluidPickCustomCallback,
+    FluidPickTimeCallback,
+    HabitFluidModeCallback,
+    HabitPresetCallback,
+    SetLangCallback,
+    SetTimezoneCallback,
+    SnoozeActCallback,
+    SnoozeShowCallback,
+    TaskSettingsCallback,
+    TimeDeltaCallback,
+    TimeFixedCallback,
+)
+from bot.utils.time_ext import format_time, resolve_tz
 
 
 def _format_utc_offset(tz_name: str) -> str:
@@ -32,40 +58,18 @@ def get_time_selection_keyboard(
     l10n: dict[str, Any],
     show_utc_offset: bool = False,
 ) -> InlineKeyboardMarkup:
-    """
-    Keyboard for choosing reminder time.
-    
-    If a fixed time-of-day has passed today, it rolls over to tomorrow.
-
-    Args:
-        user_timezone: User's timezone string (e.g., 'Europe/Moscow')
-        l10n: Localization dictionary
-        show_utc_offset: Whether to append UTC offset in parentheses
-
-    Returns:
-        InlineKeyboardMarkup with time selection buttons
-
-    Example:
-        >>> markup = get_time_selection_keyboard("Europe/Moscow", ru)
-        # Shows +15m, +30m, +1ч, etc. plus time-of-day slots
-    """
+    """Keyboard for choosing reminder time."""
     builder = InlineKeyboardBuilder()
 
-    # Row 1: Delta buttons (add X minutes/hours to now)
     builder.row(
-        InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data="time_delta_15"),
-        InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data="time_delta_30"),
-        InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data="time_delta_60"),
-        InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data="time_delta_120"),
-        InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data="time_delta_180"),
+        InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data=TimeDeltaCallback(minutes=15).pack()),
+        InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data=TimeDeltaCallback(minutes=30).pack()),
+        InlineKeyboardButton(text=l10n["time_delta_1h"],  callback_data=TimeDeltaCallback(minutes=60).pack()),
+        InlineKeyboardButton(text=l10n["time_delta_2h"],  callback_data=TimeDeltaCallback(minutes=120).pack()),
+        InlineKeyboardButton(text=l10n["time_delta_3h"],  callback_data=TimeDeltaCallback(minutes=180).pack()),
     )
 
-    # Row 2-3: Time-of-day slots (morning, day, evening, night)
-    try:
-        tz = pytz.timezone(user_timezone)
-    except pytz.UnknownTimeZoneError:
-        tz = pytz.UTC
-
+    tz = resolve_tz(user_timezone)
     now = datetime.now(tz)
 
     times = [
@@ -80,31 +84,27 @@ def get_time_selection_keyboard(
         target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
         if target_time <= now:
             target_time += timedelta(days=1)
-
-        callback_val = target_time.isoformat()
+        ts = int(target_time.timestamp())
         time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")
         buttons.append(
             InlineKeyboardButton(
                 text=f"{label} ({time_str})",
-                callback_data=f"time_fixed_{callback_val}",
+                callback_data=TimeFixedCallback(ts=ts).pack(),
             )
         )
 
-    # Split into two rows for better layout
     builder.row(*buttons[:2])
     builder.row(*buttons[2:])
 
-    # Row 4: Other options (tomorrow, manual entry)
     builder.row(
         InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data="time_tomorrow"),
-        InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"),
+        InlineKeyboardButton(text=l10n["time_manual"],   callback_data="time_manual"),
     )
 
-    # Row 5: Cancel option (escape route for wizard)
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_cancel", "❌ Отмена"),
-            callback_data="cancel_wizard"
+            callback_data="cancel_wizard",
         )
     )
 
@@ -112,42 +112,37 @@ def get_time_selection_keyboard(
 
 
 def get_timezone_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """
-    Keyboard for selecting timezone.
-
-    Returns:
-        InlineKeyboardMarkup with timezone options
-
-    Example:
-        >>> markup = get_timezone_keyboard()
-        # Shows Москва, Киев, Минск, Алматы, etc.
-    """
+    """Keyboard for selecting timezone."""
     builder = InlineKeyboardBuilder()
     zones = [
-        ("America/New_York", l10n.get("tz_label_america_new_york", "US Eastern (EST/EDT)")),
-        ("America/Chicago", l10n.get("tz_label_america_chicago", "US Central (CST/CDT)")),
-        ("America/Denver", l10n.get("tz_label_america_denver", "US Mountain (MST/MDT)")),
-        ("America/Los_Angeles", l10n.get("tz_label_america_los_angeles", "US Pacific (PST/PDT)")),
-        ("Europe/London", l10n.get("tz_label_europe_london", "London (GMT/BST)")),
-        ("Europe/Berlin", l10n.get("tz_label_europe_berlin", "Berlin (CET/CEST)")),
-        ("Europe/Kyiv", l10n.get("tz_label_europe_kyiv", "Kyiv")),
-        ("Europe/Moscow", l10n.get("tz_label_europe_moscow", "Moscow")),
-        ("Asia/Dubai", l10n.get("tz_label_asia_dubai", "Dubai")),
-        ("Asia/Almaty", l10n.get("tz_label_asia_almaty", "Almaty")),
-        ("Asia/Tokyo", l10n.get("tz_label_asia_tokyo", "Tokyo")),
-        ("Asia/Singapore", l10n.get("tz_label_asia_singapore", "Singapore")),
-        ("UTC", l10n.get("tz_label_utc", "UTC")),
+        ("America/New_York",    l10n.get("tz_label_america_new_york",   "US Eastern (EST/EDT)")),
+        ("America/Chicago",     l10n.get("tz_label_america_chicago",    "US Central (CST/CDT)")),
+        ("America/Denver",      l10n.get("tz_label_america_denver",     "US Mountain (MST/MDT)")),
+        ("America/Los_Angeles", l10n.get("tz_label_america_los_angeles","US Pacific (PST/PDT)")),
+        ("Europe/London",       l10n.get("tz_label_europe_london",      "London (GMT/BST)")),
+        ("Europe/Berlin",       l10n.get("tz_label_europe_berlin",      "Berlin (CET/CEST)")),
+        ("Europe/Kyiv",         l10n.get("tz_label_europe_kyiv",        "Kyiv")),
+        ("Europe/Moscow",       l10n.get("tz_label_europe_moscow",      "Moscow")),
+        ("Asia/Dubai",          l10n.get("tz_label_asia_dubai",         "Dubai")),
+        ("Asia/Almaty",         l10n.get("tz_label_asia_almaty",        "Almaty")),
+        ("Asia/Tokyo",          l10n.get("tz_label_asia_tokyo",         "Tokyo")),
+        ("Asia/Singapore",      l10n.get("tz_label_asia_singapore",     "Singapore")),
+        ("UTC",                 l10n.get("tz_label_utc",                "UTC")),
     ]
-    # Manual entry first, then popular presets.
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("tz_manual_button", "⌨️ Enter manually"),
-            callback_data="set_tz_manual"
+            callback_data=SetTimezoneCallback(tz="manual").pack(),
         )
     )
     for tz, label in zones:
         offset = _format_utc_offset(tz)
-        builder.row(InlineKeyboardButton(text=f"{label} ({offset})", callback_data=f"set_tz_{tz}"))
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{label} ({offset})",
+                callback_data=SetTimezoneCallback(tz=tz).pack(),
+            )
+        )
     return builder.as_markup()
 
 
@@ -163,63 +158,44 @@ def get_edit_keyboard(
     nagging_max_repeats: int = 3,
     rrule_text: str = "Нет",
 ) -> InlineKeyboardMarkup:
-    """
-    Keyboard for editing an existing task.
-
-    Args:
-        reminder_id: Primary key of the reminder
-        l10n: Localization dictionary
-        is_recurring: Whether this is a recurring task
-        is_nagging: Whether nagging is enabled
-        nagging_max_repeats: Max number of nagging follow-up messages
-        rrule_text: Recurrence rule text (e.g., "FREQ=DAILY")
-
-    Returns:
-        InlineKeyboardMarkup with edit options
-
-    Example:
-        >>> markup = get_edit_keyboard(123, ru, is_recurring=True)
-        # Shows repeat toggle, nagging status, delete button
-    """
+    """Keyboard for editing an existing task."""
     builder = InlineKeyboardBuilder()
 
-    # Toggle recurrence (only for recurring tasks)
     if is_recurring:
         builder.row(
             InlineKeyboardButton(
                 text=f"{l10n['btn_repeat_prefix']} {rrule_text}",
-                callback_data=f"edit_toggle_repeat_{reminder_id}"
+                callback_data=EditReminderCallback(action="toggle_repeat", reminder_id=reminder_id).pack(),
             )
         )
 
-    # Toggle nagging with icon
     nagging_status = l10n["status_on"] if is_nagging else l10n["status_off"]
     nagging_icon = "🔥" if is_nagging else "❄️"
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_nagging_prefix"].format(icon=nagging_icon) + f" {nagging_status}",
-            callback_data=f"edit_toggle_nagging_{reminder_id}",
+            callback_data=EditReminderCallback(action="toggle_nagging", reminder_id=reminder_id).pack(),
         )
     )
 
-    # Per-task/habit nagging repeats limit.
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_nagging_repeats_prefix"].format(count=max(0, int(nagging_max_repeats))),
-            callback_data=f"edit_set_nag_limit_{reminder_id}",
+            callback_data=EditReminderCallback(action="set_nag_limit", reminder_id=reminder_id).pack(),
         )
     )
 
-    # Delete button
     builder.row(
-        InlineKeyboardButton(text=l10n["btn_delete"], callback_data=f"edit_delete_{reminder_id}")
+        InlineKeyboardButton(
+            text=l10n["btn_delete"],
+            callback_data=EditReminderCallback(action="delete", reminder_id=reminder_id).pack(),
+        )
     )
 
-    # Cancel option (escape route)
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_cancel", "❌ Отмена"),
-            callback_data="cancel_wizard"
+            callback_data="cancel_wizard",
         )
     )
 
@@ -236,57 +212,34 @@ def get_task_done_keyboard(
     show_time_of_day_options: bool = True,
     cycle_due_ts: Optional[int] = None,
 ) -> InlineKeyboardMarkup:
-    """
-    Keyboard for marking a task as done or snoozing.
-
-    This is shown when a reminder fires and the user needs to acknowledge it.
-
-    Args:
-        reminder_id: Primary key of the reminder
-        l10n: Localization dictionary
-        show_time_of_day_options: Whether to include emoji time-of-day buttons
-
-    Returns:
-        InlineKeyboardMarkup with snooze options
-
-    Example:
-        >>> markup = get_task_done_keyboard(456, ru)
-        # Shows Done! button plus snooze intervals and time slots
-    """
+    """Keyboard shown when a reminder fires."""
     builder = InlineKeyboardBuilder()
 
-    # Row 1: Primary action (mark as done)
-    done_callback = f"done_task_{reminder_id}"
-    if cycle_due_ts is not None:
-        done_callback = f"{done_callback}_{int(cycle_due_ts)}"
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_done"],
-            callback_data=done_callback,
+            callback_data=DoneTaskCallback(reminder_id=reminder_id, cycle_due_ts=cycle_due_ts).pack(),
         )
     )
 
-    # Row 2: Short intervals (15m, 30m, 1h, 2h)
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
-        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
-        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
-        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
+        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="15m").pack()),
+        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="30m").pack()),
+        InlineKeyboardButton(text=l10n["snooze_1h"],  callback_data=SnoozeActCallback(reminder_id=reminder_id, action="1h").pack()),
+        InlineKeyboardButton(text=l10n["snooze_2h"],  callback_data=SnoozeActCallback(reminder_id=reminder_id, action="2h").pack()),
     )
 
-    # Row 3: Time of day (emoji-only style) - optional
     if show_time_of_day_options:
         builder.row(
-            InlineKeyboardButton(text="🌅", callback_data=f"snooze_act_{reminder_id}_morning"),
-            InlineKeyboardButton(text="🏙️", callback_data=f"snooze_act_{reminder_id}_day"),
-            InlineKeyboardButton(text="🌇", callback_data=f"snooze_act_{reminder_id}_evening"),
-            InlineKeyboardButton(text="🌃", callback_data=f"snooze_act_{reminder_id}_night"),
+            InlineKeyboardButton(text="🌅", callback_data=SnoozeActCallback(reminder_id=reminder_id, action="morning").pack()),
+            InlineKeyboardButton(text="🏙️", callback_data=SnoozeActCallback(reminder_id=reminder_id, action="day").pack()),
+            InlineKeyboardButton(text="🌇", callback_data=SnoozeActCallback(reminder_id=reminder_id, action="evening").pack()),
+            InlineKeyboardButton(text="🌃", callback_data=SnoozeActCallback(reminder_id=reminder_id, action="night").pack()),
         )
 
-    # Row 4: Long intervals and custom
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
-        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
+        InlineKeyboardButton(text=l10n["snooze_1d"],    callback_data=SnoozeActCallback(reminder_id=reminder_id, action="1d").pack()),
+        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="custom").pack()),
     )
 
     return builder.as_markup()
@@ -301,14 +254,20 @@ def get_done_followup_keyboard(
     """Keyboard shown after marking a task as done."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_done_add_note", "📝 Add note"), callback_data=f"done_note_{reminder_id}"),
-        InlineKeyboardButton(text=l10n.get("btn_done_undo", "↩ Undo"), callback_data=f"done_undo_{reminder_id}"),
+        InlineKeyboardButton(
+            text=l10n.get("btn_done_add_note", "📝 Add note"),
+            callback_data=DoneNoteCallback(reminder_id=reminder_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=l10n.get("btn_done_undo", "↩ Undo"),
+            callback_data=DoneUndoCallback(reminder_id=reminder_id).pack(),
+        ),
     )
     if is_recurring:
         builder.row(
             InlineKeyboardButton(
                 text=l10n.get("btn_done_skip_next", "⏭ Skip next"),
-                callback_data=f"done_skip_next_{reminder_id}",
+                callback_data=DoneSkipNextCallback(reminder_id=reminder_id).pack(),
             )
         )
     builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="done_close"))
@@ -319,10 +278,12 @@ def get_parse_confirmation_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
     """Keyboard for low-confidence parser confirmations."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_yes", "✅ Yes"), callback_data="parse_confirm_yes"),
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_yes",  "✅ Yes"),       callback_data="parse_confirm_yes"),
         InlineKeyboardButton(text=l10n.get("btn_parse_confirm_time", "🕒 Pick time"), callback_data="parse_confirm_pick_time"),
     )
-    builder.row(InlineKeyboardButton(text=l10n.get("btn_parse_confirm_cancel", "❌ Cancel"), callback_data="parse_confirm_cancel"))
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_cancel", "❌ Cancel"), callback_data="parse_confirm_cancel")
+    )
     return builder.as_markup()
 
 
@@ -330,66 +291,40 @@ def get_missed_recovery_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     """Keyboard for missed-task recovery digest."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_recovery_done_all", "✅ Done all"), callback_data="recovery_done_all"),
-        InlineKeyboardButton(text=l10n.get("btn_recovery_snooze_all", "⏰ +1h all"), callback_data="recovery_snooze_all"),
+        InlineKeyboardButton(text=l10n.get("btn_recovery_done_all",   "✅ Done all"), callback_data="recovery_done_all"),
+        InlineKeyboardButton(text=l10n.get("btn_recovery_snooze_all", "⏰ +1h all"),  callback_data="recovery_snooze_all"),
     )
     builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"))
     return builder.as_markup()
 
 
 # =============================================================================
-# SNOOZE KEYBOARD (alternative layout)
+# SNOOZE KEYBOARD (text-label variant)
 # =============================================================================
 
-def get_snooze_keyboard(
-    reminder_id: int,
-    l10n: dict[str, Any],
-) -> InlineKeyboardMarkup:
-    """
-    Alternative keyboard for snoozing tasks.
-
-    Uses a more compact 2-column layout with text labels instead of emojis.
-    Use this when you want clearer labels or need to fit more buttons.
-
-    Args:
-        reminder_id: Primary key of the reminder
-        l10n: Localization dictionary
-
-    Returns:
-        InlineKeyboardMarkup with snooze options in compact layout
-
-    Example:
-        >>> markup = get_snooze_keyboard(456, ru)
-        # Shows +15m, +30m, etc. plus text labels for time slots
-    """
+def get_snooze_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Alternative snooze layout with text labels."""
     builder = InlineKeyboardBuilder()
 
-    # Row 1: Short intervals (2 columns per row)
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
-        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
+        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="15m").pack()),
+        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="30m").pack()),
     )
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
-        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
+        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="1h").pack()),
+        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="2h").pack()),
     )
-
-    # Row 2: Morning/Day (text labels)
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_morning"], callback_data=f"snooze_act_{reminder_id}_morning"),
-        InlineKeyboardButton(text=l10n["snooze_day"], callback_data=f"snooze_act_{reminder_id}_day"),
+        InlineKeyboardButton(text=l10n["snooze_morning"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="morning").pack()),
+        InlineKeyboardButton(text=l10n["snooze_day"],     callback_data=SnoozeActCallback(reminder_id=reminder_id, action="day").pack()),
     )
-
-    # Row 3: Evening/Night (text labels)
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_evening"], callback_data=f"snooze_act_{reminder_id}_evening"),
-        InlineKeyboardButton(text=l10n["snooze_night"], callback_data=f"snooze_act_{reminder_id}_night"),
+        InlineKeyboardButton(text=l10n["snooze_evening"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="evening").pack()),
+        InlineKeyboardButton(text=l10n["snooze_night"],   callback_data=SnoozeActCallback(reminder_id=reminder_id, action="night").pack()),
     )
-
-    # Row 4: Long intervals (2 columns)
     builder.row(
-        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
-        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
+        InlineKeyboardButton(text=l10n["snooze_1d"],     callback_data=SnoozeActCallback(reminder_id=reminder_id, action="1d").pack()),
+        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=SnoozeActCallback(reminder_id=reminder_id, action="custom").pack()),
     )
 
     return builder.as_markup()
@@ -400,192 +335,107 @@ def get_snooze_keyboard(
 # =============================================================================
 
 def get_tasks_list_keyboard(
-    tasks: list[Any],  # type: ignore
+    tasks: list[Any],
     l10n: dict[str, Any],
 ) -> InlineKeyboardMarkup:
-    """
-    Keyboard for task list view.
-
-    Shows Done, Settings, and Delete buttons for each task, plus navigation controls.
-
-    Args:
-        tasks: List of Reminder objects (or dicts with 'id' and 'reminder_text')
-        l10n: Localization dictionary
-
-    Returns:
-        InlineKeyboardMarkup with per-task actions and navigation
-
-    Example:
-        >>> markup = get_tasks_list_keyboard(my_tasks, ru)
-        # Shows each task with Done! and Delete buttons
-    """
+    """Per-task Done / Settings / Delete row plus navigation controls."""
     builder = InlineKeyboardBuilder()
-    
+
     for task in tasks:
-        # Extract text safely (works with both Reminder objects and dicts)
-        if hasattr(task, 'reminder_text'):
-            task_text = task.reminder_text
-        else:
-            task_text = str(task.get('reminder_text', ''))
-        
-        # Truncate long text for display
-        text_preview = (
-            task_text[:18] + "…"
-            if len(task_text) > 18
-            else task_text
-        )
-        
+        task_text = task.reminder_text if hasattr(task, "reminder_text") else str(task.get("reminder_text", ""))
+        task_id   = task.id           if hasattr(task, "id")            else task.get("id", 0)
+
+        text_preview = (task_text[:18] + "…") if len(task_text) > 18 else task_text
+
         builder.row(
             InlineKeyboardButton(
                 text=f"{l10n['btn_done_task_prefix']} {text_preview}",
-                callback_data=f"done_task_{task.id}" if hasattr(task, 'id') else f"done_task_{task.get('id', '')}",
+                callback_data=DoneTaskCallback(reminder_id=task_id).pack(),
             ),
             InlineKeyboardButton(
                 text=l10n.get("btn_task_settings", "⚙️"),
-                callback_data=(
-                    f"task_settings_{task.id}"
-                    if hasattr(task, 'id')
-                    else f"task_settings_{task.get('id', '')}"
-                ),
+                callback_data=TaskSettingsCallback(reminder_id=task_id).pack(),
             ),
             InlineKeyboardButton(
                 text=l10n["btn_delete"],
-                callback_data=f"del_task_{task.id}" if hasattr(task, 'id') else f"del_task_{task.get('id', '')}",
+                callback_data=DeleteTaskCallback(reminder_id=task_id).pack(),
             ),
         )
 
-    # Navigation row
     builder.row(
-        InlineKeyboardButton(text=l10n["btn_refresh"], callback_data="refresh_tasks"),
+        InlineKeyboardButton(text=l10n["btn_refresh"],         callback_data="refresh_tasks"),
         InlineKeyboardButton(text=l10n["btn_completed_tasks"], callback_data="show_completed"),
-        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+        InlineKeyboardButton(text=l10n["btn_close"],           callback_data="close_tasks"),
     )
 
     return builder.as_markup()
 
 
 def get_completed_tasks_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """
-    Simple close keyboard for the completed tasks view.
-
-    Args:
-        l10n: Localization dictionary
-
-    Returns:
-        InlineKeyboardMarkup with Close button
-
-    Example:
-        >>> markup = get_completed_tasks_keyboard(ru)
-        # Shows single Close button
-    """
+    """Close button for the completed-tasks view."""
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
-    )
+    builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"))
     return builder.as_markup()
 
 
 def get_fluid_pick_time_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """Keyboard for selecting today's reminder time for fluid habit."""
+    """Time-of-day presets for scheduling a fluid habit today."""
     builder = InlineKeyboardBuilder()
     for label in ("09:00", "12:00", "15:00", "18:00", "21:00"):
-        callback_time = label.replace(":", "")
+        hhmm = label.replace(":", "")
         builder.row(
             InlineKeyboardButton(
                 text=label,
-                callback_data=f"fluid_pick_{reminder_id}_{callback_time}",
+                callback_data=FluidPickTimeCallback(reminder_id=reminder_id, hhmm=hhmm).pack(),
             )
         )
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("fluid_time_custom", "⌨️ Custom time"),
-            callback_data=f"fluid_pick_custom_{reminder_id}",
+            callback_data=FluidPickCustomCallback(reminder_id=reminder_id).pack(),
         )
     )
     return builder.as_markup()
 
 
 def get_fluid_completion_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """Keyboard asking completion for fluid habits in evening."""
+    """Evening check-in: one Done button per active fluid habit."""
     builder = InlineKeyboardBuilder()
     for task in tasks:
         task_id = task.id if hasattr(task, "id") else task.get("id")
-        text = task.reminder_text if hasattr(task, "reminder_text") else str(task.get("reminder_text", "Habit"))
+        text    = task.reminder_text if hasattr(task, "reminder_text") else str(task.get("reminder_text", "Habit"))
         preview = (text[:24] + "…") if len(text) > 24 else text
         builder.row(
             InlineKeyboardButton(
                 text=l10n.get("fluid_done_btn_prefix", "✅ Done: ") + preview,
-                callback_data=f"fluid_done_{task_id}",
+                callback_data=FluidDoneCallback(reminder_id=task_id).pack(),
             )
         )
     return builder.as_markup()
 
 
 # =============================================================================
-# SETTINGS KEYBOARD
+# SETTINGS KEYBOARDS
 # =============================================================================
 
 def get_settings_keyboard(
     l10n: dict[str, Any],
     show_utc_offset: bool = False,
 ) -> InlineKeyboardMarkup:
-    """
-    Keyboard for settings view.
-
-    Shows options to change timezone, language, and UTC offset display.
-
-    Args:
-        l10n: Localization dictionary
-        show_utc_offset: Whether UTC offset is currently enabled
-
-    Returns:
-        InlineKeyboardMarkup with settings buttons
-
-    Example:
-        >>> markup = get_settings_keyboard(ru, show_utc_offset=True)
-        # Shows Change Timezone, Change Language, Toggle UTC Offset buttons
-    """
+    """Main settings menu."""
     builder = InlineKeyboardBuilder()
-    
+
     builder.row(
-        InlineKeyboardButton(
-            text=l10n["btn_change_tz"],
-            callback_data="settings_change_tz"
-        ),
-        InlineKeyboardButton(
-            text=l10n["btn_change_lang"],
-            callback_data="settings_change_lang"
-        ),
+        InlineKeyboardButton(text=l10n["btn_change_tz"],   callback_data="settings_change_tz"),
+        InlineKeyboardButton(text=l10n["btn_change_lang"], callback_data="settings_change_lang"),
     )
 
     utc_btn_text = l10n["btn_toggle_utc_on"] if show_utc_offset else l10n["btn_toggle_utc_off"]
-    builder.row(
-        InlineKeyboardButton(
-            text=utc_btn_text,
-            callback_data="settings_toggle_utc"
-        )
-    )
-    
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_briefs_setup", "📋 Briefs setup"),
-            callback_data="settings_briefs_setup"
-        )
-    )
+    builder.row(InlineKeyboardButton(text=utc_btn_text, callback_data="settings_toggle_utc"))
 
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_quiet_hours_setup", "😴 Quiet hours"),
-            callback_data="settings_quiet_setup",
-        )
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_clear_all", "🗑 Clear all"),
-            callback_data="settings_clear_all",
-        )
-    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_briefs_setup", "📋 Briefs setup"), callback_data="settings_briefs_setup"))
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_quiet_hours_setup", "😴 Quiet hours"), callback_data="settings_quiet_setup"))
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_clear_all", "🗑 Clear all"), callback_data="settings_clear_all"))
 
     return builder.as_markup()
 
@@ -594,56 +444,47 @@ def get_clear_all_confirm_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup
     """Confirmation keyboard for full account reset."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_clear_all_confirm", "✅ Yes, clear all"),
-            callback_data="settings_clear_all_confirm",
-        ),
-        InlineKeyboardButton(
-            text=l10n.get("btn_clear_all_cancel", "↩ Cancel"),
-            callback_data="settings_back",
-        ),
+        InlineKeyboardButton(text=l10n.get("btn_clear_all_confirm", "✅ Yes, clear all"), callback_data="settings_clear_all_confirm"),
+        InlineKeyboardButton(text=l10n.get("btn_clear_all_cancel",  "↩ Cancel"),          callback_data="settings_back"),
     )
     return builder.as_markup()
 
 
 # =============================================================================
-# LANGUAGE SELECTION KEYBOARD
+# LANGUAGE SELECTION
 # =============================================================================
 
 def get_language_selection_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """
-    Keyboard for selecting bot language.
-
-    Args:
-        l10n: Localization dictionary
-    Keyboard for selecting interface language.
-    """
+    """Keyboard for selecting interface language."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n["lang_ru"], callback_data="set_lang_ru"),
-        InlineKeyboardButton(text=l10n["lang_en"], callback_data="set_lang_en"),
+        InlineKeyboardButton(text=l10n["lang_ru"], callback_data=SetLangCallback(lang="ru").pack()),
+        InlineKeyboardButton(text=l10n["lang_en"], callback_data=SetLangCallback(lang="en").pack()),
     )
     builder.row(
-        InlineKeyboardButton(text=l10n["lang_es"], callback_data="set_lang_es"),
+        InlineKeyboardButton(text=l10n["lang_es"], callback_data=SetLangCallback(lang="es").pack()),
     )
     return builder.as_markup()
 
+
 # =============================================================================
-# BRIEFS SETUP KEYBOARDS
+# BRIEFS / QUIET HOURS SETUP
 # =============================================================================
 
-def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_str: str, evening_str: str) -> InlineKeyboardMarkup:
-    """Keyboard for Custom Daily Briefs."""
+def get_briefs_setup_keyboard(
+    l10n: dict[str, Any],
+    enabled: bool,
+    morning_str: str,
+    evening_str: str,
+) -> InlineKeyboardMarkup:
+    """Keyboard for Daily Briefs configuration."""
     builder = InlineKeyboardBuilder()
-    
     toggle_text = l10n.get("btn_briefs_on") if enabled else l10n.get("btn_briefs_off")
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="briefs_toggle"))
-    
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_morning_brief").format(time=morning_str), callback_data="briefs_edit_morning"),
-        InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening")
+        InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening"),
     )
-    
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 
@@ -655,13 +496,35 @@ def get_quiet_hours_setup_keyboard(
     start_time: str,
     end_time: str,
 ) -> InlineKeyboardMarkup:
-    """Keyboard for Quiet Hours setup."""
+    """Keyboard for Quiet Hours configuration."""
     builder = InlineKeyboardBuilder()
     toggle_text = l10n.get("btn_quiet_on") if enabled else l10n.get("btn_quiet_off")
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="quiet_toggle"))
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_quiet_start").format(time=start_time), callback_data="quiet_edit_start"),
-        InlineKeyboardButton(text=l10n.get("btn_quiet_end").format(time=end_time), callback_data="quiet_edit_end"),
+        InlineKeyboardButton(text=l10n.get("btn_quiet_end").format(time=end_time),   callback_data="quiet_edit_end"),
     )
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
+
+
+# =============================================================================
+# HABITS MANAGEMENT (used by habits.py for the list view)
+# =============================================================================
+
+def get_habit_list_row(
+    reminder_id: int,
+    index: int,
+    l10n: dict[str, Any],
+) -> list[InlineKeyboardButton]:
+    """Return the (settings, delete) button pair for one habit list row."""
+    return [
+        InlineKeyboardButton(
+            text=l10n.get("btn_task_settings", "⚙️"),
+            callback_data=TaskSettingsCallback(reminder_id=reminder_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=l10n["habit_btn_delete_n"].format(index=index),
+            callback_data=DelHabitCallback(reminder_id=reminder_id).pack(),
+        ),
+    ]

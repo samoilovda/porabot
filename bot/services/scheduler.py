@@ -14,7 +14,6 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
-from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -22,7 +21,9 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import to_utc_aware, to_utc_naive
+from bot.utils.habits_utils import is_habit_like as _is_habit_like_util
+from bot.utils.recurrence import next_rrule_occurrence
+from bot.utils.time_ext import resolve_tz, to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -125,10 +126,7 @@ class SchedulerService:
     def _is_quiet_hours_now(self, user, now_utc: datetime) -> bool:
         if not bool(getattr(user, "quiet_hours_enabled", False)):
             return False
-        try:
-            user_tz = pytz.timezone(user.timezone)
-        except Exception:
-            user_tz = pytz.UTC
+        user_tz = resolve_tz(user.timezone)
         now_local = now_utc.astimezone(user_tz)
         start = self._parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
         end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
@@ -140,10 +138,7 @@ class SchedulerService:
         return current >= start or current < end
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
-        try:
-            user_tz = pytz.timezone(user.timezone)
-        except Exception:
-            user_tz = pytz.UTC
+        user_tz = resolve_tz(user.timezone)
         now_local = now_utc.astimezone(user_tz)
         end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
         candidate = now_local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
@@ -153,15 +148,7 @@ class SchedulerService:
 
     @staticmethod
     def _is_habit_like(reminder: Reminder) -> bool:
-        if reminder.is_fluid_habit:
-            return False
-        return bool(
-            reminder.is_habit
-            or reminder.habit_active_due_at is not None
-            or reminder.habit_last_completed_due_at is not None
-            or int(reminder.habit_streak_current or 0) > 0
-            or int(reminder.habit_streak_best or 0) > 0
-        )
+        return _is_habit_like_util(reminder)
 
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""
@@ -252,25 +239,21 @@ class SchedulerService:
                     start_dt = reminder.execution_time
                     if start_dt.tzinfo is None:
                         start_dt = start_dt.replace(tzinfo=timezone.utc)
-                    try:
-                        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
-                        next_run = rule.after(datetime.now(start_dt.tzinfo))
-                        if next_run:
-                            next_run_utc_naive = to_utc_naive(next_run)
-                            reminder.execution_time = next_run_utc_naive
-                            self.schedule_reminder(
-                                reminder_id,
-                                to_utc_aware(next_run_utc_naive),
-                                is_nagging=reminder.is_nagging,
-                            )
-                            scheduled_main_job = True
-                            logger.info("Rescheduled recurring reminder %s → %s.", reminder_id, next_run_utc_naive)
-                        else:
-                            logger.info("Recurring reminder %s has no future occurrences.", reminder_id)
-                    except (ValueError, TypeError) as e:
-                        logger.error("Invalid rrule for reminder %s: %s — disabling recurrence.", reminder_id, e)
-                        reminder.is_recurring = False
-                        reminder.rrule_string = None
+                    next_run = next_rrule_occurrence(
+                        reminder.rrule_string, start_dt, datetime.now(start_dt.tzinfo)
+                    )
+                    if next_run:
+                        next_run_utc_naive = to_utc_naive(next_run)
+                        reminder.execution_time = next_run_utc_naive
+                        self.schedule_reminder(
+                            reminder_id,
+                            to_utc_aware(next_run_utc_naive),
+                            is_nagging=reminder.is_nagging,
+                        )
+                        scheduled_main_job = True
+                        logger.info("Rescheduled recurring reminder %s → %s.", reminder_id, next_run_utc_naive)
+                    else:
+                        logger.info("Recurring reminder %s has no future occurrences.", reminder_id)
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))

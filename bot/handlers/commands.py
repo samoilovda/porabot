@@ -8,6 +8,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
+from bot.callbacks import SetLangCallback
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.reply import get_main_menu_keyboard
@@ -28,10 +29,16 @@ async def cmd_start(message: Message, state: FSMContext, user: User, l10n: dict[
     await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
 
 
-@router.callback_query(F.data.startswith("set_lang_"))
-async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: User, state: FSMContext) -> None:
+@router.callback_query(SetLangCallback.filter())
+async def callback_set_lang(
+    callback: CallbackQuery,
+    callback_data: SetLangCallback,
+    user_dao: UserDAO,
+    user: User,
+    state: FSMContext,
+) -> None:
     is_onboarding = user.language is None
-    lang_code = callback.data.split("set_lang_")[1]
+    lang_code = callback_data.lang
     await user_dao.update_language(user.id, lang_code)
     user.language = lang_code
     new_l10n = get_l10n(lang_code)

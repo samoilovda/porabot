@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from bot.callbacks import SetTimezoneCallback
 from bot.database.dao.user import UserDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
@@ -163,22 +164,27 @@ async def callback_clear_all_confirm(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("set_tz_"))
+@router.callback_query(SetTimezoneCallback.filter())
 async def callback_set_tz(
-    callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any], state: FSMContext
+    callback: CallbackQuery,
+    callback_data: SetTimezoneCallback,
+    user_dao: UserDAO,
+    user: User,
+    l10n: dict[str, Any],
+    state: FSMContext,
 ) -> None:
     state_data = await state.get_data()
     is_onboarding_tz = bool(state_data.get("onboarding_timezone"))
-    action = callback.data.split("set_tz_")[1]
-    if action == "manual":
+    if callback_data.tz == "manual":
         await state.set_state(SettingsState.waiting_for_timezone)
         await callback.message.edit_text(l10n["tz_manual_prompt"])
         await callback.answer()
         return
-    await user_dao.update_timezone(user.id, action)
-    user.timezone = action
+    tz = callback_data.tz
+    await user_dao.update_timezone(user.id, tz)
+    user.timezone = tz
     await callback.message.edit_text(
-        l10n["tz_success"].format(tz=_format_tz_display_label(action)),
+        l10n["tz_success"].format(tz=_format_tz_display_label(tz)),
         reply_markup=None,
     )
     if is_onboarding_tz:

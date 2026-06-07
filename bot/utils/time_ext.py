@@ -1,4 +1,4 @@
-"""Time utilities for UTC normalization and display formatting."""
+"""Time utilities for UTC normalization, display formatting, and timezone resolution."""
 
 from datetime import datetime, timezone
 import pytz
@@ -17,6 +17,14 @@ def to_utc_aware(dt: datetime) -> datetime:
 def to_utc_naive(dt: datetime) -> datetime:
     """Return *dt* normalized to UTC and stripped to naive form for DB storage."""
     return to_utc_aware(dt).replace(tzinfo=None)
+
+
+def resolve_tz(tz_str: str) -> pytz.BaseTzInfo:
+    """Parse *tz_str* into a pytz timezone, falling back to UTC on failure."""
+    try:
+        return pytz.timezone(tz_str)
+    except pytz.UnknownTimeZoneError:
+        return pytz.UTC
 
 
 def format_time(

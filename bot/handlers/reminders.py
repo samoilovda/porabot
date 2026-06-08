@@ -221,12 +221,11 @@ async def _save_and_show_edit(
 
     if edit_reminder_id:
         new_reminder = await reminder_dao.get_by_id(edit_reminder_id)
-        if new_reminder:
-            new_reminder.reminder_text = text
-            new_reminder.execution_time = execution_time
-        else:
-            logger.warning("Reminder %s not found during edit.", edit_reminder_id)
+        if not new_reminder or new_reminder.user_id != user.id:
+            logger.warning("Reminder %s not found or not owned by user %s during edit.", edit_reminder_id, user.id)
             return
+        new_reminder.reminder_text = text
+        new_reminder.execution_time = execution_time
     else:
         try:
             new_reminder = await reminder_dao.create_reminder(
@@ -484,11 +483,12 @@ async def callback_edit_repeat(
     callback_data: EditReminderCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     options = {
@@ -534,11 +534,12 @@ async def callback_edit_nagging(
     callback_data: EditReminderCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     reminder.is_nagging = not reminder.is_nagging
@@ -576,9 +577,13 @@ async def callback_edit_delete(
     callback_data: EditReminderCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
+    if not reminder or reminder.user_id != user.id:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
     await reminder_dao.delete_by_id(callback_data.reminder_id)
     scheduler_service.remove_reminder_job(callback_data.reminder_id)
     await callback.answer(l10n["task_deleted"])
@@ -591,11 +596,12 @@ async def callback_edit_set_nag_limit(
     callback_data: EditReminderCallback,
     state: FSMContext,
     reminder_dao: ReminderDAO,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await state.set_state(ReminderWizard.waiting_for_nag_limit)
@@ -668,10 +674,11 @@ async def callback_task_settings(
     callback: CallbackQuery,
     callback_data: TaskSettingsCallback,
     reminder_dao: ReminderDAO,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await callback.message.answer(
@@ -690,8 +697,12 @@ async def callback_delete_task(
     callback_data: DeleteTaskCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
+    if not reminder or reminder.user_id != user.id:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
     await reminder_dao.delete_by_id(callback_data.reminder_id)
     scheduler_service.remove_reminder_job(callback_data.reminder_id)
     await callback.answer(l10n["task_deleted"])
@@ -784,11 +795,9 @@ async def callback_recovery_snooze_all(
         return
 
     new_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+
+    # Schedule all jobs first so we don't mutate ORM state if scheduling fails mid-way
     for task in overdue:
-        task.execution_time = new_time
-        task.completed_for_execution_time = None
-        task.last_nag_chat_id = None
-        task.last_nag_message_id = None
         ok = await _schedule_reminder_safe(
             reminder_id=task.id,
             execution_time=new_time,
@@ -800,6 +809,12 @@ async def callback_recovery_snooze_all(
         )
         if not ok:
             return
+
+    for task in overdue:
+        task.execution_time = new_time
+        task.completed_for_execution_time = None
+        task.last_nag_chat_id = None
+        task.last_nag_message_id = None
         scheduler_service.remove_nagging_job(task.id)
 
     await callback.message.edit_text(
@@ -850,15 +865,15 @@ async def callback_task_done(
 
     reminder = await reminder_dao.get_by_id(reminder_id)
 
+    if not reminder or reminder.user_id != user.id:
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
+
     # Idempotency: ignore rapid double-taps
-    if (
-        not reminder
-        or reminder.status == ReminderStatus.COMPLETED
-        or (
-            reminder.is_recurring
-            and reminder.completed_for_execution_time is not None
-            and reminder.completed_for_execution_time >= reminder.execution_time
-        )
+    if reminder.status == ReminderStatus.COMPLETED or (
+        reminder.is_recurring
+        and reminder.completed_for_execution_time is not None
+        and reminder.completed_for_execution_time >= reminder.execution_time
     ):
         await callback.answer(l10n.get("already_done", "Already done ✅"))
         return
@@ -927,10 +942,11 @@ async def callback_done_note(
     callback_data: DoneNoteCallback,
     state: FSMContext,
     reminder_dao: ReminderDAO,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.set_state(ReminderWizard.waiting_for_done_note)
     await state.update_data(done_note_reminder_id=reminder.id)
@@ -969,7 +985,9 @@ async def callback_done_skip_next(
     l10n: dict[str, Any],
 ) -> None:
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder or not reminder.is_recurring or not reminder.rrule_string:
+    if not reminder or reminder.user_id != user.id:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+    if not reminder.is_recurring or not reminder.rrule_string:
         return await callback.answer(
             l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True
         )
@@ -979,7 +997,7 @@ async def callback_done_skip_next(
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-    next_run = next_rrule_occurrence(reminder.rrule_string, start_dt, start_dt)
+    next_run = next_rrule_occurrence(reminder.rrule_string, start_dt, now_utc)
     if not next_run:
         return await callback.answer(
             l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True
@@ -1017,10 +1035,11 @@ async def callback_done_undo(
     callback_data: DoneUndoCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
+    if not reminder or reminder.user_id != user.id:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     reminder.status = ReminderStatus.PENDING
@@ -1082,8 +1101,8 @@ async def callback_snooze_act(
     l10n: dict[str, Any],
 ) -> None:
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder:
-        return await callback.answer(l10n["task_not_found"], show_alert=True)
+    if not reminder or reminder.user_id != user.id:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     action = callback_data.action
 

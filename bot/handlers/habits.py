@@ -397,6 +397,11 @@ async def cb_fluid_done(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
+    if not reminder or reminder.user_id != user.id:
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
+
     done = await reminder_dao.mark_fluid_habit_done_today(callback_data.reminder_id, user.timezone)
     if done:
         await callback.answer(l10n.get("fluid_done_saved", "✅ Marked as done for today."))
@@ -433,7 +438,7 @@ async def cb_fluid_pick_time(
     hhmm = f"{callback_data.hhmm[:2]}:{callback_data.hhmm[2:]}"
 
     reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
-    if not reminder or not reminder.is_fluid_habit:
+    if not reminder or reminder.user_id != user.id or not reminder.is_fluid_habit:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
 
@@ -516,8 +521,13 @@ async def cb_del_habit(
     callback_data: DelHabitCallback,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
+    reminder = await reminder_dao.get_by_id(callback_data.reminder_id)
+    if not reminder or reminder.user_id != user.id:
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
     try:
         await reminder_dao.delete_by_id(callback_data.reminder_id)
         scheduler_service.remove_reminder_job(callback_data.reminder_id)

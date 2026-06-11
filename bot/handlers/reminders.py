@@ -19,7 +19,7 @@ import pytz
 from aiogram import Router, F
 from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from dateutil.rrule import rrulestr
 
@@ -673,7 +673,11 @@ async def callback_recovery_snooze_all(
 
     new_time = datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1)
     for task in overdue:
-        task.execution_time = new_time
+        # For habit-like recurring reminders, do not overwrite execution_time —
+        # it anchors the rrule so the next day's occurrence stays on the correct
+        # original time. Only reschedule the current job.
+        if not (_is_habit_like(task) and task.is_recurring):
+            task.execution_time = new_time
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None
         task.last_nag_message_id = None
@@ -823,6 +827,141 @@ def _cleanup_stale_timers() -> None:
                 active_auto_delete_tasks.pop(msg_id, None)
             except Exception:
                 logger.debug("Failed to cleanup stale auto-delete task for key %s", msg_id, exc_info=True)
+
+
+def _replace_wrapup_row(
+    reply_markup: InlineKeyboardMarkup | None,
+    *,
+    callback_data: str,
+    status_text: str,
+) -> InlineKeyboardMarkup | None:
+    """Replace one evening-wrap-up action row with its selected status."""
+    if not reply_markup:
+        return None
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for row in reply_markup.inline_keyboard:
+        if any(button.callback_data == callback_data for button in row):
+            task_button = row[0] if row else None
+            if task_button:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text=task_button.text,
+                            callback_data=task_button.callback_data or "wrap_task",
+                        ),
+                        InlineKeyboardButton(text=status_text, callback_data="wrap_selected"),
+                    ]
+                )
+            continue
+        rows.append(row)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+async def _mark_wrapup_task_done(
+    reminder_id: int,
+    *,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+) -> bool:
+    """Mark a wrap-up task done without rewriting the whole summary message."""
+    reminder = await reminder_dao.get_by_id(reminder_id)
+    if (
+        not reminder
+        or reminder.status == "completed"
+        or (
+            reminder.is_recurring
+            and reminder.completed_for_execution_time is not None
+            and reminder.completed_for_execution_time >= reminder.execution_time
+        )
+    ):
+        return False
+
+    if _is_habit_like(reminder):
+        due_at = reminder.habit_active_due_at or reminder.execution_time
+        if due_at is not None:
+            streak_result = await reminder_dao.apply_habit_streak_completion(
+                reminder.id,
+                due_at_utc_naive=due_at,
+                completed_at_utc_naive=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            if streak_result.get("already_counted"):
+                return False
+
+    await reminder_dao.mark_done(reminder_id)
+    if not reminder.is_recurring:
+        scheduler_service.remove_reminder_job(reminder_id)
+    scheduler_service.remove_nagging_job(reminder_id)
+    return True
+
+
+@router.callback_query(F.data.startswith("wrap_task_"))
+async def callback_wrapup_task_label(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    await callback.answer(l10n.get("wrapup_task_hint", "Task from evening wrap-up"))
+
+
+@router.callback_query(F.data == "wrap_selected")
+async def callback_wrapup_selected(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("wrap_done_"))
+async def callback_wrapup_done(
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
+) -> None:
+    try:
+        reminder_id = int(callback.data.split("wrap_done_")[1])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    marked = await _mark_wrapup_task_done(
+        reminder_id,
+        reminder_dao=reminder_dao,
+        scheduler_service=scheduler_service,
+    )
+    status_text = l10n.get("btn_done_short", "Done")
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=_replace_wrapup_row(
+                callback.message.reply_markup,
+                callback_data=callback.data,
+                status_text=status_text,
+            )
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer(
+        l10n.get("wrapup_done_saved", "✅ Marked done for tonight.")
+        if marked
+        else l10n.get("already_done", "Already done ✅")
+    )
+
+
+@router.callback_query(F.data.startswith("wrap_not_done_"))
+async def callback_wrapup_not_done(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    try:
+        int(callback.data.split("wrap_not_done_")[1])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    status_text = l10n.get("btn_not_done_short", "Not done")
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=_replace_wrapup_row(
+                callback.message.reply_markup,
+                callback_data=callback.data,
+                status_text=status_text,
+            )
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer(l10n.get("wrapup_not_done_saved", "❌ Left as not done for tonight."))
 
 @router.callback_query(F.data.startswith("done_task_"))
 async def callback_task_done(
@@ -1102,7 +1241,16 @@ async def callback_snooze_act(
         return
 
     new_time_utc_naive = to_utc_naive(new_time)
-    reminder.execution_time = new_time_utc_naive
+
+    # For habit-like recurring reminders, we must NOT overwrite execution_time.
+    # The scheduler uses execution_time as the rrule dtstart to compute the NEXT
+    # day's occurrence after the reminder fires. Overwriting it here would cause
+    # every snooze to permanently shift all future occurrences (drift bug).
+    # Instead, we only reschedule the current APScheduler job to fire later.
+    is_habit_recurring = _is_habit_like(reminder) and reminder.is_recurring
+    if not is_habit_recurring:
+        reminder.execution_time = new_time_utc_naive
+
     reminder.last_nag_chat_id = None
     reminder.last_nag_message_id = None
     try:

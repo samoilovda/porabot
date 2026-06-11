@@ -337,6 +337,30 @@ def get_missed_recovery_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for evening task check-in rows."""
+    builder = InlineKeyboardBuilder()
+    for task in tasks:
+        task_id = task.id if hasattr(task, "id") else task.get("id")
+        text = task.reminder_text if hasattr(task, "reminder_text") else str(task.get("reminder_text", "Task"))
+        preview = (text[:24] + "…") if len(text) > 24 else text
+        builder.row(
+            InlineKeyboardButton(
+                text=preview,
+                callback_data=f"wrap_task_{task_id}",
+            ),
+            InlineKeyboardButton(
+                text=l10n.get("btn_done_short", "Done"),
+                callback_data=f"wrap_done_{task_id}",
+            ),
+            InlineKeyboardButton(
+                text=l10n.get("btn_not_done_short", "Not done"),
+                callback_data=f"wrap_not_done_{task_id}",
+            ),
+        )
+    return builder.as_markup()
+
+
 # =============================================================================
 # SNOOZE KEYBOARD (alternative layout)
 # =============================================================================

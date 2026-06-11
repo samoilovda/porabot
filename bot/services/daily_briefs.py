@@ -17,7 +17,11 @@ from sqlalchemy import select
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
-from bot.keyboards.inline import get_fluid_completion_keyboard, get_fluid_pick_time_keyboard
+from bot.keyboards.inline import (
+    get_evening_wrapup_keyboard,
+    get_fluid_completion_keyboard,
+    get_fluid_pick_time_keyboard,
+)
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -179,7 +183,12 @@ async def process_daily_briefs() -> None:
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
                         text = _build_evening_text(completed, pending, user, l10n)
-                        await _send_safe(bot, user.id, text)
+                        await _send_safe(
+                            bot,
+                            user.id,
+                            text,
+                            reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
+                        )
                         logger.info("Evening brief sent to user %s", user.id)
 
                     pending_fluid = [h for h in fluid_habits if h.fluid_last_completed_date != today_str]

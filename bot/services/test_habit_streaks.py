@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.database.dao.reminder import ReminderDAO
-from bot.keyboards.inline import get_task_done_keyboard
+from bot.keyboards.inline import get_evening_wrapup_keyboard, get_task_done_keyboard
 
 
 def _make_dao(reminder):
@@ -138,3 +138,20 @@ def test_done_button_can_embed_cycle_due_timestamp() -> None:
     markup = get_task_done_keyboard(123, {"btn_done": "Done", "snooze_15m": "+15m", "snooze_30m": "+30m", "snooze_1h": "+1h", "snooze_2h": "+2h", "snooze_1d": "+1d", "snooze_custom": "Custom"}, cycle_due_ts=1700000000)
     first_button = markup.inline_keyboard[0][0]
     assert first_button.callback_data == "done_task_123_1700000000"
+
+
+def test_evening_wrapup_keyboard_groups_task_done_and_not_done_in_one_row() -> None:
+    task = SimpleNamespace(id=123, reminder_text="Read before bed")
+
+    markup = get_evening_wrapup_keyboard(
+        [task],
+        {"btn_done_short": "Done", "btn_not_done_short": "Not done"},
+    )
+
+    row = markup.inline_keyboard[0]
+    assert [button.text for button in row] == ["Read before bed", "Done", "Not done"]
+    assert [button.callback_data for button in row] == [
+        "wrap_task_123",
+        "wrap_done_123",
+        "wrap_not_done_123",
+    ]

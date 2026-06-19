@@ -190,7 +190,9 @@ async def _save_and_show_edit(
         new_reminder = await reminder_dao.get_by_id(edit_reminder_id)
         if new_reminder:
             new_reminder.reminder_text = text
-            new_reminder.execution_time = execution_time
+            is_snooze_mode = bool(data.get("is_snooze_mode", False))
+            if not (is_snooze_mode and _is_habit_like(new_reminder) and new_reminder.is_recurring):
+                new_reminder.execution_time = execution_time
         else:
             logger.warning("Reminder %s not found during edit.", edit_reminder_id)
             return
@@ -1213,7 +1215,7 @@ async def callback_snooze_act(
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
-        await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
+        await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text, is_snooze_mode=True)
         await callback.message.edit_text(
             l10n["ask_time"].format(text=reminder.reminder_text),
             reply_markup=get_time_selection_keyboard(user.timezone, l10n),

@@ -57,6 +57,7 @@ async def main() -> None:
     scheduler = AsyncIOScheduler(
         jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)},
         pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
+        job_defaults={"misfire_grace_time": 3600, "coalesce": True},
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)
     setup_daily_briefs(scheduler)
@@ -76,6 +77,7 @@ async def main() -> None:
     dp.workflow_data.update({"scheduler_service": scheduler_service, "config": config})
 
     scheduler.start()
+    await scheduler_service.reconcile_jobs_with_db()
     logger.info("Starting polling…")
 
     try:

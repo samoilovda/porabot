@@ -88,6 +88,56 @@ class SchedulerService:
             # instead of committing reminders that were never actually scheduled.
             raise
 
+    async def reconcile_jobs_with_db(self) -> None:
+        """Recreate scheduler jobs for pending reminders missing from the jobstore.
+
+        Run once at startup: a job can be missing from the jobstore after bot
+        downtime spanning a misfire window, or after a jobstore reset. Without
+        this, a dropped date-job means the reminder (and, for recurring ones,
+        the whole future chain) silently never fires again.
+        """
+        now_utc = datetime.now(timezone.utc)
+        restored = 0
+        async with self.session_pool() as session:
+            result = await session.execute(
+                select(Reminder).where(
+                    Reminder.status == "pending",
+                    Reminder.is_fluid_habit.is_(False),
+                )
+            )
+            reminders = result.scalars().all()
+
+            for reminder in reminders:
+                if self.scheduler.get_job(str(reminder.id)) is not None:
+                    continue
+
+                run_at_utc = to_utc_aware(reminder.execution_time)
+
+                if run_at_utc <= now_utc:
+                    if reminder.is_recurring and reminder.rrule_string:
+                        try:
+                            rule = rrulestr(reminder.rrule_string, dtstart=run_at_utc)
+                            next_run = rule.after(now_utc)
+                        except (ValueError, TypeError) as e:
+                            logger.error(
+                                "Invalid rrule for reminder %s during reconcile: %s", reminder.id, e
+                            )
+                            next_run = None
+                        if not next_run:
+                            continue
+                        next_run_utc_naive = to_utc_naive(next_run)
+                        reminder.execution_time = next_run_utc_naive
+                        run_at_utc = to_utc_aware(next_run_utc_naive)
+                    else:
+                        run_at_utc = now_utc + timedelta(minutes=1)
+
+                self.schedule_reminder(reminder.id, run_at_utc, is_nagging=reminder.is_nagging)
+                restored += 1
+
+            await session.commit()
+
+        logger.info("Reconciled scheduler jobs with DB: restored %s job(s).", restored)
+
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job and any nagging job for *reminder_id*."""
         for job_id in (str(reminder_id), f"nag_{reminder_id}"):

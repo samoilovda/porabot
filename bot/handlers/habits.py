@@ -424,6 +424,10 @@ async def cb_fluid_done(
         await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
+    if not await reminder_dao.get_owned(reminder_id, user.id):
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
+
     done = await reminder_dao.mark_fluid_habit_done_today(reminder_id, user.timezone)
     if done:
         await callback.answer(l10n.get("fluid_done_saved", "✅ Marked as done for today."))
@@ -465,7 +469,7 @@ async def cb_fluid_pick_time(
         await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder or not reminder.is_fluid_habit:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
@@ -519,7 +523,7 @@ async def state_fluid_pick_manual_time(
         await state.clear()
         return
 
-    reminder = await reminder_dao.get_by_id(int(reminder_id))
+    reminder = await reminder_dao.get_owned(int(reminder_id), user.id)
     if not reminder or not reminder.is_fluid_habit:
         await state.clear()
         await message.answer(l10n["item_not_found"])
@@ -548,9 +552,13 @@ async def state_fluid_pick_manual_time(
 
 @router.callback_query(F.data.startswith("del_habit_"))
 async def cb_del_habit(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any]
 ) -> None:
     task_id = int(callback.data.split("_")[-1])
+    if not await reminder_dao.get_owned(task_id, user.id):
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
     try:
         await reminder_dao.delete_by_id(task_id)
         scheduler_service.remove_reminder_job(task_id)

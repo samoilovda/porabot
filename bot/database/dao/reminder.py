@@ -188,6 +188,21 @@ class ReminderDAO(BaseDAO[Reminder]):
         await self.session.flush()  # Flush to populate auto-generated ID
         return reminder
 
+    async def get_owned(self, reminder_id: int, user_id: int) -> Optional[Reminder]:
+        """
+        Fetch a reminder by id, but only if it belongs to *user_id*.
+
+        Prevents IDOR: callback handlers must never act on a reminder_id
+        taken from callback.data without confirming the caller owns it.
+
+        Returns:
+            Reminder if found and owned by user_id, otherwise None.
+        """
+        reminder = await self.get_by_id(reminder_id)
+        if reminder is None or reminder.user_id != user_id:
+            return None
+        return reminder
+
     async def get_user_reminders(self, user_id: int) -> Sequence[Reminder]:
         """
         Get all PENDING reminders for a user, ordered by execution_time ASC.

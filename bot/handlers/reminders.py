@@ -375,6 +375,7 @@ async def callback_time_selected(
     elif "tomorrow" in data_str:
         execution_time = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
     elif "manual" in data_str:
+        await state.clear()
         await callback.answer()
         await callback.message.edit_text(l10n["try_again_manual"])
         return
@@ -425,6 +426,16 @@ async def callback_parse_confirm_cancel(callback: CallbackQuery, state: FSMConte
     await state.clear()
     await callback.message.edit_text(l10n.get("cmd_cancel", "Reminder creation cancelled."), reply_markup=None)
     await callback.answer()
+
+
+@router.message(ReminderWizard.confirming_parse, F.text)
+async def state_confirming_parse_new_text(
+    message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
+    reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+) -> None:
+    """User typed new text instead of tapping a confirm button — treat it as a fresh task."""
+    await state.clear()
+    await handle_task_text(message, state, user, l10n, reminder_dao, scheduler_service)
 
 
 # ---------------------------------------------------------------------------

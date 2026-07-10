@@ -213,9 +213,13 @@ async def _save_and_show_edit(
             return
 
     try:
+        # For habit-like recurring snooze, new_reminder.execution_time is left
+        # untouched above (anti-drift guard), but the job itself must still
+        # fire at the time the user picked — schedule from `execution_time`,
+        # not the (possibly stale) DB field.
         scheduler_service.schedule_reminder(
             new_reminder.id,
-            to_utc_aware(new_reminder.execution_time),
+            to_utc_aware(execution_time),
             is_nagging=new_reminder.is_nagging,
         )
     except Exception as e:

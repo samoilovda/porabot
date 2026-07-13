@@ -91,6 +91,13 @@ def _is_habit_like(reminder) -> bool:
     )
 
 
+def _format_task_line_md2(task, user: User) -> str:
+    """Render one task-list row for a MarkdownV2 message, escaping only the data."""
+    dt_str = escape_markdown_v2(format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
+    flags = f"{'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}"
+    return f"▫️ `{dt_str}`: {flags}{escape_markdown_v2(task.reminder_text)}"
+
+
 def _message_task_key(message: Message) -> tuple[int, int]:
     """Use chat+message id to avoid cross-chat key collisions."""
     return (message.chat.id, message.message_id)
@@ -127,7 +134,7 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
         normalized = [str(item) for item in options if item]
         if normalized:
             return random.choice(normalized)
-    return str(l10n.get("task_done_reply", "✅ **Great!**"))
+    return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
 
 
 async def _handle_parsed_result(
@@ -234,8 +241,10 @@ async def _save_and_show_edit(
     await state.clear()
 
     date_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
-    preview = l10n["preview"].format(text=new_reminder.reminder_text, time=date_str)
-    safe_preview = escape_markdown_v2(preview)
+    safe_preview = l10n["preview"].format(
+        text=escape_markdown_v2(new_reminder.reminder_text),
+        time=escape_markdown_v2(date_str),
+    )
     keyboard = get_edit_keyboard(
         reminder_id=new_reminder.id,
         l10n=l10n,
@@ -270,12 +279,9 @@ async def btn_my_tasks(
         await message.answer(l10n["no_tasks"], reply_markup=get_main_menu_keyboard(l10n))
         return
 
-    lines = [l10n["tasks_header"]]
-    for task in tasks:
-        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
+    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in tasks]
 
-    safe_text = escape_markdown_v2("\n".join(lines))
+    safe_text = "\n".join(lines)
     await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
 
 
@@ -620,12 +626,9 @@ async def callback_refresh_tasks(
         await callback.answer()
         return
 
-    lines = [l10n["tasks_header"]]
-    for task in tasks:
-        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
+    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in tasks]
 
-    safe_text = escape_markdown_v2("\n".join(lines))
+    safe_text = "\n".join(lines)
     await callback.message.edit_text(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
     await callback.answer()
 
@@ -822,11 +825,11 @@ async def callback_show_completed(
     lines = [l10n["completed_header"]]
     for task in completed:
         completed_dt = task.completed_at or task.execution_time
-        dt_str = format_time(completed_dt, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        note_suffix = f" — {task.last_completion_note}" if task.last_completion_note else ""
-        lines.append(f"✅ `{dt_str}`: ~{task.reminder_text}~{note_suffix}")
+        dt_str = escape_markdown_v2(format_time(completed_dt, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
+        note_suffix = f" — {escape_markdown_v2(task.last_completion_note)}" if task.last_completion_note else ""
+        lines.append(f"✅ `{dt_str}`: ~{escape_markdown_v2(task.reminder_text)}~{note_suffix}")
 
-    safe_text = escape_markdown_v2("\n".join(lines))
+    safe_text = "\n".join(lines)
     await callback.message.edit_text(safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="MarkdownV2")
     await callback.answer()
 
@@ -1040,7 +1043,7 @@ async def callback_task_done(
             await callback.answer(l10n.get("already_done", "Already done ✅"))
             return
         try:
-            done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
+            done_text = f"{escape_markdown_v2(callback.message.text)}\n\n{_pick_done_reply(l10n)}"
             await callback.message.edit_text(done_text, reply_markup=None, parse_mode="MarkdownV2")
         except TelegramBadRequest:
             pass
@@ -1066,7 +1069,7 @@ async def callback_task_done(
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:
-        done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
+        done_text = f"{escape_markdown_v2(callback.message.text)}\n\n{_pick_done_reply(l10n)}"
         await callback.message.edit_text(
             done_text,
             reply_markup=get_done_followup_keyboard(
@@ -1304,7 +1307,8 @@ async def callback_snooze_act(
         return
 
     friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-    snooze_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}")
+    snoozed_line = l10n["snoozed_until"].format(time=escape_markdown_v2(friendly_time))
+    snooze_text = f"{escape_markdown_v2(callback.message.text)}\n\n{snoozed_line}"
     await callback.message.edit_text(
         snooze_text,
         reply_markup=None,

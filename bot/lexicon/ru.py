@@ -69,7 +69,7 @@ RU: dict[str, Any] = {
 
     # Tasks List
     "no_tasks": "🎉 У тебя нет активных задач. Отдыхай!",
-    "tasks_header": "📋 **Твои задачи:**\n",
+    "tasks_header": "📋 *Твои задачи:*\n",
     "btn_delete_prefix": "🗑 Удалить:",
     "btn_refresh": "🔄 Обновить",
     "btn_close": "❌ Закрыть",
@@ -81,7 +81,7 @@ RU: dict[str, Any] = {
     "try_again_manual": "Попробуй снова написать задачу ЦЕЛИКОМ, включая дату и время.",
     
     # Confirmation logic -> Edit Logic
-    "preview": "✅ **Задача сохранена!**\n📌 {text}\n⏰ {time}",
+    "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Повтор:",
     "btn_nagging_prefix": "{icon} Зуд (Nagging):",
     "btn_nagging_repeats_prefix": "🔁 Повторы зуда: {count}",
@@ -130,15 +130,15 @@ RU: dict[str, Any] = {
     "btn_done_undo": "↩ Отменить",
     "btn_snooze": "⏰ Отложить",
     "task_done_replies": [
-        "✅ **Отлично!**",
-        "✅ **Супер!**",
-        "✅ **Классный ход!**",
-        "✅ **Так держать!**",
-        "✅ **Вот это темп!**",
-        "✅ **Ещё одна победа!**",
-        "✅ **Сильный результат!**",
+        "✅ *Отлично\\!*",
+        "✅ *Супер\\!*",
+        "✅ *Классный ход\\!*",
+        "✅ *Так держать\\!*",
+        "✅ *Вот это темп\\!*",
+        "✅ *Ещё одна победа\\!*",
+        "✅ *Сильный результат\\!*",
     ],
-    "task_done_reply": "✅ **Красавчик. Отстал.**",
+    "task_done_reply": "✅ *Красавчик\\. Отстал\\.*",
     "already_done": "Уже выполнено ✅",
     "invalid_action": "❌ Неверное действие",
     "invalid_mode": "❌ Неверный режим",
@@ -184,7 +184,7 @@ RU: dict[str, Any] = {
     # Completed tasks section
     "btn_completed_tasks": "📜 Выполненные",
     "no_completed_tasks": "🧨 Выполненных задач еще нет. Давай исправлять это!",
-    "completed_header": "🏆 **Выполненные задачи (за 7 дней):**\n",
+    "completed_header": "🏆 *Выполненные задачи \\(за 7 дней\\):*\n",
     "btn_done_task_prefix": "✅ Готово:",
 
     # Habits

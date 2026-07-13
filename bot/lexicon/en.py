@@ -69,7 +69,7 @@ EN: dict[str, Any] = {
 
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",
-    "tasks_header": "📋 **Your tasks:**\n",
+    "tasks_header": "📋 *Your tasks:*\n",
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
     "btn_close": "❌ Close",
@@ -81,7 +81,7 @@ EN: dict[str, Any] = {
     "try_again_manual": "Try again to write the FULL task, including date and time.",
 
     # Confirmation logic -> Edit logic
-    "preview": "✅ **Task saved!**\n📌 {text}\n⏰ {time}",
+    "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Repeat:",
     "btn_nagging_prefix": "{icon} Nagging:",
     "btn_nagging_repeats_prefix": "🔁 Nag repeats: {count}",
@@ -130,15 +130,15 @@ EN: dict[str, Any] = {
     "btn_done_undo": "↩ Undo",
     "btn_snooze": "⏰ Snooze",
     "task_done_replies": [
-        "✅ **You go!**",
-        "✅ **Great!**",
-        "✅ **Nice progress!**",
-        "✅ **Strong move!**",
-        "✅ **You nailed it!**",
-        "✅ **Love that momentum!**",
-        "✅ **Another win!**",
+        "✅ *You go\\!*",
+        "✅ *Great\\!*",
+        "✅ *Nice progress\\!*",
+        "✅ *Strong move\\!*",
+        "✅ *You nailed it\\!*",
+        "✅ *Love that momentum\\!*",
+        "✅ *Another win\\!*",
     ],
-    "task_done_reply": "✅ **Good job. I'll leave you alone.**",
+    "task_done_reply": "✅ *Good job\\. I'll leave you alone\\.*",
     "already_done": "Already done ✅",
     "invalid_action": "❌ Invalid action",
     "invalid_mode": "❌ Invalid mode",
@@ -184,7 +184,7 @@ EN: dict[str, Any] = {
     # Completed tasks section
     "btn_completed_tasks": "📜 Completed",
     "no_completed_tasks": "🧨 No completed tasks yet. Let's change that!",
-    "completed_header": "🏆 **Completed tasks (last 7 days):**\n",
+    "completed_header": "🏆 *Completed tasks \\(last 7 days\\):*\n",
     "btn_done_task_prefix": "✅ Done:",
 
     # Habits

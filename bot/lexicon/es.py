@@ -37,7 +37,7 @@ ES.update(
         "choose_tz": "Elige tu zona horaria:",
         "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0` o `-6`.",
         "tz_manual_button": "⌨️ Introducir manualmente",
-        "tz_success": "✅ Zona horaria: `{tz}`",
+        "tz_success": "✅ Zona horaria: `{tz}`\n\nLas tareas existentes no se recalculan — sonarán a su hora anterior. Ajústalas manualmente si es necesario.",
         "tz_invalid": "❌ Desfase inválido. Envía `+5`, `0` o `-6` (rango: -12 a +14).",
         "tz_label_america_new_york": "Este de EE. UU. (EST/EDT)",
         "tz_label_america_chicago": "Centro de EE. UU. (CST/CDT)",

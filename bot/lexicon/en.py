@@ -33,7 +33,7 @@ EN: dict[str, Any] = {
     "choose_tz": "Choose your timezone:",
     "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, or `-6`.",
     "tz_manual_button": "⌨️ Enter manually",
-    "tz_success": "✅ Timezone: `{tz}`",
+    "tz_success": "✅ Timezone: `{tz}`\n\nExisting tasks aren't recalculated — they'll still fire at their previous time. Adjust them manually if needed.",
     "tz_invalid": "❌ Invalid offset. Please send `+5`, `0`, or `-6` (range: -12 to +14).",
     "tz_label_america_new_york": "US Eastern (EST/EDT)",
     "tz_label_america_chicago": "US Central (CST/CDT)",

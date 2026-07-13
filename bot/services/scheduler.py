@@ -68,7 +68,14 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def schedule_reminder(self, reminder_id: int, run_date: datetime, *, is_nagging: bool = False) -> None:
-        """Add (or replace) a one-shot date-trigger job for *reminder_id*."""
+        """Add (or replace) a one-shot date-trigger job for *reminder_id*.
+
+        *is_nagging* only affects the log line below — it does not schedule a
+        follow-up job. The actual nagging chain is started by
+        _execute_reminder once the main reminder has fired and checks
+        reminder.is_nagging from the DB at that point. Callers pass it here
+        purely so the schedule log reflects current nagging state.
+        """
         if run_date.tzinfo is None:
             logger.warning("Reminder %s has naive run_date — assuming UTC.", reminder_id)
         run_date_utc = to_utc_aware(run_date)

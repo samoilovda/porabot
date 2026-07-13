@@ -78,6 +78,37 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return l10n["repeat_none"]
 
 
+def _reschedule_current_execution(reminder, scheduler_service: SchedulerService) -> None:
+    """(Re)schedule *reminder*'s job without firing an instant duplicate.
+
+    Used after toggling settings (repeat/nagging) that don't change
+    execution_time. If it's already in the past, advance a recurring
+    reminder to its next occurrence instead of scheduling the stale
+    date-job, which APScheduler would otherwise run immediately.
+    """
+    now = datetime.now(timezone.utc)
+    run_at = to_utc_aware(reminder.execution_time)
+    if run_at > now:
+        scheduler_service.schedule_reminder(reminder.id, run_at, is_nagging=reminder.is_nagging)
+        return
+
+    if reminder.is_recurring and reminder.rrule_string:
+        try:
+            rule = rrulestr(reminder.rrule_string, dtstart=run_at)
+            next_run = rule.after(now)
+        except (ValueError, TypeError):
+            next_run = None
+        if next_run:
+            next_run_utc_naive = to_utc_naive(next_run)
+            reminder.execution_time = next_run_utc_naive
+            scheduler_service.schedule_reminder(
+                reminder.id, to_utc_aware(next_run_utc_naive), is_nagging=reminder.is_nagging
+            )
+            return
+
+    scheduler_service.remove_reminder_job(reminder.id)
+
+
 def _is_habit_like(reminder) -> bool:
     """Detect reminders that participate in habit streak tracking."""
     if getattr(reminder, "is_fluid_habit", False):
@@ -506,7 +537,7 @@ async def callback_edit_repeat(
     await reminder_dao.session.flush()
 
     try:
-        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+        _reschedule_current_execution(reminder, scheduler_service)
     except Exception:
         await reminder_dao.session.rollback()
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
@@ -538,7 +569,7 @@ async def callback_edit_nagging(
 
     reminder.is_nagging = not reminder.is_nagging
     try:
-        scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
+        _reschedule_current_execution(reminder, scheduler_service)
         if not reminder.is_nagging:
             reminder.nagging_sent_count = 0
             reminder.last_nag_chat_id = None

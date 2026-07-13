@@ -210,6 +210,6 @@ def setup_daily_briefs(scheduler) -> None:
         process_daily_briefs,
         "cron",
         minute="*",
-        id="hourly_daily_briefs",
+        id="daily_briefs_minutely",
         replace_existing=True,
     )

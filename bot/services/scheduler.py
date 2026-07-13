@@ -106,6 +106,13 @@ class SchedulerService:
         downtime spanning a misfire window, or after a jobstore reset. Without
         this, a dropped date-job means the reminder (and, for recurring ones,
         the whole future chain) silently never fires again.
+
+        One-off reminders stay status='pending' after firing (until the user
+        taps Done), so an overdue one-off with no job isn't necessarily
+        undelivered — it may just be waiting on the user. Only create a
+        catch-up job for it if last_fired_at shows this cycle was never sent.
+        Reminders that already gave up after repeated TelegramForbiddenError
+        (see FORBIDDEN_STRIKES_LIMIT) are skipped entirely.
         """
         now_utc = datetime.now(timezone.utc)
         restored = 0
@@ -114,6 +121,7 @@ class SchedulerService:
                 select(Reminder).where(
                     Reminder.status == "pending",
                     Reminder.is_fluid_habit.is_(False),
+                    Reminder.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT,
                 )
             )
             reminders = result.scalars().all()
@@ -140,6 +148,14 @@ class SchedulerService:
                         reminder.execution_time = next_run_utc_naive
                         run_at_utc = to_utc_aware(next_run_utc_naive)
                     else:
+                        last_fired = reminder.last_fired_at
+                        already_delivered = (
+                            last_fired is not None and last_fired >= reminder.execution_time
+                        )
+                        if already_delivered:
+                            # Notification already reached the user; they just
+                            # haven't tapped Done yet — don't resend it.
+                            continue
                         run_at_utc = now_utc + timedelta(minutes=1)
 
                 self.schedule_reminder(reminder.id, run_at_utc, is_nagging=reminder.is_nagging)
@@ -238,6 +254,8 @@ class SchedulerService:
                     return
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                if not is_nagging_execution:
+                    reminder.last_fired_at = now_utc_naive
                 cycle_due_ts = None
                 if is_habit_like(reminder):
                     if not is_nagging_execution:

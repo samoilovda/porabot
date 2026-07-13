@@ -436,6 +436,13 @@ class Reminder(Base):
     last_nag_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     last_nag_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # When the main (non-nagging) notification for the CURRENT execution_time
+    # cycle was last sent (naive UTC). One-off reminders stay status='pending'
+    # until the user taps Done, so reconcile_jobs_with_db needs this to tell
+    # "never delivered, needs a catch-up job" apart from "already delivered,
+    # just waiting on the user" after a restart.
+    last_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # For recurring reminders, stores the execution_time value that user has
     # already completed. Active list hides reminders when this equals current
     # execution_time, and shows them again after recurrence rolls forward.

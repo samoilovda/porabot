@@ -53,6 +53,7 @@ def _make_reminder(**overrides):
         last_nag_chat_id=None,
         last_nag_message_id=None,
         forbidden_strikes=0,
+        last_fired_at=None,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -112,3 +113,38 @@ async def test_successful_send_resets_forbidden_strikes() -> None:
     await service._execute_reminder(reminder.id, is_nagging_execution=False)
 
     assert reminder.forbidden_strikes == 0
+
+
+async def test_main_execution_stamps_last_fired_at_but_nagging_execution_does_not() -> None:
+    reminder = _make_reminder(is_nagging=False, last_fired_at=None)
+    user = SimpleNamespace(id=7, language="en", timezone="UTC", quiet_hours_enabled=False)
+    session = _FakeSession(reminder, user)
+    scheduler = AsyncIOScheduler()
+    bot = SimpleNamespace(
+        send_message=AsyncMock(return_value=SimpleNamespace(chat=SimpleNamespace(id=7), message_id=1)),
+        delete_message=AsyncMock(),
+    )
+    service = SchedulerService(scheduler, bot=bot, session_pool=lambda: session)
+
+    before = datetime.now(timezone.utc).replace(tzinfo=None)
+    await service._execute_reminder(reminder.id, is_nagging_execution=False)
+    after = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    assert reminder.last_fired_at is not None
+    assert before <= reminder.last_fired_at <= after
+
+
+async def test_nagging_execution_does_not_touch_last_fired_at() -> None:
+    reminder = _make_reminder(is_nagging=True, last_fired_at=None)
+    user = SimpleNamespace(id=7, language="en", timezone="UTC", quiet_hours_enabled=False)
+    session = _FakeSession(reminder, user)
+    scheduler = AsyncIOScheduler()
+    bot = SimpleNamespace(
+        send_message=AsyncMock(return_value=SimpleNamespace(chat=SimpleNamespace(id=7), message_id=1)),
+        delete_message=AsyncMock(),
+    )
+    service = SchedulerService(scheduler, bot=bot, session_pool=lambda: session)
+
+    await service._execute_reminder(reminder.id, is_nagging_execution=True)
+
+    assert reminder.last_fired_at is None

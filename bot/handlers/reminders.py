@@ -829,6 +829,10 @@ async def state_nag_limit(
         reminder.last_nag_chat_id = None
         reminder.last_nag_message_id = None
         scheduler_service.remove_nagging_job(reminder.id)
+    else:
+        # Raising the limit above a previously-exhausted chain leaves it
+        # dead until the next main fire unless we explicitly resume it.
+        scheduler_service.resume_nagging_if_stalled(reminder)
 
     await state.clear()
     await message.answer(

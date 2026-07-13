@@ -189,6 +189,43 @@ class SchedulerService:
         except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
 
+    def resume_nagging_if_stalled(self, reminder: Reminder) -> bool:
+        """Recreate the nag job if raising the limit should revive a dead chain.
+
+        _execute_reminder stops scheduling follow-ups once nagging_sent_count
+        reaches nagging_max_repeats, without touching any job (there's none
+        left to remove). If the user later raises the limit, that chain stays
+        dead until the next main reminder fire — days away for a recurring
+        reminder, never for a one-off. If the reminder is overdue and has no
+        job pending, schedule one immediately instead of waiting.
+        """
+        if not reminder.is_nagging or reminder.status == "completed":
+            return False
+        max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
+        sent_nags = max(0, int(reminder.nagging_sent_count or 0))
+        if sent_nags >= max_nag_repeats:
+            return False
+        run_at_utc = to_utc_aware(reminder.execution_time)
+        now_utc = datetime.now(timezone.utc)
+        if run_at_utc > now_utc:
+            return False
+        if (
+            self.scheduler.get_job(str(reminder.id)) is not None
+            or self.scheduler.get_job(f"nag_{reminder.id}") is not None
+        ):
+            return False
+        next_nag = now_utc + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
+        self.scheduler.add_job(
+            execute_reminder_job,
+            "date",
+            run_date=next_nag,
+            args=[reminder.id, True],
+            id=f"nag_{reminder.id}",
+            replace_existing=True,
+        )
+        logger.info("Resumed stalled nagging chain for reminder %s at %s.", reminder.id, next_nag)
+        return True
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

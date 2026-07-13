@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -32,10 +32,9 @@ class _FakeSession:
         return False
 
 
-async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
+async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatch) -> None:
     daily_briefs = _load_module("bot/services/daily_briefs.py")
 
-    now_hhmm = datetime.now().strftime("%H:%M")
     fake_user = SimpleNamespace(
         id=7,
         timezone="UTC",
@@ -43,41 +42,27 @@ async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
         briefs_enabled=True,
         show_utc_offset=False,
         quiet_hours_enabled=False,
+        # In the past relative to "now" (unlike the old exact-minute match,
+        # a delayed job should still catch this).
         morning_brief_time="00:00",
-        evening_brief_time=now_hhmm,
-        # Already "sent" today so the morning branch is skipped regardless of
-        # what time the test happens to run at — only the evening branch (whose
-        # commit behavior this test targets) should fire.
-        last_morning_brief_date=datetime.now().date().isoformat(),
+        evening_brief_time="23:59",
+        last_morning_brief_date=None,
         last_evening_brief_date=None,
     )
-    fluid_habit = SimpleNamespace(
-        id=99,
-        reminder_text="Meditate",
-        fluid_mode="brief_only",
-        fluid_planned_date=None,
-        fluid_last_completed_date=(datetime.now().date() - timedelta(days=2)).isoformat(),
-        fluid_streak_current=5,
-        fluid_streak_best=5,
+    task = SimpleNamespace(
+        execution_time=datetime.now(),
+        reminder_text="Standup",
     )
-    reset_calls = []
 
     class _FakeReminderDAO:
         def __init__(self, session):
             self.session = session
 
         async def get_active_fluid_habits(self, user_id):
-            return [fluid_habit]
-
-        async def reset_stale_fluid_streak_if_needed(self, reminder_id, tz):
-            reset_calls.append((reminder_id, tz))
-            fluid_habit.fluid_streak_current = 0
-
-        async def get_today_completed_tasks(self, user_id, tz):
             return []
 
         async def get_today_pending_tasks(self, user_id, tz):
-            return []
+            return [task]
 
     class _FakeUserDAO:
         def __init__(self, session):
@@ -87,18 +72,23 @@ async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
             return fake_user
 
     session = _FakeSession()
+    send_message = AsyncMock()
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     real_scheduler_module._instance = SimpleNamespace(
-        bot=SimpleNamespace(send_message=AsyncMock()),
+        bot=SimpleNamespace(send_message=send_message),
         session_pool=lambda: session,
     )
 
     try:
+        # First run (e.g. job fired a few minutes late — old code's exact
+        # "%H:%M" match would have missed it entirely).
         await daily_briefs.process_daily_briefs()
+        assert send_message.await_count == 1
+        assert fake_user.last_morning_brief_date == datetime.now().date().isoformat()
+
+        # Second run a minute later same day must not resend.
+        await daily_briefs.process_daily_briefs()
+        assert send_message.await_count == 1
     finally:
         real_scheduler_module._instance = None
-
-    assert reset_calls == [(99, "UTC")]
-    assert fluid_habit.fluid_streak_current == 0
-    session.commit.assert_awaited()

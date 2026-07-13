@@ -56,6 +56,8 @@ async def init_db(engine: AsyncEngine) -> None:
             ("quiet_hours_end", "VARCHAR DEFAULT '07:00'"),
             ("missed_recovery_enabled", "BOOLEAN DEFAULT 1"),
             ("last_missed_recovery_date", "VARCHAR"),
+            ("last_morning_brief_date", "VARCHAR"),
+            ("last_evening_brief_date", "VARCHAR"),
         ]:
             try:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))

@@ -18,6 +18,8 @@ from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
 
+RECOVERY_LOCAL_TIME = "10:00"
+
 
 def _parse_hhmm(raw: str, fallback: str) -> dt_time:
     value = (raw or fallback).strip()
@@ -100,7 +102,7 @@ async def process_missed_task_recovery() -> None:
                 except Exception:
                     tz = pytz.UTC
                 now_local = datetime.now(tz)
-                if now_local.strftime("%H:%M") != "10:00":
+                if now_local.strftime("%H:%M") < RECOVERY_LOCAL_TIME:
                     continue
                 if _is_quiet_local(user, now_local):
                     continue

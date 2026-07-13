@@ -171,7 +171,13 @@ class User(Base):
     # Missed-task recovery settings.
     missed_recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     last_missed_recovery_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+
+    # Local date (YYYY-MM-DD) the morning/evening brief was last sent — used to
+    # gate briefs by a "time has passed and not sent yet today" window instead
+    # of an exact-minute string match, which is fragile against job delay/jitter.
+    last_morning_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    last_evening_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     morning_brief_hour: Mapped[int] = mapped_column(BigInteger, default=9, server_default="9")

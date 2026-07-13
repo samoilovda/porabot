@@ -157,7 +157,17 @@ async def process_daily_briefs() -> None:
                 fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
                 today_str = datetime.now(tz).date().isoformat()
 
-                if local_time_str == getattr(user, 'morning_brief_time', "09:00"):
+                morning_due = (
+                    local_time_str >= getattr(user, 'morning_brief_time', "09:00")
+                    and getattr(user, 'last_morning_brief_date', None) != today_str
+                )
+                evening_due = (
+                    local_time_str >= getattr(user, 'evening_brief_time', "23:00")
+                    and getattr(user, 'last_evening_brief_date', None) != today_str
+                )
+
+                if morning_due:
+                    user.last_morning_brief_date = today_str
                     tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if tasks:
                         text = _build_morning_text(tasks, user, l10n)
@@ -184,7 +194,8 @@ async def process_daily_briefs() -> None:
                         )
                         logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
 
-                elif local_time_str == getattr(user, 'evening_brief_time', "23:00"):
+                elif evening_due:
+                    user.last_evening_brief_date = today_str
                     for h in fluid_habits:
                         await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
 

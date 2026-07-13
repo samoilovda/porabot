@@ -355,6 +355,33 @@ class ReminderDAO(BaseDAO[Reminder]):
         await self.session.flush()
         return {"already_counted": False, "counted": True, "late": False}
 
+    async def revert_habit_streak_completion(
+        self,
+        reminder_id: int,
+        *,
+        due_at_utc_naive: datetime,
+    ) -> None:
+        """
+        Undo the streak effect of apply_habit_streak_completion() for one due cycle.
+
+        Only reverts when habit_last_completed_due_at still matches due_at_utc_naive
+        (i.e. nothing else completed a later cycle in the meantime), so an Undo can't
+        clobber streak progress made after the completion it's undoing.
+        """
+        reminder = await self.get_by_id(reminder_id)
+        if not reminder:
+            return
+
+        if due_at_utc_naive.tzinfo is not None:
+            due_at_utc_naive = due_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        if reminder.habit_last_completed_due_at != due_at_utc_naive:
+            return
+
+        reminder.habit_last_completed_due_at = None
+        reminder.habit_streak_current = max(0, int(reminder.habit_streak_current or 0) - 1)
+        await self.session.flush()
+
     async def set_last_completion_note(self, reminder_id: int, note: str) -> None:
         """Attach a note to the latest completion of a reminder."""
         reminder = await self.get_by_id(reminder_id)

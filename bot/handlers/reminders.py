@@ -1195,6 +1195,11 @@ async def callback_done_undo(
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
+    if _is_habit_like(reminder):
+        due_at = reminder.habit_active_due_at or reminder.execution_time
+        if due_at is not None:
+            await reminder_dao.revert_habit_streak_completion(reminder.id, due_at_utc_naive=due_at)
+
     reminder.status = "pending"
     reminder.completed_at = None
     reminder.completed_for_execution_time = None

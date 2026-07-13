@@ -25,6 +25,7 @@ from aiogram.fsm.context import FSMContext
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.database.models import is_habit_like as _is_habit_like
+from bot.lexicon import ALL_MENU_BUTTON_TEXTS
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_done_followup_keyboard,
@@ -47,12 +48,7 @@ logger = logging.getLogger(__name__)
 # asyncio.Task registry for auto-removing inline keyboards after 5 s
 active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
-_MENU_TEXTS = frozenset([
-    "➕ Новая задача", "📅 Мои задачи", "⚙️ Настройки",
-    "➕ New Task", "📅 My Tasks", "⚙️ Settings",
-    "➕ Nueva tarea", "📅 Mis tareas", "⚙️ Ajustes",
-    "🫧 Привычки", "🫧 Habits", "🫧 Hábitos",
-])
+_MENU_TEXTS = ALL_MENU_BUTTON_TEXTS
 _MAX_INPUT = 3000
 _NAG_LIMIT_MIN = 0
 _NAG_LIMIT_MAX = 20

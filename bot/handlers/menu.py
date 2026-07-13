@@ -25,19 +25,20 @@ from bot.handlers.reminders import _format_task_line_md2, _paginate_tasks_for_li
 from bot.handlers.settings import _render_settings_text
 from bot.keyboards.inline import get_settings_keyboard, get_tasks_list_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard
+from bot.lexicon import MENU_BUTTON_TEXTS_BY_KEY
 from bot.states.reminder import ReminderWizard
 
 router = Router(name="menu")
 
 
-@router.message(F.text.in_(["➕ Новая задача", "➕ New Task", "➕ Nueva tarea"]))
+@router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_new_task"]))
 async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
     await state.set_state(ReminderWizard.entering_text)
     await message.answer(l10n["enter_task"], parse_mode="Markdown")
 
 
-@router.message(F.text.in_(["📅 Мои задачи", "📅 My Tasks", "📅 Mis tareas"]))
+@router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_my_tasks"]))
 async def btn_my_tasks(
     message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
@@ -56,14 +57,14 @@ async def btn_my_tasks(
     await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(shown_tasks, l10n), parse_mode="MarkdownV2")
 
 
-@router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings", "⚙️ Ajustes"]))
+@router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_settings"]))
 async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
     await state.clear()  # Reset FSM if user navigates here mid-wizard
     text = _render_settings_text(user, l10n)
     await message.answer(text, reply_markup=get_settings_keyboard(l10n, user.show_utc_offset), parse_mode="Markdown")
 
 
-@router.message(F.text.in_(["🫧 Привычки", "🫧 Habits", "🫧 Hábitos"]))
+@router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_habits"]))
 async def btn_habits(
     message: Message,
     state: FSMContext,

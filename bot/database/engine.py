@@ -10,6 +10,8 @@ session_pool()`. The DatabaseMiddleware commits on success and rolls back on
 exception (Unit of Work). Background jobs manage their own sessions.
 """
 
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -102,6 +104,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_completion_note", "VARCHAR"),
             ("forbidden_strikes", "INTEGER NOT NULL DEFAULT 0"),
             ("last_fired_at", "DATETIME"),
+            ("habit_undo_pending", "BOOLEAN NOT NULL DEFAULT 0"),
         ]:
             await _add_column_if_missing(conn, "reminders", col, col_type)
 
@@ -123,6 +126,30 @@ async def init_db(engine: AsyncEngine) -> None:
                 )
         except (OperationalError, ProgrammingError):
             # Extremely old schemas may temporarily miss one of these columns.
+            pass
+
+        # Backfill last_fired_at for pre-existing rows: it's used to tell
+        # "never delivered" apart from "delivered, awaiting Done" for
+        # overdue one-off reminders during reconcile_jobs_with_db. Without
+        # this, every legacy overdue-but-still-pending one-off reminder
+        # looks undelivered on the first post-deploy restart and gets a
+        # duplicate catch-up notification, even if the user already saw it.
+        try:
+            async with conn.begin_nested():
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE reminders
+                        SET last_fired_at = execution_time
+                        WHERE last_fired_at IS NULL
+                          AND status = 'pending'
+                          AND COALESCE(is_recurring, 0) = 0
+                          AND execution_time <= :now
+                        """
+                    ),
+                    {"now": datetime.utcnow()},
+                )
+        except (OperationalError, ProgrammingError):
             pass
 
 

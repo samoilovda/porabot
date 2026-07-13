@@ -316,6 +316,28 @@ class ReminderDAO(BaseDAO[Reminder]):
         if completed_at_utc_naive.tzinfo is not None:
             completed_at_utc_naive = completed_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
 
+        # Re-completing the exact cycle an Undo just reverted restores the
+        # streak it had before the revert (which only decremented by one),
+        # instead of restarting the chain at 1 — there is no stored history
+        # of earlier cycles to recompute the gap-based streak from.
+        if (
+            getattr(reminder, "habit_undo_pending", False)
+            and reminder.habit_last_completed_due_at == due_at_utc_naive
+        ):
+            reminder.habit_undo_pending = False
+            if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+                reminder.habit_streak_current = 0
+                await self.session.flush()
+                return {"already_counted": False, "counted": False, "late": True}
+            reminder.habit_streak_current = max(0, int(reminder.habit_streak_current or 0)) + 1
+            reminder.habit_streak_best = max(
+                reminder.habit_streak_current, max(0, int(reminder.habit_streak_best or 0))
+            )
+            await self.session.flush()
+            return {"already_counted": False, "counted": True, "late": False}
+        if getattr(reminder, "habit_undo_pending", False):
+            reminder.habit_undo_pending = False
+
         last_done_due = reminder.habit_last_completed_due_at
         if last_done_due and due_at_utc_naive <= last_done_due:
             return {"already_counted": True, "counted": False, "late": False}
@@ -353,7 +375,10 @@ class ReminderDAO(BaseDAO[Reminder]):
 
         Only reverts when habit_last_completed_due_at still matches due_at_utc_naive
         (i.e. nothing else completed a later cycle in the meantime), so an Undo can't
-        clobber streak progress made after the completion it's undoing.
+        clobber streak progress made after the completion it's undoing. Leaves
+        habit_last_completed_due_at pointing at this cycle and sets
+        habit_undo_pending so a re-completion of the same cycle restores the
+        exact streak instead of restarting the chain at 1.
         """
         reminder = await self.get_by_id(reminder_id)
         if not reminder:
@@ -365,8 +390,8 @@ class ReminderDAO(BaseDAO[Reminder]):
         if reminder.habit_last_completed_due_at != due_at_utc_naive:
             return
 
-        reminder.habit_last_completed_due_at = None
         reminder.habit_streak_current = max(0, int(reminder.habit_streak_current or 0) - 1)
+        reminder.habit_undo_pending = True
         await self.session.flush()
 
     async def set_last_completion_note(self, reminder_id: int, note: str) -> None:

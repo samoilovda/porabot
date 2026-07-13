@@ -377,6 +377,16 @@ class Reminder(Base):
     habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the last completed habit cycle (UTC naive).
     habit_last_completed_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # True right after an Undo reverts the cycle at habit_last_completed_due_at.
+    # Lets a re-completion of that same cycle restore the exact streak it had
+    # before the revert instead of restarting the chain at 1 (there is no
+    # stored history of prior cycles to recompute the gap-based streak from).
+    habit_undo_pending: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
     # Fluid habit streaks are day-based (local date strings YYYY-MM-DD).
     fluid_streak_current: Mapped[int] = mapped_column(
         Integer,

@@ -21,7 +21,6 @@ from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from dateutil.rrule import rrulestr
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
@@ -39,7 +38,7 @@ from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
-from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
 parser = InputParser()
@@ -78,7 +77,7 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return l10n["repeat_none"]
 
 
-def _reschedule_current_execution(reminder, scheduler_service: SchedulerService) -> None:
+def _reschedule_current_execution(reminder, user: User, scheduler_service: SchedulerService) -> None:
     """(Re)schedule *reminder*'s job without firing an instant duplicate.
 
     Used after toggling settings (repeat/nagging) that don't change
@@ -94,12 +93,12 @@ def _reschedule_current_execution(reminder, scheduler_service: SchedulerService)
 
     if reminder.is_recurring and reminder.rrule_string:
         try:
-            rule = rrulestr(reminder.rrule_string, dtstart=run_at)
-            next_run = rule.after(now)
+            next_run_utc_naive = next_occurrence_utc(
+                reminder.rrule_string, reminder.execution_time, user.timezone, now.replace(tzinfo=None)
+            )
         except (ValueError, TypeError):
-            next_run = None
-        if next_run:
-            next_run_utc_naive = to_utc_naive(next_run)
+            next_run_utc_naive = None
+        if next_run_utc_naive:
             reminder.execution_time = next_run_utc_naive
             scheduler_service.schedule_reminder(
                 reminder.id, to_utc_aware(next_run_utc_naive), is_nagging=reminder.is_nagging
@@ -524,7 +523,7 @@ async def callback_edit_repeat(
     await reminder_dao.session.flush()
 
     try:
-        _reschedule_current_execution(reminder, scheduler_service)
+        _reschedule_current_execution(reminder, user, scheduler_service)
     except Exception:
         await reminder_dao.session.rollback()
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
@@ -556,7 +555,7 @@ async def callback_edit_nagging(
 
     reminder.is_nagging = not reminder.is_nagging
     try:
-        _reschedule_current_execution(reminder, scheduler_service)
+        _reschedule_current_execution(reminder, user, scheduler_service)
         if not reminder.is_nagging:
             reminder.nagging_sent_count = 0
             reminder.last_nag_chat_id = None
@@ -685,17 +684,14 @@ async def callback_recovery_done_all(
                 )
         await reminder_dao.mark_done(task.id)
         if task.is_recurring and task.rrule_string:
-            start_dt = task.execution_time
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=timezone.utc)
             try:
-                rule = rrulestr(task.rrule_string, dtstart=start_dt)
-                next_run = rule.after(now_utc)
+                next_run_utc_naive = next_occurrence_utc(
+                    task.rrule_string, task.execution_time, user.timezone, now_utc.replace(tzinfo=None)
+                )
             except Exception:
-                next_run = None
+                next_run_utc_naive = None
 
-            if next_run:
-                next_run_utc_naive = to_utc_naive(next_run)
+            if next_run_utc_naive:
                 task.execution_time = next_run_utc_naive
                 task.completed_for_execution_time = None
                 try:
@@ -1164,16 +1160,12 @@ async def callback_done_skip_next(
     if not reminder or not reminder.is_recurring or not reminder.rrule_string:
         return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
 
-    start_dt = reminder.execution_time
-    if start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=timezone.utc)
-
     try:
-        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
-        next_run = rule.after(start_dt)
-        if not next_run:
+        next_run_utc_naive = next_occurrence_utc(
+            reminder.rrule_string, reminder.execution_time, user.timezone, reminder.execution_time
+        )
+        if not next_run_utc_naive:
             return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
-        next_run_utc_naive = to_utc_naive(next_run)
         reminder.execution_time = next_run_utc_naive
         reminder.completed_for_execution_time = None
         reminder.last_nag_chat_id = None

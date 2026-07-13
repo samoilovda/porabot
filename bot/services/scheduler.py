@@ -22,7 +22,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import is_quiet_hours, parse_hhmm, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -264,14 +264,14 @@ class SchedulerService:
 
                 # Recurring reschedule
                 if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
-                    start_dt = reminder.execution_time
-                    if start_dt.tzinfo is None:
-                        start_dt = start_dt.replace(tzinfo=timezone.utc)
                     try:
-                        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
-                        next_run = rule.after(datetime.now(start_dt.tzinfo))
-                        if next_run:
-                            next_run_utc_naive = to_utc_naive(next_run)
+                        next_run_utc_naive = next_occurrence_utc(
+                            reminder.rrule_string,
+                            reminder.execution_time,
+                            user.timezone,
+                            now_utc_naive,
+                        )
+                        if next_run_utc_naive:
                             reminder.execution_time = next_run_utc_naive
                             self.schedule_reminder(
                                 reminder_id,

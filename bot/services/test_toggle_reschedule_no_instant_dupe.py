@@ -43,7 +43,7 @@ async def test_toggle_nagging_on_past_one_off_reminder_removes_job_instead_of_fi
         get_owned=AsyncMock(return_value=reminder),
         session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
     )
-    user = SimpleNamespace(id=1)
+    user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
         data="edit_toggle_nagging_55",
         message=SimpleNamespace(edit_reply_markup=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
@@ -91,7 +91,7 @@ async def test_toggle_repeat_on_past_recurring_reminder_advances_to_future_occur
         get_owned=AsyncMock(return_value=reminder),
         session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
     )
-    user = SimpleNamespace(id=1)
+    user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
         data="edit_toggle_repeat_77",
         message=SimpleNamespace(edit_reply_markup=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),

@@ -209,6 +209,8 @@ async def process_daily_briefs() -> None:
                             reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
                         )
 
+                await session.commit()
+
     except Exception as e:
         logger.error("Error in daily briefs job: %s", e, exc_info=True)
 

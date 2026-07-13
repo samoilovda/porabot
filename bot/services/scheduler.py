@@ -14,15 +14,14 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
-from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database.dao.user import UserDAO
-from bot.database.models import Reminder, is_habit_like
+from bot.database.models import Reminder, User, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -115,6 +114,7 @@ class SchedulerService:
         (see FORBIDDEN_STRIKES_LIMIT) are skipped entirely.
         """
         now_utc = datetime.now(timezone.utc)
+        now_utc_naive = now_utc.replace(tzinfo=None)
         restored = 0
         async with self.session_pool() as session:
             result = await session.execute(
@@ -126,6 +126,9 @@ class SchedulerService:
             )
             reminders = result.scalars().all()
 
+            user_tz_result = await session.execute(select(User.id, User.timezone))
+            user_tz_map = {uid: tz for uid, tz in user_tz_result.all()}
+
             for reminder in reminders:
                 if self.scheduler.get_job(str(reminder.id)) is not None:
                     continue
@@ -134,17 +137,22 @@ class SchedulerService:
 
                 if run_at_utc <= now_utc:
                     if reminder.is_recurring and reminder.rrule_string:
+                        # Compute the next occurrence in the user's local
+                        # timezone (not raw UTC) so a bot restart across a DST
+                        # transition doesn't shift the reminder's local
+                        # wall-clock time — same reasoning as _execute_reminder.
+                        user_tz = user_tz_map.get(reminder.user_id, "UTC")
                         try:
-                            rule = rrulestr(reminder.rrule_string, dtstart=run_at_utc)
-                            next_run = rule.after(now_utc)
+                            next_run_utc_naive = next_occurrence_utc(
+                                reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
+                            )
                         except (ValueError, TypeError) as e:
                             logger.error(
                                 "Invalid rrule for reminder %s during reconcile: %s", reminder.id, e
                             )
-                            next_run = None
-                        if not next_run:
+                            next_run_utc_naive = None
+                        if not next_run_utc_naive:
                             continue
-                        next_run_utc_naive = to_utc_naive(next_run)
                         reminder.execution_time = next_run_utc_naive
                         run_at_utc = to_utc_aware(next_run_utc_naive)
                     else:

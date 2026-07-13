@@ -6,13 +6,28 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.services.scheduler import FORBIDDEN_STRIKES_LIMIT, SchedulerService
 
 
+class _QueryResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self._rows)
+
+    def all(self):
+        return self._rows
+
+
 class _FakeSession:
+    """Serves the two queries reconcile_jobs_with_db issues, in order:
+    (1) the pending-reminders select (consumed via .scalars().all()),
+    (2) the User.id/timezone select (consumed via .all())."""
+
     def __init__(self, reminders):
-        self._reminders = reminders
+        self._responses = [_QueryResult(reminders), _QueryResult([])]
         self.committed = False
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self._reminders))
+        return self._responses.pop(0)
 
     async def commit(self):
         self.committed = True
@@ -31,6 +46,7 @@ def _session_pool_factory(reminders):
 def _make_reminder(**overrides):
     defaults = dict(
         id=1,
+        user_id=1,
         status="pending",
         is_fluid_habit=False,
         is_recurring=False,
@@ -94,12 +110,12 @@ class _FilteringFakeSession:
     behavior rather than just the SQL text."""
 
     def __init__(self, reminders):
-        self._reminders = reminders
+        matching = [r for r in reminders if r.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT]
+        self._responses = [_QueryResult(matching), _QueryResult([])]
         self.committed = False
 
     async def execute(self, _stmt):
-        matching = [r for r in self._reminders if r.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT]
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: matching))
+        return self._responses.pop(0)
 
     async def commit(self):
         self.committed = True

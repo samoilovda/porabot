@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.services.scheduler import FORBIDDEN_STRIKES_LIMIT, SchedulerService
@@ -132,6 +132,29 @@ async def test_main_execution_stamps_last_fired_at_but_nagging_execution_does_no
 
     assert reminder.last_fired_at is not None
     assert before <= reminder.last_fired_at <= after
+
+
+def _bad_request_bot():
+    async def _raise(*args, **kwargs):
+        raise TelegramBadRequest(method=SimpleNamespace(), message="Bad Request: message is too long")
+
+    return SimpleNamespace(send_message=_raise, delete_message=AsyncMock())
+
+
+async def test_non_forbidden_send_error_does_not_reset_existing_strikes() -> None:
+    """A transient/unrelated error (bad request, network hiccup, ...) must
+    not erase progress toward the forbidden-strikes limit — the user is
+    still blocked even though this particular failure wasn't confirmed as
+    TelegramForbiddenError."""
+    reminder = _make_reminder(forbidden_strikes=2, is_nagging=False)
+    user = SimpleNamespace(id=7, language="en", timezone="UTC", quiet_hours_enabled=False)
+    session = _FakeSession(reminder, user)
+    scheduler = AsyncIOScheduler()
+    service = SchedulerService(scheduler, bot=_bad_request_bot(), session_pool=lambda: session)
+
+    await service._execute_reminder(reminder.id, is_nagging_execution=False)
+
+    assert reminder.forbidden_strikes == 2
 
 
 async def test_nagging_execution_does_not_touch_last_fired_at() -> None:

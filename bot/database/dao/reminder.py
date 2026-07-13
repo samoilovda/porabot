@@ -56,7 +56,7 @@ from sqlalchemy import or_, select
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
 # Import Reminder model for type hints and query construction
-from bot.database.models import Reminder
+from bot.database.models import Reminder, is_habit_like
 
 
 class ReminderDAO(BaseDAO[Reminder]):
@@ -308,20 +308,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         Completion counts toward streak only if done within 24h after due time.
         """
         reminder = await self.get_by_id(reminder_id)
-        is_habit_like = bool(
-            reminder
-            and (
-                not bool(getattr(reminder, "is_fluid_habit", False))
-                and (
-                bool(getattr(reminder, "is_habit", False))
-                or getattr(reminder, "habit_active_due_at", None) is not None
-                or getattr(reminder, "habit_last_completed_due_at", None) is not None
-                or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-                or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-                )
-            )
-        )
-        if not reminder or not is_habit_like:
+        if not reminder or not is_habit_like(reminder):
             return {"already_counted": False, "counted": False, "late": False}
 
         if due_at_utc_naive.tzinfo is not None:

@@ -7,7 +7,7 @@ reach the service at call time. This is a known APScheduler tradeoff.
 """
 
 import logging
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytz
 from aiogram import Bot
@@ -19,10 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database.dao.user import UserDAO
-from bot.database.models import Reminder
+from bot.database.models import Reminder, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import to_utc_aware, to_utc_naive
+from bot.utils.time_ext import is_quiet_hours, parse_hhmm, to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -158,36 +158,13 @@ class SchedulerService:
     # Internal
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_hhmm(raw: str, fallback: str) -> dt_time:
-        val = (raw or fallback).strip()
-        try:
-            hour_str, min_str = val.split(":", 1)
-            h = int(hour_str)
-            m = int(min_str)
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return dt_time(hour=h, minute=m)
-        except Exception:
-            pass
-        fh, fm = fallback.split(":")
-        return dt_time(hour=int(fh), minute=int(fm))
-
     def _is_quiet_hours_now(self, user, now_utc: datetime) -> bool:
-        if not bool(getattr(user, "quiet_hours_enabled", False)):
-            return False
         try:
             user_tz = pytz.timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        start = self._parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-        current = now_local.time()
-        if start == end:
-            return True
-        if start < end:
-            return start <= current < end
-        return current >= start or current < end
+        return is_quiet_hours(user, now_local)
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
         try:
@@ -195,23 +172,11 @@ class SchedulerService:
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+        end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
         candidate = now_local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
         if candidate <= now_local:
             candidate += timedelta(days=1)
         return candidate.astimezone(timezone.utc)
-
-    @staticmethod
-    def _is_habit_like(reminder: Reminder) -> bool:
-        if reminder.is_fluid_habit:
-            return False
-        return bool(
-            reminder.is_habit
-            or reminder.habit_active_due_at is not None
-            or reminder.habit_last_completed_due_at is not None
-            or int(reminder.habit_streak_current or 0) > 0
-            or int(reminder.habit_streak_best or 0) > 0
-        )
 
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""
@@ -263,7 +228,7 @@ class SchedulerService:
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
                 cycle_due_ts = None
-                if self._is_habit_like(reminder):
+                if is_habit_like(reminder):
                     if not is_nagging_execution:
                         prev_due = reminder.habit_active_due_at
                         if (

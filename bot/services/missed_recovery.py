@@ -1,7 +1,7 @@
 """Missed-task recovery digests for overdue pending tasks."""
 
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
 import pytz
 from aiogram import Bot
@@ -14,38 +14,11 @@ from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
 from bot.utils.markdown import escape_markdown
-from bot.utils.time_ext import format_time
+from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
 
 RECOVERY_LOCAL_TIME = "10:00"
-
-
-def _parse_hhmm(raw: str, fallback: str) -> dt_time:
-    value = (raw or fallback).strip()
-    try:
-        hh, mm = value.split(":", 1)
-        h = int(hh)
-        m = int(mm)
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return dt_time(hour=h, minute=m)
-    except Exception:
-        pass
-    fh, fm = fallback.split(":")
-    return dt_time(hour=int(fh), minute=int(fm))
-
-
-def _is_quiet_local(user: User, now_local: datetime) -> bool:
-    if not bool(getattr(user, "quiet_hours_enabled", False)):
-        return False
-    start = _parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-    end = _parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-    current = now_local.time()
-    if start == end:
-        return True
-    if start < end:
-        return start <= current < end
-    return current >= start or current < end
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
@@ -104,7 +77,7 @@ async def process_missed_task_recovery() -> None:
                 now_local = datetime.now(tz)
                 if now_local.strftime("%H:%M") < RECOVERY_LOCAL_TIME:
                     continue
-                if _is_quiet_local(user, now_local):
+                if is_quiet_hours(user, now_local):
                     continue
 
                 today_key = now_local.strftime("%Y-%m-%d")

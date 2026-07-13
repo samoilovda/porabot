@@ -455,3 +455,20 @@ class Reminder(Base):
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"<Reminder(id={self.id}, user_id={self.user_id}, time={self.execution_time})>"
+
+
+def is_habit_like(reminder) -> bool:
+    """Detect reminders that participate in fixed-time habit streak tracking.
+
+    Fluid habits (day-based, no fixed time) are tracked separately and are
+    never habit-like in this sense.
+    """
+    if getattr(reminder, "is_fluid_habit", False):
+        return False
+    return bool(
+        getattr(reminder, "is_habit", False)
+        or getattr(reminder, "habit_active_due_at", None) is not None
+        or getattr(reminder, "habit_last_completed_due_at", None) is not None
+        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+    )

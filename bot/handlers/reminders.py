@@ -25,6 +25,7 @@ from dateutil.rrule import rrulestr
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
+from bot.database.models import is_habit_like as _is_habit_like
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_done_followup_keyboard,
@@ -106,19 +107,6 @@ def _reschedule_current_execution(reminder, scheduler_service: SchedulerService)
             return
 
     scheduler_service.remove_reminder_job(reminder.id)
-
-
-def _is_habit_like(reminder) -> bool:
-    """Detect reminders that participate in habit streak tracking."""
-    if getattr(reminder, "is_fluid_habit", False):
-        return False
-    return bool(
-        getattr(reminder, "is_habit", False)
-        or getattr(reminder, "habit_active_due_at", None) is not None
-        or getattr(reminder, "habit_last_completed_due_at", None) is not None
-        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-    )
 
 
 def _format_task_line_md2(task, user: User) -> str:

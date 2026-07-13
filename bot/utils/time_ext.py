@@ -1,7 +1,37 @@
 """Time utilities for UTC normalization and display formatting."""
 
-from datetime import datetime, timezone
+from datetime import datetime, time as dt_time, timezone
 import pytz
+
+
+def parse_hhmm(raw: str, fallback: str) -> dt_time:
+    """Parse an "HH:MM" string, falling back to *fallback* (also "HH:MM") on any error."""
+    value = (raw or fallback).strip()
+    try:
+        hh, mm = value.split(":", 1)
+        h = int(hh)
+        m = int(mm)
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return dt_time(hour=h, minute=m)
+    except Exception:
+        pass
+    fh, fm = fallback.split(":")
+    return dt_time(hour=int(fh), minute=int(fm))
+
+
+def is_quiet_hours(user, now_local: datetime) -> bool:
+    """Whether *now_local* (timezone-aware, already in the user's local zone)
+    falls within the user's configured quiet hours window."""
+    if not bool(getattr(user, "quiet_hours_enabled", False)):
+        return False
+    start = parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
+    end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+    current = now_local.time()
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
 
 
 def to_utc_aware(dt: datetime) -> datetime:

@@ -21,7 +21,7 @@ from aiogram.types import Message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.handlers.habits import _habit_motivation_text, get_habits_keyboard
-from bot.handlers.reminders import _format_task_line_md2
+from bot.handlers.reminders import _format_task_line_md2, _paginate_tasks_for_list
 from bot.handlers.settings import _render_settings_text
 from bot.keyboards.inline import get_settings_keyboard, get_tasks_list_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard
@@ -47,10 +47,13 @@ async def btn_my_tasks(
         await message.answer(l10n["no_tasks"], reply_markup=get_main_menu_keyboard(l10n))
         return
 
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in tasks]
+    shown_tasks, overflow_suffix = _paginate_tasks_for_list(tasks, l10n)
+    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
+    if overflow_suffix:
+        lines.append(overflow_suffix)
 
     safe_text = "\n".join(lines)
-    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
+    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(shown_tasks, l10n), parse_mode="MarkdownV2")
 
 
 @router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings", "⚙️ Ajustes"]))

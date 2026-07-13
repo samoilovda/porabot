@@ -73,6 +73,7 @@ ES.update(
         "btn_cancel": "❌ Cancelar",
         "no_tasks": "🎉 No tienes tareas activas.",
         "tasks_header": "📋 *Tus tareas:*\n",
+        "tasks_more": "…y {count} más",
         "btn_delete_prefix": "🗑 Eliminar:",
         "btn_refresh": "🔄 Actualizar",
         "btn_close": "❌ Cerrar",

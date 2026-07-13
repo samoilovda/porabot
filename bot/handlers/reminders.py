@@ -58,6 +58,11 @@ _NAG_LIMIT_MIN = 0
 _NAG_LIMIT_MAX = 20
 _COMPLETED_HISTORY_DAYS = 7
 _PARSE_CONFIDENCE_THRESHOLD = 0.7
+# Telegram caps inline keyboards well below 100 buttons and messages at 4096
+# chars. get_tasks_list_keyboard adds up to 3 buttons per task, so an
+# unbounded task list can blow both limits and the list silently fails to
+# render at all. Cap what's shown/rendered into buttons.
+_TASKS_PAGE_LIMIT = 25
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +118,21 @@ def _format_task_line_md2(task, user: User) -> str:
     dt_str = escape_markdown_v2(format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
     flags = f"{'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}"
     return f"▫️ `{dt_str}`: {flags}{escape_markdown_v2(task.reminder_text)}"
+
+
+def _paginate_tasks_for_list(tasks: list, l10n: dict[str, Any]) -> tuple[list, str]:
+    """Cap the task list to _TASKS_PAGE_LIMIT so the message text and its
+    per-task keyboard buttons both stay within Telegram's limits.
+
+    Returns (shown_tasks, overflow_suffix_line) — overflow_suffix_line is ""
+    when nothing was truncated.
+    """
+    if len(tasks) <= _TASKS_PAGE_LIMIT:
+        return tasks, ""
+    shown = tasks[:_TASKS_PAGE_LIMIT]
+    remaining = len(tasks) - _TASKS_PAGE_LIMIT
+    suffix = l10n.get("tasks_more", "…and {count} more").format(count=remaining)
+    return shown, suffix
 
 
 def _message_task_key(message: Message) -> tuple[int, int]:
@@ -631,10 +651,15 @@ async def callback_refresh_tasks(
         await callback.answer()
         return
 
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in tasks]
+    shown_tasks, overflow_suffix = _paginate_tasks_for_list(tasks, l10n)
+    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
+    if overflow_suffix:
+        lines.append(overflow_suffix)
 
     safe_text = "\n".join(lines)
-    await callback.message.edit_text(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
+    await callback.message.edit_text(
+        safe_text, reply_markup=get_tasks_list_keyboard(shown_tasks, l10n), parse_mode="MarkdownV2"
+    )
     await callback.answer()
 
 

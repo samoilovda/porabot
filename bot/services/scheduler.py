@@ -270,7 +270,15 @@ class SchedulerService:
                         current_due = reminder.execution_time
                         if current_due.tzinfo is not None:
                             current_due = current_due.astimezone(timezone.utc).replace(tzinfo=None)
-                        reminder.habit_active_due_at = current_due
+                        # Only adopt execution_time as the active cycle when it
+                        # hasn't already been advanced to the NEXT cycle. A
+                        # snooze re-fire runs after the original on-time fire
+                        # already pushed execution_time forward (see "Recurring
+                        # reschedule" below) — overwriting active_due here would
+                        # credit the snoozed Done to tomorrow's cycle instead of
+                        # today's, and leave today's cycle permanently unclaimed.
+                        if current_due <= now_utc_naive + timedelta(minutes=5):
+                            reminder.habit_active_due_at = current_due
                     active_due = reminder.habit_active_due_at or reminder.execution_time
                     if active_due.tzinfo is not None:
                         active_due = active_due.astimezone(timezone.utc).replace(tzinfo=None)

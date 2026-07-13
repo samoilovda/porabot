@@ -19,6 +19,9 @@ from bot.utils.time_ext import format_time, is_quiet_hours
 logger = logging.getLogger(__name__)
 
 RECOVERY_LOCAL_TIME = "10:00"
+# Max overdue tasks shown in one digest — "Done all"/"+1h all" must act on
+# exactly this many, not more, so the bulk action matches what was shown.
+RECOVERY_DIGEST_LIMIT = 5
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
@@ -85,7 +88,9 @@ async def process_missed_task_recovery() -> None:
                     continue
 
                 reminder_dao = ReminderDAO(session)
-                overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=5)
+                overdue = await reminder_dao.get_overdue_pending_tasks(
+                    user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT
+                )
                 if not overdue:
                     continue
 

@@ -34,6 +34,7 @@ from bot.keyboards.inline import (
     get_time_selection_keyboard,
 )
 from bot.keyboards.reply import get_main_menu_keyboard
+from bot.services.missed_recovery import RECOVERY_DIGEST_LIMIT
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -667,7 +668,7 @@ async def callback_recovery_done_all(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=100)
+    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
     if not overdue:
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
@@ -727,7 +728,7 @@ async def callback_recovery_snooze_all(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=100)
+    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
     if not overdue:
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return

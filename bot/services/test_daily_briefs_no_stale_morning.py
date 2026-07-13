@@ -101,3 +101,73 @@ async def test_stale_morning_window_is_suppressed_only_evening_brief_sent(monkey
         assert fake_user.last_evening_brief_date == today_str
     finally:
         real_scheduler_module._instance = None
+
+
+async def test_morning_brief_still_sent_when_evening_time_misconfigured_before_morning(monkeypatch) -> None:
+    """If a user sets evening_brief_time <= morning_brief_time, the morning
+    window (morning..evening) is empty by construction. Regression: this must
+    not permanently suppress the morning brief every day — the bug fell back
+    to an always-empty window that a stale-morning cleanup then marked as
+    handled before it ever got a chance to fire.
+    """
+    daily_briefs = _load_module("bot/services/daily_briefs.py")
+
+    fake_user = SimpleNamespace(
+        id=7,
+        timezone="UTC",
+        language="en",
+        briefs_enabled=True,
+        show_utc_offset=False,
+        quiet_hours_enabled=False,
+        morning_brief_time="09:00",
+        evening_brief_time="08:00",  # misconfigured: before morning_brief_time
+        last_morning_brief_date=None,
+        last_evening_brief_date=None,
+    )
+    pending_task = SimpleNamespace(id=1, execution_time=datetime.now(), reminder_text="Standup")
+
+    class _FakeReminderDAO:
+        def __init__(self, session):
+            self.session = session
+
+        async def get_active_fluid_habits(self, user_id):
+            return []
+
+        async def get_today_pending_tasks(self, user_id, tz):
+            return [pending_task]
+
+        async def get_today_completed_tasks(self, user_id, tz):
+            return []
+
+        async def reset_stale_fluid_streak_if_needed(self, reminder_id, tz):
+            return None
+
+    class _FakeUserDAO:
+        def __init__(self, session):
+            self.session = session
+
+        async def get_by_id(self, uid):
+            return fake_user
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 5, 1, 10, 0, 0, tzinfo=tz)
+
+    session = _FakeSession()
+    send_message = AsyncMock()
+    daily_briefs.ReminderDAO = _FakeReminderDAO
+    daily_briefs.UserDAO = _FakeUserDAO
+    daily_briefs.datetime = _FrozenDatetime
+    real_scheduler_module._instance = SimpleNamespace(
+        bot=SimpleNamespace(send_message=send_message),
+        session_pool=lambda: session,
+    )
+
+    try:
+        await daily_briefs.process_daily_briefs()
+
+        assert send_message.await_count >= 1
+        assert fake_user.last_morning_brief_date == "2026-05-01"
+    finally:
+        real_scheduler_module._instance = None

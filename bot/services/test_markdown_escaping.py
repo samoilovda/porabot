@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.services.daily_briefs import _build_morning_text, _send_safe
-from bot.utils.markdown import escape_markdown
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 
 
 def test_escape_markdown_escapes_legacy_special_chars() -> None:
@@ -42,3 +42,25 @@ async def test_send_safe_falls_back_to_plain_text_on_bad_request() -> None:
     first_call, second_call = bot.send_message.await_args_list
     assert first_call.kwargs["parse_mode"] == "Markdown"
     assert second_call.kwargs["parse_mode"] is None
+
+
+def test_strip_markdown_escapes_reverses_escape_markdown() -> None:
+    raw = "снять *деньги_ [срочно"
+    escaped = escape_markdown(raw)
+
+    assert strip_markdown_escapes(escaped) == raw
+
+
+async def test_send_safe_fallback_shows_original_text_not_escaped_backslashes() -> None:
+    bot = SimpleNamespace(send_message=AsyncMock())
+    bot.send_message.side_effect = [
+        TelegramBadRequest(method=SimpleNamespace(), message="can't parse entities"),
+        None,
+    ]
+    escaped_text = escape_markdown("buy milk_eggs *now*")
+
+    await _send_safe(bot, 123, escaped_text)
+
+    _, second_call = bot.send_message.await_args_list
+    assert second_call.kwargs["text"] == "buy milk_eggs *now*"
+    assert "\\" not in second_call.kwargs["text"]

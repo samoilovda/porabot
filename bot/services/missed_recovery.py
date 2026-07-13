@@ -13,7 +13,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.markdown import escape_markdown
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
         try:
             await bot.send_message(
                 chat_id=user_id,
-                text=text,
+                text=strip_markdown_escapes(text),
                 parse_mode=None,
                 reply_markup=get_missed_recovery_keyboard(l10n),
             )

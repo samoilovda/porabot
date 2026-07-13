@@ -22,7 +22,7 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
-from bot.utils.markdown import escape_markdown
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,12 @@ async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> No
     except TelegramBadRequest as e:
         logger.error("Bad request sending brief to %s: %s — retrying without Markdown.", user_id, e)
         try:
-            await bot.send_message(chat_id=user_id, text=text, parse_mode=None, reply_markup=reply_markup)
+            await bot.send_message(
+                chat_id=user_id,
+                text=strip_markdown_escapes(text),
+                parse_mode=None,
+                reply_markup=reply_markup,
+            )
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
     except Exception as e:
@@ -130,10 +135,17 @@ async def process_daily_briefs() -> None:
                 fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
                 today_str = datetime.now(tz).date().isoformat()
 
+                morning_brief_time = getattr(user, 'morning_brief_time', "09:00")
                 evening_brief_time = getattr(user, 'evening_brief_time', "23:00")
+                # If the user configured evening_brief_time at or before
+                # morning_brief_time, there's no valid morning..evening window
+                # to bound — fall back to an open-ended morning check instead
+                # of one that can never be true, which would otherwise
+                # silently and permanently suppress the morning brief.
+                has_valid_window = evening_brief_time > morning_brief_time
                 morning_due = (
-                    local_time_str >= getattr(user, 'morning_brief_time', "09:00")
-                    and local_time_str < evening_brief_time
+                    local_time_str >= morning_brief_time
+                    and (not has_valid_window or local_time_str < evening_brief_time)
                     and getattr(user, 'last_morning_brief_date', None) != today_str
                 )
                 evening_due = (
@@ -142,7 +154,8 @@ async def process_daily_briefs() -> None:
                 )
 
                 if (
-                    local_time_str >= evening_brief_time
+                    has_valid_window
+                    and local_time_str >= evening_brief_time
                     and getattr(user, 'last_morning_brief_date', None) != today_str
                 ):
                     # The morning window (morning_brief_time..evening_brief_time)

@@ -79,6 +79,7 @@ EN: dict[str, Any] = {
     "parse_error": "Error parsing text. Check the format.",
     "ask_time": "Ok, task: \"{text}\".\nWhen to remind?",
     "try_again_manual": "Try again to write the FULL task, including date and time.",
+    "time_in_past": "⏰ This time has already passed. Please choose a future time.",
 
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",

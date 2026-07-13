@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -43,10 +43,11 @@ async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() ->
     from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.memory import MemoryStorage
 
+    future_time = datetime.now().replace(microsecond=0) + timedelta(hours=2)
     reminder = SimpleNamespace(
         id=1,
         reminder_text="call *mom*",
-        execution_time=datetime(2026, 5, 1, 9, 0, 0),
+        execution_time=future_time,
         is_recurring=False,
         is_nagging=False,
         nagging_max_repeats=3,
@@ -60,7 +61,7 @@ async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() ->
     state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=1, user_id=1))
     await state.update_data(
         text="call *mom*",
-        execution_time=datetime(2026, 5, 1, 9, 0, 0).isoformat(),
+        execution_time=future_time.isoformat(),
         edit_reminder_id=1,
     )
     user = SimpleNamespace(timezone="UTC", show_utc_offset=False)

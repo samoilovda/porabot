@@ -193,6 +193,15 @@ async def _save_and_show_edit(
     execution_time = to_utc_naive(execution_time_raw)
     edit_reminder_id = data.get("edit_reminder_id")
 
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    if execution_time <= now_utc_naive + timedelta(minutes=1):
+        await state.set_state(ReminderWizard.choosing_time)
+        await source_message.answer(
+            l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time."),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        )
+        return
+
     if edit_reminder_id:
         new_reminder = await reminder_dao.get_by_id(edit_reminder_id)
         if new_reminder:

@@ -80,6 +80,7 @@ RU: dict[str, Any] = {
     "ask_time": "Ок, задача: \"{text}\".\nКогда напомнить?",
     "try_again_manual": "Попробуй снова написать задачу ЦЕЛИКОМ, включая дату и время.",
     "time_in_past": "⏰ Это время уже прошло. Укажи время в будущем.",
+    "forwarded_from": "Переслано от",
     
     # Confirmation logic -> Edit Logic
     "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",

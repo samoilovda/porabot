@@ -81,6 +81,7 @@ ES.update(
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",
         "try_again_manual": "Intenta escribir de nuevo la tarea COMPLETA, con fecha y hora.",
         "time_in_past": "⏰ Esta hora ya pasó. Elige una hora futura.",
+        "forwarded_from": "Reenviado de",
         "preview": "✅ *¡Tarea guardada\\!*\n📌 {text}\n⏰ {time}",
         "btn_repeat_prefix": "🔁 Repetir:",
         "btn_nagging_prefix": "{icon} Insistencia:",

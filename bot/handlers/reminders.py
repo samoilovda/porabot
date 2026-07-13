@@ -341,7 +341,7 @@ async def handle_forwarded_task(
             origin_name = getattr(fwd, "sender_chat").title if getattr(fwd, "sender_chat", None) else "Group"
 
     if origin_name:
-        prefix = f"👤 {'Forwarded from' if user.language == 'en' else 'Переслано от'} {origin_name}:\n"
+        prefix = f"👤 {l10n.get('forwarded_from', 'Forwarded from')} {origin_name}:\n"
     else:
         prefix = ""
 

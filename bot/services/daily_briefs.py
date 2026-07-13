@@ -130,14 +130,27 @@ async def process_daily_briefs() -> None:
                 fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
                 today_str = datetime.now(tz).date().isoformat()
 
+                evening_brief_time = getattr(user, 'evening_brief_time', "23:00")
                 morning_due = (
                     local_time_str >= getattr(user, 'morning_brief_time', "09:00")
+                    and local_time_str < evening_brief_time
                     and getattr(user, 'last_morning_brief_date', None) != today_str
                 )
                 evening_due = (
-                    local_time_str >= getattr(user, 'evening_brief_time', "23:00")
+                    local_time_str >= evening_brief_time
                     and getattr(user, 'last_evening_brief_date', None) != today_str
                 )
+
+                if (
+                    local_time_str >= evening_brief_time
+                    and getattr(user, 'last_morning_brief_date', None) != today_str
+                ):
+                    # The morning window (morning_brief_time..evening_brief_time)
+                    # has already fully passed today — e.g. the bot was down, or
+                    # briefs got enabled after evening_brief_time. Sending a
+                    # "good morning" brief this late would be confusing; mark
+                    # it as handled instead of sending a stale one.
+                    user.last_morning_brief_date = today_str
 
                 if morning_due:
                     user.last_morning_brief_date = today_str

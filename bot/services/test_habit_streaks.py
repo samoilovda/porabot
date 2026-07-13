@@ -1,9 +1,22 @@
+import importlib.util
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.keyboards.inline import get_evening_wrapup_keyboard, get_task_done_keyboard
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_module(module_rel_path: str):
+    module_path = ROOT / module_rel_path
+    spec = importlib.util.spec_from_file_location("test_module_" + module_rel_path, module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _make_dao(reminder):
@@ -155,3 +168,49 @@ def test_evening_wrapup_keyboard_groups_task_done_and_not_done_in_one_row() -> N
         "wrap_done_123",
         "wrap_not_done_123",
     ]
+
+
+async def test_recovery_done_all_updates_habit_streak() -> None:
+    reminders_module = _load_module("bot/handlers/reminders.py")
+
+    due = datetime(2026, 5, 1, 9, 0, 0)
+    task = SimpleNamespace(
+        id=1,
+        is_habit=True,
+        is_fluid_habit=False,
+        is_recurring=True,
+        is_nagging=False,
+        rrule_string="FREQ=DAILY",
+        execution_time=due,
+        habit_active_due_at=due,
+        habit_last_completed_due_at=None,
+        habit_streak_current=2,
+        habit_streak_best=5,
+    )
+    reminder_dao = SimpleNamespace(
+        get_overdue_pending_tasks=AsyncMock(return_value=[task]),
+        apply_habit_streak_completion=AsyncMock(),
+        mark_done=AsyncMock(),
+        session=SimpleNamespace(rollback=AsyncMock()),
+    )
+    scheduler_service = SimpleNamespace(
+        schedule_reminder=lambda *a, **k: None,
+        remove_reminder_job=lambda *a, **k: None,
+        remove_nagging_job=lambda *a, **k: None,
+    )
+    user = SimpleNamespace(id=42)
+    callback = SimpleNamespace(
+        message=SimpleNamespace(edit_text=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    l10n = {"recovery_done_all_done": "✅ Marked {count} overdue tasks as done."}
+
+    await reminders_module.callback_recovery_done_all(
+        callback, reminder_dao, scheduler_service, user, l10n
+    )
+
+    reminder_dao.apply_habit_streak_completion.assert_awaited_once()
+    call = reminder_dao.apply_habit_streak_completion.await_args
+    assert call.args[0] == 1
+    assert call.kwargs["due_at_utc_naive"] == due
+    reminder_dao.mark_done.assert_awaited_once_with(1)

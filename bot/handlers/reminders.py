@@ -648,6 +648,14 @@ async def callback_recovery_done_all(
 
     now_utc = datetime.now(timezone.utc)
     for task in overdue:
+        if _is_habit_like(task):
+            due_at = task.habit_active_due_at or task.execution_time
+            if due_at is not None:
+                await reminder_dao.apply_habit_streak_completion(
+                    task.id,
+                    due_at_utc_naive=due_at,
+                    completed_at_utc_naive=now_utc.replace(tzinfo=None),
+                )
         await reminder_dao.mark_done(task.id)
         if task.is_recurring and task.rrule_string:
             start_dt = task.execution_time

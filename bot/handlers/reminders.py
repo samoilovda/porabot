@@ -329,7 +329,7 @@ async def btn_my_tasks(
 # FSM: text input
 # ---------------------------------------------------------------------------
 
-@router.message(F.forward_origin)
+@router.message(StateFilter(None), F.forward_origin)
 async def handle_forwarded_task(
     message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
     reminder_dao: ReminderDAO, scheduler_service: SchedulerService,

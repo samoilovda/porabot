@@ -38,7 +38,7 @@ from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
-from bot.utils.markdown import escape_markdown_v2
+from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
@@ -154,7 +154,7 @@ async def _handle_parsed_result(
             )
             await source_message.answer(
                 l10n["parse_confirmation_prompt"].format(
-                    text=clean_text,
+                    text=escape_markdown(clean_text),
                     time=parsed_time,
                     confidence=_format_parse_confidence(float(getattr(result, "confidence", 0.0) or 0.0)),
                 ),
@@ -166,7 +166,7 @@ async def _handle_parsed_result(
 
     await state.set_state(ReminderWizard.choosing_time)
     await source_message.answer(
-        l10n["ask_time"].format(text=clean_text),
+        l10n["ask_time"].format(text=escape_markdown(clean_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
     )
 
@@ -419,7 +419,7 @@ async def callback_parse_confirm_pick_time(
     text = data.get("text", l10n.get("task_untitled", "Untitled task"))
     await state.set_state(ReminderWizard.choosing_time)
     await callback.message.edit_text(
-        l10n["ask_time"].format(text=text),
+        l10n["ask_time"].format(text=escape_markdown(text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
     )
     await callback.answer()
@@ -458,7 +458,7 @@ async def callback_edit_edit(
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
     await callback.message.edit_text(
-        l10n["ask_time"].format(text=reminder.reminder_text),
+        l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n),
     )
     await callback.answer()
@@ -577,7 +577,7 @@ async def callback_task_settings(
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await callback.message.answer(
-        l10n["task_settings_title"].format(text=reminder.reminder_text),
+        l10n["task_settings_title"].format(text=escape_markdown(reminder.reminder_text)),
         reply_markup=get_edit_keyboard(
             reminder.id,
             l10n,
@@ -1253,7 +1253,7 @@ async def callback_snooze_act(
         await state.set_state(ReminderWizard.choosing_time)
         await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text, is_snooze_mode=True)
         await callback.message.edit_text(
-            l10n["ask_time"].format(text=reminder.reminder_text),
+            l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
             reply_markup=get_time_selection_keyboard(user.timezone, l10n),
         )
         await callback.answer()

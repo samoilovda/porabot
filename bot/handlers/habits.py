@@ -16,6 +16,7 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.keyboards.inline import get_fluid_pick_time_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
+from bot.utils.markdown import escape_markdown
 from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
@@ -257,7 +258,7 @@ async def cb_fluid_habit_mode(
     await state.clear()
     await callback.message.edit_text(
         l10n["habit_fluid_created"].format(
-            habit=habit_text,
+            habit=escape_markdown(habit_text),
             mode=l10n["habit_fluid_mode_brief_only"] if mode == "brief_only" else l10n["habit_fluid_mode_ask_time"],
         ),
         parse_mode="Markdown",
@@ -317,7 +318,7 @@ async def state_habit_time(
         
         time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
         await message.answer(
-            l10n["habit_created"].format(habit=habit_text, time=time_str),
+            l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str),
             parse_mode="Markdown"
         )
         await state.clear()
@@ -361,7 +362,7 @@ async def cb_habit_list(
         text_lines.append(
             l10n["habit_list_item"].format(
                 index=i,
-                habit=h.reminder_text,
+                habit=escape_markdown(h.reminder_text),
                 time=time_str,
                 streak=streak,
                 best=best,

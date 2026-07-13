@@ -22,6 +22,7 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
+from bot.utils.markdown import escape_markdown
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ def _build_morning_text(tasks, user, l10n: dict) -> str:
     lines = [l10n.get("brief_morning", "🌅 **Доброе утро! План на сегодня:**\n")]
     for t in tasks:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
+        lines.append(f"▫️ `{time_str}`: {escape_markdown(t.reminder_text)}")
     return "\n".join(lines)
 
 
@@ -47,10 +48,10 @@ def _build_evening_text(completed, pending, user, l10n: dict) -> str:
     ]
     for t in completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"✅ ~{t.reminder_text}~ ({time_str})")
+        lines.append(f"✅ ~{escape_markdown(t.reminder_text)}~ ({time_str})")
     for t in pending:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"❌ {t.reminder_text} ({time_str})")  # BUG-4 fixed: closing paren added
+        lines.append(f"❌ {escape_markdown(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
     return "\n".join(lines)
 
 
@@ -82,13 +83,21 @@ def _is_quiet_local(user, now_local: datetime) -> bool:
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> None:
-    """Send a message, silently suppressing bot-blocked and bad-request errors."""
+    """Send a message, silently suppressing bot-blocked and bad-request errors.
+
+    Falls back to plain text if Markdown entities fail to parse, so a stray
+    unescaped character never causes the whole brief to be silently dropped.
+    """
     try:
         await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
     except TelegramBadRequest as e:
-        logger.error("Bad request sending brief to %s: %s", user_id, e)
+        logger.error("Bad request sending brief to %s: %s — retrying without Markdown.", user_id, e)
+        try:
+            await bot.send_message(chat_id=user_id, text=text, parse_mode=None, reply_markup=reply_markup)
+        except Exception as retry_e:
+            logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
     except Exception as e:
         logger.error("Failed to send brief to %s: %s", user_id, e, exc_info=True)
 
@@ -159,7 +168,7 @@ async def process_daily_briefs() -> None:
                     if fluid_brief_only:
                         lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
                         for h in fluid_brief_only:
-                            lines.append(f"▫️ {h.reminder_text}")
+                            lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
                         await _send_safe(bot, user.id, "\n".join(lines))
 
                     for h in fluid_habits:
@@ -170,7 +179,7 @@ async def process_daily_briefs() -> None:
                         await _send_safe(
                             bot,
                             user.id,
-                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=h.reminder_text),
+                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
                             reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
                         )
                         logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)

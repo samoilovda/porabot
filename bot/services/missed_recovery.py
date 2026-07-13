@@ -13,6 +13,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
+from bot.utils.markdown import escape_markdown
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,16 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping missed recovery.", user_id)
     except TelegramBadRequest as e:
-        logger.error("Bad request sending missed recovery to %s: %s", user_id, e)
+        logger.error("Bad request sending missed recovery to %s: %s — retrying without Markdown.", user_id, e)
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode=None,
+                reply_markup=get_missed_recovery_keyboard(l10n),
+            )
+        except Exception as retry_e:
+            logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
     except Exception as e:
         logger.error("Failed to send missed recovery to %s: %s", user_id, e, exc_info=True)
 
@@ -108,7 +118,7 @@ async def process_missed_task_recovery() -> None:
                 lines = [l10n.get("missed_recovery_title", "📎 Missed tasks: {count}").format(count=len(overdue))]
                 for task in overdue:
                     dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-                    lines.append(f"▫️ `{dt_str}`: {task.reminder_text}")
+                    lines.append(f"▫️ `{dt_str}`: {escape_markdown(task.reminder_text)}")
                 text = "\n".join(lines)
 
                 await _send_safe(bot, user.id, text, l10n)

@@ -21,6 +21,7 @@ def _make_reminder(**overrides) -> SimpleNamespace:
         status="pending",
         nagging_max_repeats=3,
         nagging_sent_count=3,
+        forbidden_strikes=0,
         execution_time=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10),
     )
     defaults.update(overrides)
@@ -87,3 +88,13 @@ def test_does_not_resume_completed_reminder() -> None:
     resumed = service.resume_nagging_if_stalled(reminder)
 
     assert resumed is False
+
+
+def test_does_not_resume_reminder_that_gave_up_after_forbidden_strikes() -> None:
+    service = _make_service()
+    reminder = _make_reminder(nagging_max_repeats=5, nagging_sent_count=3, forbidden_strikes=3)
+
+    resumed = service.resume_nagging_if_stalled(reminder)
+
+    assert resumed is False
+    assert service.scheduler.get_job(f"nag_{reminder.id}") is None

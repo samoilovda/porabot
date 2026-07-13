@@ -201,6 +201,8 @@ class SchedulerService:
         """
         if not reminder.is_nagging or reminder.status == "completed":
             return False
+        if int(reminder.forbidden_strikes or 0) >= FORBIDDEN_STRIKES_LIMIT:
+            return False
         max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
         sent_nags = max(0, int(reminder.nagging_sent_count or 0))
         if sent_nags >= max_nag_repeats:

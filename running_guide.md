@@ -9,8 +9,11 @@
 
 2. **Установка зависимостей**:
    ```bash
+   pip install "setuptools<81" wheel
    pip install -r requirements.txt
    ```
+   (пин `setuptools<81` обязателен — иначе сборка `docopt`, зависимости
+   `natasha`, падает на новых окружениях; см. README.md)
 
 3. **Запуск**:
    ```bash

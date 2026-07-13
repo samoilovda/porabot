@@ -22,7 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies.
+# setuptools must be pinned below 81 (and installed first, in its own layer)
+# before requirements.txt: pymorphy2 (a natasha dependency, transitively
+# required by dateparser's NLP pipeline) imports pkg_resources at runtime,
+# which setuptools>=81 removes; its dependency docopt also fails to build
+# from its legacy setup.py-only sdist against newer setuptools.
+RUN pip install --no-cache-dir "setuptools<81" wheel
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

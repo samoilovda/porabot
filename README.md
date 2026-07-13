@@ -39,8 +39,24 @@ A smart Telegram bot for managing scheduled reminders and tasks with intelligent
 
 ### 1. Install Dependencies
 
+`natasha` (Russian NLP) pulls in `pymorphy2` → `yargy` → `docopt`, a chain
+that fails to install against `setuptools>=81` (`docopt` has no wheel and
+its legacy `setup.py` build breaks; `pymorphy2` imports the now-removed
+`pkg_resources` at runtime). Install a compatible `setuptools` **first**,
+in its own step:
+
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install "setuptools<81" wheel
 pip install -r requirements.txt
+```
+
+For a fully reproducible install (recommended for deployment), use the
+pinned lock file instead of `requirements.txt`:
+
+```bash
+pip install "setuptools<81" wheel
+pip install -r requirements.lock
 ```
 
 **Dependencies:**

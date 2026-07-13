@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
@@ -49,7 +49,7 @@ async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: Us
     await callback.answer()
 
 
-@router.message(F.text == "/cancel")
+@router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
     await message.answer(l10n.get("cmd_cancel", "Reminder creation cancelled."), reply_markup=get_main_menu_keyboard(l10n))

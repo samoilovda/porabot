@@ -418,6 +418,18 @@ class Reminder(Base):
         nullable=False,
     )
 
+    # Consecutive TelegramForbiddenError count (user blocked the bot).
+    # Reset to 0 on any successful send; once it reaches
+    # SchedulerService.FORBIDDEN_STRIKES_LIMIT, this reminder stops being
+    # rescheduled (recurrence and nagging both stop) instead of retrying
+    # forever against a user who will never receive it.
+    forbidden_strikes: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
     # Last Telegram message used for nagging rotation (single active nag message).
     # When sending a new nag, scheduler deletes this message first (best effort),
     # then stores the new message id here.

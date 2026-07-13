@@ -26,6 +26,10 @@ from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, 
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
+# After this many consecutive TelegramForbiddenError sends, stop rescheduling
+# the reminder (both recurrence and nagging) instead of retrying forever
+# against a user who blocked the bot.
+FORBIDDEN_STRIKES_LIMIT = 3
 
 # Module-level singleton — set by SchedulerService.__init__
 _instance = None
@@ -256,12 +260,24 @@ class SchedulerService:
 
                 l10n = get_l10n(user.language)
                 keyboard = get_task_done_keyboard(reminder.id, l10n, cycle_due_ts=cycle_due_ts)
-                await self._send_or_replace_nag_message(
+                forbidden = await self._send_or_replace_nag_message(
                     reminder=reminder,
                     l10n=l10n,
                     keyboard=keyboard,
                     is_nagging_execution=is_nagging_execution,
                 )
+                reminder.forbidden_strikes = (
+                    int(reminder.forbidden_strikes or 0) + 1 if forbidden else 0
+                )
+                gave_up = reminder.forbidden_strikes >= FORBIDDEN_STRIKES_LIMIT
+                if gave_up:
+                    logger.warning(
+                        "Reminder %s: %s consecutive blocked sends — giving up on rescheduling.",
+                        reminder_id,
+                        reminder.forbidden_strikes,
+                    )
+                    self.remove_reminder_job(reminder_id)
+                    self.remove_nagging_job(reminder_id)
 
                 if is_nagging_execution:
                     reminder.nagging_sent_count = max(0, int(reminder.nagging_sent_count or 0)) + 1
@@ -270,7 +286,7 @@ class SchedulerService:
                     reminder.nagging_sent_count = 0
 
                 # Recurring reschedule
-                if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
+                if not gave_up and not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
                     try:
                         next_run_utc_naive = next_occurrence_utc(
                             reminder.rrule_string,
@@ -296,7 +312,7 @@ class SchedulerService:
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))
-                if reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
+                if not gave_up and reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
                     tz = reminder.execution_time.tzinfo or timezone.utc
                     next_nag = datetime.now(tz) + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
                     self.scheduler.add_job(
@@ -335,22 +351,26 @@ class SchedulerService:
     ):
         """Send a reminder notification, suppressing bot-blocked and bad-request errors.
 
-        Returns the Telegram Message object on success, otherwise None.
+        Returns a (message, forbidden) tuple: message is the Telegram Message
+        object on success (otherwise None); forbidden is True iff the send
+        failed specifically because the user has blocked the bot.
         """
         try:
-            return await self.bot.send_message(
+            message = await self.bot.send_message(
                 chat_id=user_id,
                 text=f"{l10n['reminder_prefix']}{text}",
                 reply_markup=reply_markup,
                 parse_mode=None,
             )
+            return message, False
         except TelegramForbiddenError:
             logger.warning("User %s has blocked the bot.", user_id)
+            return None, True
         except TelegramBadRequest as e:
             logger.error("Bad request sending to %s: %s", user_id, e)
         except Exception as e:
             logger.error("Failed to send message to %s: %s", user_id, e, exc_info=True)
-        return None
+        return None, False
 
     async def _delete_telegram_message(self, chat_id: int, message_id: int) -> None:
         """Best-effort Telegram message deletion helper."""
@@ -381,8 +401,11 @@ class SchedulerService:
         l10n: dict,
         keyboard,
         is_nagging_execution: bool,
-    ) -> None:
-        """For nagging reminders, keep only one active reminder message visible."""
+    ) -> bool:
+        """For nagging reminders, keep only one active reminder message visible.
+
+        Returns True iff the send failed because the user has blocked the bot.
+        """
         if (
             is_nagging_execution
             and reminder.last_nag_chat_id is not None
@@ -393,7 +416,7 @@ class SchedulerService:
                 message_id=int(reminder.last_nag_message_id),
             )
 
-        sent_message = await self._send_telegram_message(
+        sent_message, forbidden = await self._send_telegram_message(
             reminder.user_id,
             reminder.reminder_text,
             l10n,
@@ -402,8 +425,10 @@ class SchedulerService:
 
         if not reminder.is_nagging:
             self._clear_nag_tracking(reminder)
-            return
+            return forbidden
 
         if sent_message is not None:
             reminder.last_nag_chat_id = int(sent_message.chat.id)
             reminder.last_nag_message_id = int(sent_message.message_id)
+
+        return forbidden

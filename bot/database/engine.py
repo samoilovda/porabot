@@ -100,6 +100,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_nag_message_id", "INTEGER"),
             ("completed_for_execution_time", "DATETIME"),
             ("last_completion_note", "VARCHAR"),
+            ("forbidden_strikes", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             await _add_column_if_missing(conn, "reminders", col, col_type)
 

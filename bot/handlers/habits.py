@@ -125,26 +125,11 @@ def get_habits_keyboard(l10n: dict[str, Any]) -> InlineKeyboardBuilder:
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_cancel"], callback_data="habit_cancel"))
     return builder
 
-@router.message(F.text.in_(["🫧 Привычки", "🫧 Habits", "🫧 Hábitos"]))
-async def btn_habits(
-    message: Message,
-    state: FSMContext,
-    l10n: dict[str, Any],
-    reminder_dao: ReminderDAO,
-    user: User,
-) -> None:
-    """Show the habits dashboard."""
-    await state.clear()
-    stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-    motivation = _habit_motivation_text(l10n, stats)
-    text = l10n["habits_dashboard"]
-    if motivation.strip():
-        text = f"{text}\n\n{motivation}"
-    await message.answer(
-        text,
-        reply_markup=get_habits_keyboard(l10n).as_markup(),
-        parse_mode="Markdown",
-    )
+# NOTE: the "🫧 Habits" main-menu button handler lives in bot/handlers/menu.py
+# (registered on an earlier router) so it can't be swallowed by another
+# router's stateful FSM handlers. _habit_motivation_text and
+# get_habits_keyboard above are still used throughout this module and
+# imported from here by menu.py's btn_habits.
 
 @router.callback_query(F.data == "habit_cancel")
 async def cb_habit_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:

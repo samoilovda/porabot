@@ -33,7 +33,6 @@ from bot.keyboards.inline import (
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
 )
-from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.missed_recovery import RECOVERY_DIGEST_LIMIT
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
@@ -287,34 +286,13 @@ async def _save_and_show_edit(
 
 
 # ---------------------------------------------------------------------------
-# Main menu buttons
-# ---------------------------------------------------------------------------
-
-@router.message(F.text.in_(["➕ Новая задача", "➕ New Task", "➕ Nueva tarea"]))
-async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
-    await state.set_state(ReminderWizard.entering_text)
-    await message.answer(l10n["enter_task"], parse_mode="Markdown")
-
-
-@router.message(F.text.in_(["📅 Мои задачи", "📅 My Tasks", "📅 Mis tareas"]))
-async def btn_my_tasks(
-    message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    await state.clear()
-    tasks = await reminder_dao.get_user_reminders(user.id)
-    if not tasks:
-        await message.answer(l10n["no_tasks"], reply_markup=get_main_menu_keyboard(l10n))
-        return
-
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in tasks]
-
-    safe_text = "\n".join(lines)
-    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
-
-
-# ---------------------------------------------------------------------------
 # FSM: text input
 # ---------------------------------------------------------------------------
+# NOTE: the "New Task" / "My Tasks" main-menu button handlers live in
+# bot/handlers/menu.py (registered on an earlier router) so they can't be
+# swallowed by another router's stateful FSM handlers. _format_task_line_md2
+# below is still used here by callback_refresh_tasks and imported from there
+# by menu.py's btn_my_tasks.
 
 @router.message(StateFilter(None), F.forward_origin)
 async def handle_forwarded_task(

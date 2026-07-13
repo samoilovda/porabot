@@ -35,19 +35,38 @@ def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> None:
+    """Best-effort ALTER TABLE ADD COLUMN, isolated in its own SAVEPOINT.
+
+    On PostgreSQL, a failed statement poisons the rest of the enclosing
+    transaction until it's rolled back — begin_nested() (SAVEPOINT) scopes
+    the rollback to just this one statement so later migrations in the same
+    init_db() transaction still run. OperationalError covers SQLite's
+    "duplicate column" error; ProgrammingError covers PostgreSQL's.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    try:
+        async with conn.begin_nested():
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+    except (OperationalError, ProgrammingError):
+        pass  # column already exists
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """Create all tables defined in models.py. Call once at startup."""
     from bot.database import models  # noqa: F401 — registers models in metadata
     from sqlalchemy import text
-    from sqlalchemy.exc import OperationalError
-    
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        
+
         # Soft-migration for Custom Daily Briefs Feature
         for col, col_type in [
-            ("briefs_enabled", "BOOLEAN DEFAULT 1"), 
-            ("morning_brief_hour", "INTEGER DEFAULT 9"), 
+            ("briefs_enabled", "BOOLEAN DEFAULT 1"),
+            ("morning_brief_hour", "INTEGER DEFAULT 9"),
             ("evening_brief_hour", "INTEGER DEFAULT 23"),
             ("morning_brief_time", "VARCHAR DEFAULT '09:00'"),
             ("evening_brief_time", "VARCHAR DEFAULT '23:00'"),
@@ -59,10 +78,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_morning_brief_date", "VARCHAR"),
             ("last_evening_brief_date", "VARCHAR"),
         ]:
-            try:
-                await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
-            except OperationalError:
-                pass  # column already exists
+            await _add_column_if_missing(conn, "users", col, col_type)
 
         # Soft-migration for nagging limits per reminder
         for col, col_type in [
@@ -85,27 +101,25 @@ async def init_db(engine: AsyncEngine) -> None:
             ("completed_for_execution_time", "DATETIME"),
             ("last_completion_note", "VARCHAR"),
         ]:
-            try:
-                await conn.execute(text(f"ALTER TABLE reminders ADD COLUMN {col} {col_type}"))
-            except OperationalError:
-                pass  # column already exists
+            await _add_column_if_missing(conn, "reminders", col, col_type)
 
         # Backfill legacy habits created before `is_habit` existed.
         # Heuristic: daily recurring + nagging reminders were produced by Habits flow.
         try:
-            await conn.execute(
-                text(
-                    """
-                    UPDATE reminders
-                    SET is_habit = 1
-                    WHERE COALESCE(is_habit, 0) = 0
-                      AND COALESCE(is_recurring, 0) = 1
-                      AND COALESCE(is_nagging, 0) = 1
-                      AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
-                    """
+            async with conn.begin_nested():
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE reminders
+                        SET is_habit = 1
+                        WHERE COALESCE(is_habit, 0) = 0
+                          AND COALESCE(is_recurring, 0) = 1
+                          AND COALESCE(is_nagging, 0) = 1
+                          AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
+                        """
+                    )
                 )
-            )
-        except OperationalError:
+        except (OperationalError, ProgrammingError):
             # Extremely old schemas may temporarily miss one of these columns.
             pass
 

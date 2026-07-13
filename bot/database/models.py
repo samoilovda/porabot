@@ -180,8 +180,6 @@ class User(Base):
 
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    morning_brief_hour: Mapped[int] = mapped_column(BigInteger, default=9, server_default="9")
-    evening_brief_hour: Mapped[int] = mapped_column(BigInteger, default=23, server_default="23")
     morning_brief_time: Mapped[str] = mapped_column(String, default="09:00", server_default="09:00")
     evening_brief_time: Mapped[str] = mapped_column(String, default="23:00", server_default="23:00")
     

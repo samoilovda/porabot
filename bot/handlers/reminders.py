@@ -30,7 +30,6 @@ from bot.keyboards.inline import (
     get_done_followup_keyboard,
     get_edit_keyboard,
     get_parse_confirmation_keyboard,
-    get_snooze_keyboard,
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
 )
@@ -886,28 +885,6 @@ async def callback_show_completed(
 # Mark done
 # ---------------------------------------------------------------------------
 
-def _cleanup_stale_timers() -> None:
-    """
-    Clean up any tasks in active_auto_delete_tasks that have already completed.
-    
-    This prevents memory leaks from orphaned task references after 5 seconds
-    when the keyboard removal completes successfully.
-    
-    Called periodically via APScheduler cleanup job.
-    """
-    if not active_auto_delete_tasks:
-        return
-    
-    # Remove any tasks that are still pending (tasks should have completed)
-    # This handles edge cases where task wasn't properly removed from dict
-    for msg_id, task in list(active_auto_delete_tasks.items()):
-        if task.done():  # Task has completed (success or error)
-            try:
-                active_auto_delete_tasks.pop(msg_id, None)
-            except Exception:
-                logger.debug("Failed to cleanup stale auto-delete task for key %s", msg_id, exc_info=True)
-
-
 def _replace_wrapup_row(
     reply_markup: InlineKeyboardMarkup | None,
     *,
@@ -1278,13 +1255,6 @@ async def callback_done_undo(
 # ---------------------------------------------------------------------------
 # Snooze
 # ---------------------------------------------------------------------------
-
-@router.callback_query(F.data.startswith("snooze_show_"))
-async def callback_snooze_show(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
-    reminder_id = int(callback.data.split("snooze_show_")[1])
-    await callback.message.edit_reply_markup(reply_markup=get_snooze_keyboard(reminder_id, l10n))
-    await callback.answer()
-
 
 @router.callback_query(F.data.startswith("snooze_act_"))
 async def callback_snooze_act(

@@ -1,7 +1,7 @@
 """Habits handler — true daily custom habits builder."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytz
@@ -17,7 +17,7 @@ from bot.keyboards.inline import get_fluid_pick_time_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
-from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -282,7 +282,16 @@ async def state_habit_time(
         
     # Normalize to UTC once and store as naive UTC in DB.
     execution_time_utc = to_utc_naive(result.parsed_datetime)
-    
+
+    # The parser can return an ambiguous/past time (e.g. "at 9" when it's
+    # already past 9 today in the user's zone). Since this habit is always
+    # FREQ=DAILY, just advance to the next daily slot instead of creating a
+    # reminder whose date-job would fire the instant it's scheduled.
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    if execution_time_utc <= now_utc_naive:
+        advanced = next_occurrence_utc("FREQ=DAILY", execution_time_utc, user.timezone, now_utc_naive)
+        execution_time_utc = advanced or (execution_time_utc + timedelta(days=1))
+
     # Schedule it as a strict daily recurring task with nagging enabled
     try:
         reminder = await reminder_dao.create_reminder(

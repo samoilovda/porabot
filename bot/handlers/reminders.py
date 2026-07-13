@@ -240,7 +240,7 @@ async def _save_and_show_edit(
         return
 
     if edit_reminder_id:
-        new_reminder = await reminder_dao.get_by_id(edit_reminder_id)
+        new_reminder = await reminder_dao.get_owned(edit_reminder_id, user.id)
         if new_reminder:
             new_reminder.reminder_text = text
             is_snooze_mode = bool(data.get("is_snooze_mode", False))

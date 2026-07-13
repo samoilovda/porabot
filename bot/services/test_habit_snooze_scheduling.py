@@ -51,6 +51,7 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
     )
     reminder_dao = SimpleNamespace(
         get_by_id=AsyncMock(return_value=reminder),
+        get_owned=AsyncMock(return_value=reminder),
         session=SimpleNamespace(rollback=AsyncMock()),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=Mock())
@@ -65,7 +66,7 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
         chat_id=1,
     )
 
-    user = SimpleNamespace(timezone="UTC", show_utc_offset=False)
+    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("ru")
     source_message = SimpleNamespace(answer=AsyncMock())
 

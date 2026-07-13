@@ -321,10 +321,17 @@ async def state_habit_time(
 async def cb_habit_list(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any]
 ) -> None:
+    # get_user_reminders excludes fluid habits (they live in their own UI
+    # flow), so without merging in get_active_fluid_habits here, fluid
+    # habits would never show up in "My Habits" — making them impossible to
+    # delete short of the account-wide "Clear all" reset.
     reminders = await reminder_dao.get_user_reminders(user.id)
+    fluid_reminders = await reminder_dao.get_active_fluid_habits(user.id)
     # Filter for active recurring tasks
-    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)]
-    
+    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)] + [
+        r for r in fluid_reminders if _is_habit_entry(r)
+    ]
+
     if not habits:
         await callback.message.edit_text(
             l10n["habit_no_active"],
@@ -354,18 +361,27 @@ async def cb_habit_list(
                 mode=_fluid_mode_label(h, l10n),
             )
         )
-        # Add deletion button
-        builder.row(
-            InlineKeyboardButton(
-                text=l10n.get("btn_task_settings", "⚙️"),
-                callback_data=f"task_settings_{h.id}",
-            ),
+        # Settings + deletion buttons. Fluid habits are scheduled entirely
+        # through the fluid-specific flow (_schedule_fluid_habit_for_today),
+        # not the repeat/nagging toggles that task_settings exposes — those
+        # would set fields the fluid path never reads, so skip the gear for
+        # them and only offer delete.
+        row = []
+        if not h.is_fluid_habit:
+            row.append(
+                InlineKeyboardButton(
+                    text=l10n.get("btn_task_settings", "⚙️"),
+                    callback_data=f"task_settings_{h.id}",
+                )
+            )
+        row.append(
             InlineKeyboardButton(
                 text=l10n["habit_btn_delete_n"].format(index=i),
                 callback_data=f"del_habit_{h.id}",
             )
         )
-    
+        builder.row(*row)
+
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_back_dash"))
     
     await callback.message.edit_text(

@@ -13,6 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.dao.user import UserDAO
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
     get_timezone_keyboard,
@@ -27,25 +28,65 @@ class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
     waiting_for_timezone = State()
     waiting_for_quiet_time = State()
+    waiting_for_habit_report_time = State()
+    waiting_for_missed_recovery_time = State()
 
 router = Router(name="settings")
 logger = logging.getLogger(__name__)
+
+# Half/quarter-hour UTC offsets mapped to a real IANA zone that actually uses
+# that offset today, so users in these regions get correct DST behavior
+# instead of a frozen fixed offset. Not exhaustive — offsets with no matching
+# well-known zone are rejected rather than silently approximated (W8).
+_HALF_HOUR_TZ_MAP: dict[str, str] = {
+    "+3:30": "Asia/Tehran",
+    "+4:30": "Asia/Kabul",
+    "+5:30": "Asia/Kolkata",
+    "+5:45": "Asia/Kathmandu",
+    "+6:30": "Asia/Yangon",
+    "+8:45": "Australia/Eucla",
+    "+9:30": "Australia/Darwin",
+    "+10:30": "Australia/Lord_Howe",
+    "+12:45": "Pacific/Chatham",
+    "-3:30": "America/St_Johns",
+    "-9:30": "Pacific/Marquesas",
+}
+
 
 def _resolve_timezone_candidate(raw: str) -> str:
     """
     Normalize manual timezone input from UTC offset to a canonical IANA timezone.
 
     Supported manual formats:
-      - +5
-      - -6
-      - 0
+      - +5, -6, 0                    → whole-hour offset
+      - +5:30, -3:30, +5:45, etc.    → known half/quarter-hour offset (see
+                                        _HALF_HOUR_TZ_MAP)
+
+    Whole-hour offsets resolve to Etc/GMT±N, a *fixed* offset with no DST —
+    accurate today, but a user in a DST-observing region will drift by an
+    hour when their local clocks change. The keyboard presets (real IANA
+    city zones) don't have this problem; manual entry is a deliberate
+    trade-off for regions not covered by the preset list.
 
     Returns:
       - UTC for 0
-      - Etc/GMT-5 for +5
-      - Etc/GMT+6 for -6
+      - Etc/GMT-5 for +5, Etc/GMT+6 for -6 (note the reversed IANA sign)
+      - a real IANA zone for known half/quarter-hour offsets
     """
-    candidate = (raw or "").strip()
+    candidate = (raw or "").strip().replace(",", ".")
+    # Accept "+5.5" / "-3.5" as an alternate spelling of "+5:30" / "-3:30".
+    half_match = re.fullmatch(r"([+-]?\d{1,2})\.5", candidate)
+    if half_match:
+        candidate = f"{half_match.group(1)}:30"
+    if not candidate.startswith(("+", "-")) and ":" in candidate:
+        candidate = f"+{candidate}"
+
+    if ":" in candidate:
+        mapped = _HALF_HOUR_TZ_MAP.get(candidate)
+        if mapped is None:
+            raise pytz.UnknownTimeZoneError(raw)
+        return mapped
+
     if not re.fullmatch(r"[+-]?\d{1,2}", candidate):
         raise pytz.UnknownTimeZoneError(raw)
 
@@ -141,9 +182,13 @@ async def callback_clear_all_confirm(
     user: User,
     user_dao: UserDAO,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     l10n: dict[str, Any],
 ) -> None:
+    # Events reference both reminders and users, so they must go first.
+    await habit_event_dao.delete_for_user(user.id)
+
     reminders = await reminder_dao.get_all(user_id=user.id)
     for task in reminders:
         scheduler_service.remove_reminder_job(task.id)
@@ -414,6 +459,209 @@ async def state_set_quiet_time(
             enabled=bool(getattr(user, "quiet_hours_enabled", False)),
             start_time=getattr(user, "quiet_hours_start", "23:00"),
             end_time=getattr(user, "quiet_hours_end", "07:00"),
+        ),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data == "settings_habit_reports_setup")
+async def callback_habit_reports_setup(
+    callback: CallbackQuery, user: User, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_habit_reports_setup_keyboard
+
+    enabled = bool(getattr(user, "habit_reports_enabled", True))
+    weekday = int(getattr(user, "habit_report_weekday", 6))
+    time_str = getattr(user, "habit_report_time", "23:50")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_habit_reports_setup_keyboard(l10n, enabled, weekday, time_str)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "habit_reports_toggle")
+async def callback_habit_reports_toggle(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_habit_reports_setup_keyboard
+
+    enabled = not bool(getattr(user, "habit_reports_enabled", True))
+    await user_dao.update_habit_report_settings(user.id, habit_reports_enabled=enabled)
+    user.habit_reports_enabled = enabled
+    weekday = int(getattr(user, "habit_report_weekday", 6))
+    time_str = getattr(user, "habit_report_time", "23:50")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_habit_reports_setup_keyboard(l10n, enabled, weekday, time_str)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "habit_report_edit_day")
+async def callback_habit_report_edit_day(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    from bot.keyboards.inline import get_habit_report_day_keyboard
+
+    await callback.message.edit_text(
+        l10n.get("habit_report_day_prompt", "Choose the day for your habit report:"),
+        reply_markup=get_habit_report_day_keyboard(l10n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("habit_report_day_"))
+async def callback_habit_report_day_selected(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    from bot.keyboards.inline import get_habit_reports_setup_keyboard
+
+    try:
+        weekday = int(callback.data.split("habit_report_day_")[1])
+    except ValueError:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+    if not 0 <= weekday <= 6:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    await user_dao.update_habit_report_settings(user.id, habit_report_weekday=weekday)
+    user.habit_report_weekday = weekday
+    enabled = bool(getattr(user, "habit_reports_enabled", True))
+    time_str = getattr(user, "habit_report_time", "23:50")
+    await callback.message.edit_text(
+        _render_settings_text(user, l10n),
+        reply_markup=get_habit_reports_setup_keyboard(l10n, enabled, weekday, time_str),
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "habit_report_edit_time")
+async def callback_habit_report_edit_time(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
+    await state.set_state(SettingsState.waiting_for_habit_report_time)
+    await callback.message.edit_text(
+        l10n.get("habit_report_time_prompt", "Please type the report time in HH:MM format (e.g. `23:50`)."),
+        reply_markup=None,
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@router.message(SettingsState.waiting_for_habit_report_time, F.text)
+async def state_habit_report_set_time(
+    message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    # Same strict HH:MM validation as briefs/quiet-hours time input — InputParser
+    # is for freeform reminder phrases, not config values (BUG-H4).
+    raw = message.text.strip()
+    match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
+    if not match:
+        await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format (e.g. `23:00`)."), parse_mode="Markdown")
+        return
+
+    h, m = int(match.group(1)), int(match.group(2))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format (e.g. `23:00`)."), parse_mode="Markdown")
+        return
+
+    value = f"{h:02d}:{m:02d}"
+    await user_dao.update_habit_report_settings(user.id, habit_report_time=value)
+    user.habit_report_time = value
+    await state.clear()
+
+    from bot.keyboards.inline import get_habit_reports_setup_keyboard
+
+    await message.answer(
+        l10n.get("habit_report_time_saved", "✅ Habit report time updated: {time}").format(time=value),
+        parse_mode="Markdown",
+    )
+    await message.answer(
+        _render_settings_text(user, l10n),
+        reply_markup=get_habit_reports_setup_keyboard(
+            l10n,
+            enabled=bool(getattr(user, "habit_reports_enabled", True)),
+            weekday=int(getattr(user, "habit_report_weekday", 6)),
+            time_str=value,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data == "settings_missed_recovery_setup")
+async def callback_missed_recovery_setup(
+    callback: CallbackQuery, user: User, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_missed_recovery_setup_keyboard
+
+    enabled = bool(getattr(user, "missed_recovery_enabled", True))
+    time_str = getattr(user, "missed_recovery_time", "10:00")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_missed_recovery_setup_keyboard(l10n, enabled, time_str)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "missed_recovery_toggle")
+async def callback_missed_recovery_toggle(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_missed_recovery_setup_keyboard
+
+    enabled = not bool(getattr(user, "missed_recovery_enabled", True))
+    await user_dao.update_settings(user.id, missed_recovery_enabled=enabled)
+    user.missed_recovery_enabled = enabled
+    time_str = getattr(user, "missed_recovery_time", "10:00")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_missed_recovery_setup_keyboard(l10n, enabled, time_str)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "missed_recovery_edit_time")
+async def callback_missed_recovery_edit_time(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
+    await state.set_state(SettingsState.waiting_for_missed_recovery_time)
+    await callback.message.edit_text(
+        l10n.get("missed_recovery_time_prompt", "Please type the digest time in HH:MM format (e.g. `10:00`)."),
+        reply_markup=None,
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@router.message(SettingsState.waiting_for_missed_recovery_time, F.text)
+async def state_missed_recovery_set_time(
+    message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    raw = message.text.strip()
+    match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
+    if not match:
+        await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format (e.g. `23:00`)."), parse_mode="Markdown")
+        return
+
+    h, m = int(match.group(1)), int(match.group(2))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        await message.answer(l10n.get("quiet_time_invalid", "❌ Please enter time in HH:MM format (e.g. `23:00`)."), parse_mode="Markdown")
+        return
+
+    value = f"{h:02d}:{m:02d}"
+    await user_dao.update_settings(user.id, missed_recovery_time=value)
+    user.missed_recovery_time = value
+    await state.clear()
+
+    from bot.keyboards.inline import get_missed_recovery_setup_keyboard
+
+    await message.answer(
+        l10n.get("missed_recovery_time_saved", "✅ Missed-task digest time updated: {time}").format(time=value),
+        parse_mode="Markdown",
+    )
+    await message.answer(
+        _render_settings_text(user, l10n),
+        reply_markup=get_missed_recovery_setup_keyboard(
+            l10n,
+            enabled=bool(getattr(user, "missed_recovery_enabled", True)),
+            time_str=value,
         ),
         parse_mode="Markdown",
     )

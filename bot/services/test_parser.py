@@ -41,3 +41,22 @@ def test_hour_expression_rolls_to_next_day_if_time_passed() -> None:
     assert result is not None
     assert result.hour == 10
     assert result.day == 2
+
+
+@pytest.mark.asyncio
+async def test_spanish_duration_expression_is_parsed() -> None:
+    parser = InputParser()
+    result = await parser.parse("recuérdame en 15 minutos beber agua", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert "beber agua" in result.clean_text
+
+
+@pytest.mark.asyncio
+async def test_spanish_absolute_time_expression_is_parsed() -> None:
+    parser = InputParser()
+    result = await parser.parse("mañana a las 9 beber agua", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == 9
+    assert "beber agua" in result.clean_text

@@ -87,3 +87,20 @@ def test_manual_timezone_offset_resolution() -> None:
     assert resolve_timezone_candidate("+5") == "Etc/GMT-5"
     assert resolve_timezone_candidate("-6") == "Etc/GMT+6"
     assert resolve_timezone_candidate("0") == "UTC"
+
+
+def test_manual_timezone_offset_resolution_half_hour() -> None:
+    # W8: known half/quarter-hour offsets resolve to a real (DST-aware) zone,
+    # not a fixed Etc/GMT offset — several accepted spellings for the same input.
+    assert resolve_timezone_candidate("+5:30") == "Asia/Kolkata"
+    assert resolve_timezone_candidate("+5.5") == "Asia/Kolkata"
+    assert resolve_timezone_candidate("5:30") == "Asia/Kolkata"
+    assert resolve_timezone_candidate("-3:30") == "America/St_Johns"
+
+
+def test_manual_timezone_offset_resolution_unknown_half_hour_rejected() -> None:
+    import pytz
+    import pytest
+
+    with pytest.raises(pytz.UnknownTimeZoneError):
+        resolve_timezone_candidate("+1:15")

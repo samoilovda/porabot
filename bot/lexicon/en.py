@@ -5,6 +5,17 @@ from typing import Any
 EN: dict[str, Any] = {
     # Menu & Commands
     "cmd_start": "👋 Hi, {name}!\nI'm **Porabot**. I'll help you stop procrastinating.\n\nChoose an action from the menu 👇",
+    "cmd_help": (
+        "🤖 **Porabot commands**\n\n"
+        "/start — show the main menu\n"
+        "/help — this message\n"
+        "/cancel — cancel whatever you're in the middle of\n\n"
+        "Just type or forward a message like *\"remind me in 15 minutes to drink water\"* "
+        "and I'll parse the time for you. Use the menu buttons for tasks, habits, and settings."
+    ),
+    "cmd_desc_start": "Main menu",
+    "cmd_desc_help": "Show help",
+    "cmd_desc_cancel": "Cancel current action",
     "btn_new_task": "➕ New Task",
     "btn_my_tasks": "📅 My Tasks",
     "btn_settings": "⚙️ Settings",
@@ -31,7 +42,7 @@ EN: dict[str, Any] = {
     "quiet_time_invalid": "❌ Please enter time in HH:MM format (e.g. `23:00`).",
     "quiet_time_saved": "✅ Quiet-hours time updated: `{time}`",
     "choose_tz": "Choose your timezone:",
-    "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, or `-6`.",
+    "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, `-6`, or a known half-hour offset like `+5:30`.",
     "tz_manual_button": "⌨️ Enter manually",
     "tz_success": "✅ Timezone: `{tz}`",
     "tz_invalid": "❌ Invalid offset. Please send `+5`, `0`, or `-6` (range: -12 to +14).",
@@ -120,6 +131,7 @@ EN: dict[str, Any] = {
     "brief_evening_done": "✅ Done: {count}",
     "brief_evening_pending": "⏳ Remaining/Missed: {count}\n",
     "btn_done": "✅ Done",
+    "btn_not_today": "🚫 Not today",
     "btn_done_short": "✅ Done",
     "btn_not_done_short": "❌ Not done",
     "wrapup_task_hint": "Task from evening wrap-up",
@@ -180,6 +192,12 @@ EN: dict[str, Any] = {
     "btn_recovery_snooze_all": "⏰ +1h all",
     "recovery_done_all_done": "✅ Marked {count} overdue tasks as done.",
     "recovery_snooze_all_done": "⏰ Snoozed {count} overdue tasks by 1 hour.",
+    "btn_missed_recovery_setup": "📎 Missed tasks",
+    "btn_missed_recovery_on": "📎 Missed-task digest: ON",
+    "btn_missed_recovery_off": "📎 Missed-task digest: OFF",
+    "btn_missed_recovery_time": "🕒 Time: {time}",
+    "missed_recovery_time_prompt": "Please type the digest time in HH:MM format (e.g. `10:00`).",
+    "missed_recovery_time_saved": "✅ Missed-task digest time updated: {time}",
 
     # Completed tasks section
     "btn_completed_tasks": "📜 Completed",
@@ -234,7 +252,23 @@ EN: dict[str, Any] = {
     "fluid_time_invalid": "❌ Please use HH:MM (for example `14:30`).",
     "fluid_time_past": "❌ This time has already passed today.",
     "fluid_time_saved": "✅ I’ll remind you today at `{time}`.",
-    
+    "habit_not_today_saved": "🚫 Marked as not today. Streak reset.",
+
+    # Habit reports
+    "btn_habit_reports_setup": "📊 Habit reports",
+    "btn_habit_reports_on": "📊 Habit reports: ON",
+    "btn_habit_reports_off": "📊 Habit reports: OFF",
+    "btn_habit_report_day": "📅 Day: {day}",
+    "btn_habit_report_time": "🕒 Time: {time}",
+    "habit_report_day_prompt": "Choose the day for your habit report:",
+    "habit_report_time_prompt": "Please type the report time in HH:MM format (e.g. `23:50`).",
+    "habit_report_time_saved": "✅ Habit report time updated: {time}",
+    "habit_report_weekly_title": "📊 **Weekly habit report**",
+    "habit_report_monthly_title": "📊 **Monthly habit report**",
+    "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
+    "habit_report_total": "**Total:** ✅ {done} · ❌ {not_done} ({rate}%)",
+    "weekday_names": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+
     # Error messages (SECURITY FIX: Added missing keys)
     "text_too_long": "❌ Text too long ({length} chars). Maximum: {max_length} chars.",
     "schedule_error": "❌ Failed to schedule reminder. Please try again.",

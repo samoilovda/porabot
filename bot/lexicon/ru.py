@@ -5,6 +5,17 @@ from typing import Any
 RU: dict[str, Any] = {
     # Menu & Commands
     "cmd_start": "👋 Привет, {name}!\nЯ **Porabot**. Я помогу тебе не прокрастинировать.\n\nВыбери действие в меню 👇",
+    "cmd_help": (
+        "🤖 **Команды Porabot**\n\n"
+        "/start — показать главное меню\n"
+        "/help — это сообщение\n"
+        "/cancel — отменить текущее действие\n\n"
+        "Просто напиши или перешли сообщение вроде *«напомни через 15 минут выпить воды»* — "
+        "я сам распознаю время. Кнопки меню — для задач, привычек и настроек."
+    ),
+    "cmd_desc_start": "Главное меню",
+    "cmd_desc_help": "Показать помощь",
+    "cmd_desc_cancel": "Отменить текущее действие",
     "btn_new_task": "➕ Новая задача",
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
@@ -31,7 +42,7 @@ RU: dict[str, Any] = {
     "quiet_time_invalid": "❌ Введи время в формате HH:MM (например, `23:00`).",
     "quiet_time_saved": "✅ Время тихих часов обновлено: `{time}`",
     "choose_tz": "Выбери свой часовой пояс:",
-    "tz_manual_prompt": "Отправь только смещение UTC: `+5`, `0` или `-6`.",
+    "tz_manual_prompt": "Отправь только смещение UTC: `+5`, `0`, `-6` или известное получасовое смещение вроде `+5:30`.",
     "tz_manual_button": "⌨️ Ввести вручную",
     "tz_success": "✅ Часовой пояс: `{tz}`",
     "tz_invalid": "❌ Неверное смещение. Отправь `+5`, `0` или `-6` (диапазон: от -12 до +14).",
@@ -120,6 +131,7 @@ RU: dict[str, Any] = {
     "brief_evening_done": "✅ Выполнено: {count}",
     "brief_evening_pending": "⏳ Осталось/Пропущено: {count}\n",
     "btn_done": "✅ Сделано",
+    "btn_not_today": "🚫 Не сегодня",
     "btn_done_short": "✅ Да",
     "btn_not_done_short": "❌ Нет",
     "wrapup_task_hint": "Задача из вечерней сводки",
@@ -180,6 +192,12 @@ RU: dict[str, Any] = {
     "btn_recovery_snooze_all": "⏰ +1ч всем",
     "recovery_done_all_done": "✅ Отмечено выполненными: {count} просроченных задач.",
     "recovery_snooze_all_done": "⏰ Отложено на 1 час: {count} просроченных задач.",
+    "btn_missed_recovery_setup": "📎 Пропущенные задачи",
+    "btn_missed_recovery_on": "📎 Дайджест пропущенных: ВКЛ",
+    "btn_missed_recovery_off": "📎 Дайджест пропущенных: ВЫКЛ",
+    "btn_missed_recovery_time": "🕒 Время: {time}",
+    "missed_recovery_time_prompt": "Введи время дайджеста в формате ЧЧ:ММ (например, `10:00`).",
+    "missed_recovery_time_saved": "✅ Время дайджеста обновлено: {time}",
 
     # Completed tasks section
     "btn_completed_tasks": "📜 Выполненные",
@@ -234,6 +252,22 @@ RU: dict[str, Any] = {
     "fluid_time_invalid": "❌ Используй формат HH:MM (например `14:30`).",
     "fluid_time_past": "❌ Это время сегодня уже прошло.",
     "fluid_time_saved": "✅ Напомню сегодня в `{time}`.",
+    "habit_not_today_saved": "🚫 Отмечено «не сегодня». Стрик сброшен.",
+
+    # Отчёты по привычкам
+    "btn_habit_reports_setup": "📊 Отчёты по привычкам",
+    "btn_habit_reports_on": "📊 Отчёты по привычкам: ВКЛ",
+    "btn_habit_reports_off": "📊 Отчёты по привычкам: ВЫКЛ",
+    "btn_habit_report_day": "📅 День: {day}",
+    "btn_habit_report_time": "🕒 Время: {time}",
+    "habit_report_day_prompt": "Выбери день для отчёта по привычкам:",
+    "habit_report_time_prompt": "Отправь время отчёта в формате HH:MM (например `23:50`).",
+    "habit_report_time_saved": "✅ Время отчёта обновлено: {time}",
+    "habit_report_weekly_title": "📊 **Итоги недели**",
+    "habit_report_monthly_title": "📊 **Итоги месяца**",
+    "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
+    "habit_report_total": "**Итого:** ✅ {done} · ❌ {not_done} ({rate}%)",
+    "weekday_names": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
     
     # Error messages (SECURITY FIX: Added missing keys)
     "text_too_long": "❌ Текст слишком длинный ({length} символов). Максимум: {max_length} символов.",

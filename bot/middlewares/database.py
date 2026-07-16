@@ -2,7 +2,11 @@
 
 Opens an AsyncSession, instantiates DAOs, resolves the domain User via
 get-or-create, then calls the handler. Commits on success; rolls back on
-exception. Must be registered AFTER WhitelistMiddleware.
+exception.
+
+WhitelistMiddleware exists in bot/middlewares/whitelist.py but is currently
+disabled (see bot/__main__.py) — access control is intentionally open. If it
+is ever re-enabled, it must be registered BEFORE this middleware.
 """
 
 import logging
@@ -14,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database.dao.user import UserDAO
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.habit_event import HabitEventDAO
 from bot.lexicon import get_l10n
 
 logger = logging.getLogger(__name__)
@@ -35,9 +40,11 @@ class DatabaseMiddleware(BaseMiddleware):
         async with self.session_pool() as session:
             user_dao = UserDAO(session)
             reminder_dao = ReminderDAO(session)
+            habit_event_dao = HabitEventDAO(session)
             data["session"] = session
             data["user_dao"] = user_dao
             data["reminder_dao"] = reminder_dao
+            data["habit_event_dao"] = habit_event_dao
 
             tg_user: Optional[TgUser] = data.get("event_from_user")
             l10n = get_l10n(None)

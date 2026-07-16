@@ -24,6 +24,7 @@ from aiogram.fsm.context import FSMContext
 from dateutil.rrule import rrulestr
 
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed, cycle_key_for_fluid
 from bot.database.models import User
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
@@ -38,7 +39,7 @@ from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
-from bot.utils.markdown import escape_markdown_v2
+from bot.utils.markdown import escape_markdown_legacy
 from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
@@ -154,7 +155,7 @@ async def _handle_parsed_result(
             )
             await source_message.answer(
                 l10n["parse_confirmation_prompt"].format(
-                    text=clean_text,
+                    text=escape_markdown_legacy(clean_text),
                     time=parsed_time,
                     confidence=_format_parse_confidence(float(getattr(result, "confidence", 0.0) or 0.0)),
                 ),
@@ -166,7 +167,7 @@ async def _handle_parsed_result(
 
     await state.set_state(ReminderWizard.choosing_time)
     await source_message.answer(
-        l10n["ask_time"].format(text=clean_text),
+        l10n["ask_time"].format(text=escape_markdown_legacy(clean_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
     )
 
@@ -228,8 +229,7 @@ async def _save_and_show_edit(
     await state.clear()
 
     date_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
-    preview = l10n["preview"].format(text=new_reminder.reminder_text, time=date_str)
-    safe_preview = escape_markdown_v2(preview)
+    safe_preview = l10n["preview"].format(text=escape_markdown_legacy(new_reminder.reminder_text), time=date_str)
     keyboard = get_edit_keyboard(
         reminder_id=new_reminder.id,
         l10n=l10n,
@@ -238,7 +238,7 @@ async def _save_and_show_edit(
         nagging_max_repeats=new_reminder.nagging_max_repeats,
         rrule_text=_rrule_text(new_reminder, l10n),
     )
-    sent_msg = await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
+    sent_msg = await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="Markdown")
 
     task = asyncio.create_task(_remove_keyboard_after_delay(sent_msg, 5))
     active_auto_delete_tasks[_message_task_key(sent_msg)] = task
@@ -267,10 +267,10 @@ async def btn_my_tasks(
     lines = [l10n["tasks_header"]]
     for task in tasks:
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
+        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{escape_markdown_legacy(task.reminder_text)}")
 
-    safe_text = escape_markdown_v2("\n".join(lines))
-    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
+    safe_text = "\n".join(lines)
+    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="Markdown")
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +412,7 @@ async def callback_parse_confirm_pick_time(
     text = data.get("text", l10n.get("task_untitled", "Untitled task"))
     await state.set_state(ReminderWizard.choosing_time)
     await callback.message.edit_text(
-        l10n["ask_time"].format(text=text),
+        l10n["ask_time"].format(text=escape_markdown_legacy(text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
     )
     await callback.answer()
@@ -441,7 +441,7 @@ async def callback_edit_edit(
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
     await callback.message.edit_text(
-        l10n["ask_time"].format(text=reminder.reminder_text),
+        l10n["ask_time"].format(text=escape_markdown_legacy(reminder.reminder_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n),
     )
     await callback.answer()
@@ -530,10 +530,17 @@ async def callback_edit_nagging(
 
 @router.callback_query(F.data.startswith("edit_delete_"))
 async def callback_edit_delete(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     _reset_auto_delete(callback.message)
     reminder_id = int(callback.data.split("edit_delete_")[1])
+    # Habits are reachable here via the ⚙️ button in the habits list, so this
+    # path must clear habit_events too — otherwise they outlive the reminder.
+    await habit_event_dao.delete_for_reminder(reminder_id)
     await reminder_dao.delete_by_id(reminder_id)
     scheduler_service.remove_reminder_job(reminder_id)
     await callback.answer(l10n["task_deleted"])
@@ -554,7 +561,7 @@ async def callback_task_settings(
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 
     await callback.message.answer(
-        l10n["task_settings_title"].format(text=reminder.reminder_text),
+        l10n["task_settings_title"].format(text=escape_markdown_legacy(reminder.reminder_text)),
         reply_markup=get_edit_keyboard(
             reminder.id,
             l10n,
@@ -568,9 +575,16 @@ async def callback_task_settings(
 
 @router.callback_query(F.data.startswith("del_task_"))
 async def callback_delete_task(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     task_id = int(callback.data.split("del_task_")[1])
+    # Fixed habits show up in "My Tasks" with a delete button, so this path
+    # must clear habit_events too.
+    await habit_event_dao.delete_for_reminder(task_id)
     await reminder_dao.delete_by_id(task_id)
     scheduler_service.remove_reminder_job(task_id)
     await callback.answer(l10n["task_deleted"])
@@ -596,10 +610,10 @@ async def callback_refresh_tasks(
     lines = [l10n["tasks_header"]]
     for task in tasks:
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{task.reminder_text}")
+        lines.append(f"▫️ `{dt_str}`: {'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}{escape_markdown_legacy(task.reminder_text)}")
 
-    safe_text = escape_markdown_v2("\n".join(lines))
-    await callback.message.edit_text(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="MarkdownV2")
+    safe_text = "\n".join(lines)
+    await callback.message.edit_text(safe_text, reply_markup=get_tasks_list_keyboard(tasks, l10n), parse_mode="Markdown")
     await callback.answer()
 
 
@@ -795,11 +809,11 @@ async def callback_show_completed(
     for task in completed:
         completed_dt = task.completed_at or task.execution_time
         dt_str = format_time(completed_dt, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-        note_suffix = f" — {task.last_completion_note}" if task.last_completion_note else ""
-        lines.append(f"✅ `{dt_str}`: ~{task.reminder_text}~{note_suffix}")
+        note_suffix = f" — {escape_markdown_legacy(task.last_completion_note)}" if task.last_completion_note else ""
+        lines.append(f"✅ `{dt_str}`: ~{escape_markdown_legacy(task.reminder_text)}~{note_suffix}")
 
-    safe_text = escape_markdown_v2("\n".join(lines))
-    await callback.message.edit_text(safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="MarkdownV2")
+    safe_text = "\n".join(lines)
+    await callback.message.edit_text(safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="Markdown")
     await callback.answer()
 
 
@@ -863,7 +877,9 @@ async def _mark_wrapup_task_done(
     reminder_id: int,
     *,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
+    user: User,
 ) -> bool:
     """Mark a wrap-up task done without rewriting the whole summary message."""
     reminder = await reminder_dao.get_by_id(reminder_id)
@@ -888,6 +904,13 @@ async def _mark_wrapup_task_done(
             )
             if streak_result.get("already_counted"):
                 return False
+            await habit_event_dao.record(
+                reminder=reminder,
+                user_tz=user.timezone,
+                outcome="done",
+                source="wrapup",
+                due_at_utc_naive=due_at,
+            )
 
     await reminder_dao.mark_done(reminder_id)
     if not reminder.is_recurring:
@@ -910,7 +933,9 @@ async def callback_wrapup_selected(callback: CallbackQuery) -> None:
 async def callback_wrapup_done(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     try:
@@ -922,7 +947,9 @@ async def callback_wrapup_done(
     marked = await _mark_wrapup_task_done(
         reminder_id,
         reminder_dao=reminder_dao,
+        habit_event_dao=habit_event_dao,
         scheduler_service=scheduler_service,
+        user=user,
     )
     status_text = l10n.get("btn_done_short", "Done")
     try:
@@ -943,12 +970,44 @@ async def callback_wrapup_done(
 
 
 @router.callback_query(F.data.startswith("wrap_not_done_"))
-async def callback_wrapup_not_done(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+async def callback_wrapup_not_done(
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    user: User,
+    l10n: dict[str, Any],
+) -> None:
     try:
-        int(callback.data.split("wrap_not_done_")[1])
+        reminder_id = int(callback.data.split("wrap_not_done_")[1])
     except (IndexError, ValueError):
         await callback.answer(l10n["invalid_action"], show_alert=True)
         return
+
+    reminder = await reminder_dao.get_by_id(reminder_id)
+    is_fluid = bool(reminder and getattr(reminder, "is_fluid_habit", False))
+    if reminder and (_is_habit_like(reminder) or is_fluid):
+        record_kwargs: dict[str, Any] = {}
+        if is_fluid:
+            try:
+                tz = pytz.timezone(user.timezone)
+            except Exception:
+                tz = pytz.UTC
+            record_kwargs["local_date"] = datetime.now(tz).date().isoformat()
+        else:
+            record_kwargs["due_at_utc_naive"] = reminder.habit_active_due_at
+        recorded = await habit_event_dao.record(
+            reminder=reminder,
+            user_tz=user.timezone,
+            outcome="not_today",
+            source="wrapup",
+            **record_kwargs,
+        )
+        if recorded:
+            if is_fluid:
+                reminder.fluid_streak_current = 0
+            else:
+                reminder.habit_streak_current = 0
+            await reminder_dao.mark_habit_not_today(reminder.id)
 
     status_text = l10n.get("btn_not_done_short", "Not done")
     try:
@@ -967,6 +1026,7 @@ async def callback_wrapup_not_done(callback: CallbackQuery, l10n: dict[str, Any]
 async def callback_task_done(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
@@ -1009,8 +1069,20 @@ async def callback_task_done(
             await callback.answer(l10n.get("already_done", "Already done ✅"))
             return
         try:
-            done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
-            await callback.message.edit_text(done_text, reply_markup=None, parse_mode="MarkdownV2")
+            tz = pytz.timezone(user.timezone)
+        except Exception:
+            tz = pytz.UTC
+        await habit_event_dao.record(
+            reminder=reminder,
+            user_tz=user.timezone,
+            outcome="done",
+            source="button",
+            local_date=datetime.now(tz).date().isoformat(),
+        )
+
+        try:
+            done_text = f"{escape_markdown_legacy(callback.message.text)}\n\n{_pick_done_reply(l10n)}"
+            await callback.message.edit_text(done_text, reply_markup=None, parse_mode="Markdown")
         except TelegramBadRequest:
             pass
         await callback.answer(l10n["btn_done"])
@@ -1028,6 +1100,13 @@ async def callback_task_done(
             if streak_result.get("already_counted"):
                 await callback.answer(l10n.get("already_done", "Already done ✅"))
                 return
+            await habit_event_dao.record(
+                reminder=reminder,
+                user_tz=user.timezone,
+                outcome="done",
+                source="button",
+                due_at_utc_naive=due_at,
+            )
 
     await reminder_dao.mark_done(reminder_id)
     if not reminder.is_recurring:
@@ -1035,7 +1114,7 @@ async def callback_task_done(
     scheduler_service.remove_nagging_job(reminder_id)
 
     try:
-        done_text = escape_markdown_v2(f"{callback.message.text}\n\n{_pick_done_reply(l10n)}")
+        done_text = f"{escape_markdown_legacy(callback.message.text)}\n\n{_pick_done_reply(l10n)}"
         await callback.message.edit_text(
             done_text,
             reply_markup=get_done_followup_keyboard(
@@ -1043,7 +1122,7 @@ async def callback_task_done(
                 l10n=l10n,
                 is_recurring=bool(reminder.is_recurring),
             ),
-            parse_mode="MarkdownV2",
+            parse_mode="Markdown",
         )
     except TelegramBadRequest:
         pass  # Concurrent tap — safe to ignore
@@ -1146,6 +1225,7 @@ async def callback_done_skip_next(
 async def callback_done_undo(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     l10n: dict[str, Any],
 ) -> None:
@@ -1153,6 +1233,23 @@ async def callback_done_undo(
     reminder = await reminder_dao.get_by_id(reminder_id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
+
+    # Undo must remove the recorded "done" event, or habit reports will keep
+    # showing a completion the user just took back.
+    if getattr(reminder, "is_fluid_habit", False):
+        last_date = reminder.fluid_last_completed_date
+        if last_date:
+            await habit_event_dao.delete_for_cycle(reminder.id, cycle_key_for_fluid(last_date))
+            reminder.fluid_streak_current = max(0, int(reminder.fluid_streak_current or 0) - 1)
+            prev_event = await habit_event_dao.get_latest_done_event(reminder.id)
+            reminder.fluid_last_completed_date = prev_event.local_date if prev_event else None
+    elif _is_habit_like(reminder):
+        last_due = reminder.habit_last_completed_due_at
+        if last_due:
+            await habit_event_dao.delete_for_cycle(reminder.id, cycle_key_for_fixed(last_due))
+            reminder.habit_streak_current = max(0, int(reminder.habit_streak_current or 0) - 1)
+            prev_event = await habit_event_dao.get_latest_done_event(reminder.id)
+            reminder.habit_last_completed_due_at = prev_event.due_at if prev_event else None
 
     reminder.status = "pending"
     reminder.completed_at = None
@@ -1215,7 +1312,7 @@ async def callback_snooze_act(
         await state.set_state(ReminderWizard.choosing_time)
         await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
         await callback.message.edit_text(
-            l10n["ask_time"].format(text=reminder.reminder_text),
+            l10n["ask_time"].format(text=escape_markdown_legacy(reminder.reminder_text)),
             reply_markup=get_time_selection_keyboard(user.timezone, l10n),
         )
         await callback.answer()
@@ -1266,10 +1363,10 @@ async def callback_snooze_act(
         return
 
     friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-    snooze_text = escape_markdown_v2(f"{callback.message.text}\n\n{l10n['snoozed_until'].format(time=friendly_time)}")
+    snooze_text = f"{escape_markdown_legacy(callback.message.text)}\n\n{l10n['snoozed_until'].format(time=friendly_time)}"
     await callback.message.edit_text(
         snooze_text,
         reply_markup=None,
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
     )
     await callback.answer(l10n["snoozed_toast"])

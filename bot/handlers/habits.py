@@ -1,11 +1,12 @@
 """Habits handler — true daily custom habits builder."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytz
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -13,9 +14,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.models import User
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.habit_event import HabitEventDAO
 from bot.keyboards.inline import get_fluid_pick_time_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
+from bot.utils.markdown import escape_markdown_legacy
 from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
@@ -56,6 +59,19 @@ def _is_habit_entry(reminder) -> bool:
         or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
         or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
     )
+
+def _is_habit_like(reminder) -> bool:
+    """Fixed-cycle habit detection (mirrors SchedulerService._is_habit_like)."""
+    if getattr(reminder, "is_fluid_habit", False):
+        return False
+    return bool(
+        getattr(reminder, "is_habit", False)
+        or getattr(reminder, "habit_active_due_at", None) is not None
+        or getattr(reminder, "habit_last_completed_due_at", None) is not None
+        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+    )
+
 
 def _habit_streak_labels(reminder) -> tuple[int, int]:
     if getattr(reminder, "is_fluid_habit", False):
@@ -257,7 +273,7 @@ async def cb_fluid_habit_mode(
     await state.clear()
     await callback.message.edit_text(
         l10n["habit_fluid_created"].format(
-            habit=habit_text,
+            habit=escape_markdown_legacy(habit_text),
             mode=l10n["habit_fluid_mode_brief_only"] if mode == "brief_only" else l10n["habit_fluid_mode_ask_time"],
         ),
         parse_mode="Markdown",
@@ -317,7 +333,7 @@ async def state_habit_time(
         
         time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
         await message.answer(
-            l10n["habit_created"].format(habit=habit_text, time=time_str),
+            l10n["habit_created"].format(habit=escape_markdown_legacy(habit_text), time=time_str),
             parse_mode="Markdown"
         )
         await state.clear()
@@ -351,17 +367,27 @@ async def cb_habit_list(
     # Build an inline keyboard with delete buttons for each habit
     builder = InlineKeyboardBuilder()
     text_lines = [l10n["habit_list_header"]]
-    
+
+    try:
+        today_str = datetime.now(pytz.timezone(user.timezone)).date().isoformat()
+    except Exception:
+        today_str = datetime.now(pytz.UTC).date().isoformat()
+
     for i, h in enumerate(habits, start=1):
         streak, best = _habit_streak_labels(h)
         if h.is_fluid_habit:
-            time_str = l10n.get("habit_fluid_time_anytime", "anytime")
+            # fluid_planned_time is only meaningful for today's cycle — a stale
+            # value from a previous day must not be displayed as if still valid.
+            if h.fluid_planned_date == today_str and h.fluid_planned_time:
+                time_str = h.fluid_planned_time
+            else:
+                time_str = l10n.get("habit_fluid_time_anytime", "anytime")
         else:
             time_str = format_time(h.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         text_lines.append(
             l10n["habit_list_item"].format(
                 index=i,
-                habit=h.reminder_text,
+                habit=escape_markdown_legacy(h.reminder_text),
                 time=time_str,
                 streak=streak,
                 best=best,
@@ -415,6 +441,7 @@ async def cb_habit_back_dash(
 async def cb_fluid_done(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
@@ -426,6 +453,19 @@ async def cb_fluid_done(
 
     done = await reminder_dao.mark_fluid_habit_done_today(reminder_id, user.timezone)
     if done:
+        reminder = await reminder_dao.get_by_id(reminder_id)
+        if reminder:
+            try:
+                tz = pytz.timezone(user.timezone)
+            except Exception:
+                tz = pytz.UTC
+            await habit_event_dao.record(
+                reminder=reminder,
+                user_tz=user.timezone,
+                outcome="done",
+                source="button",
+                local_date=datetime.now(tz).date().isoformat(),
+            )
         await callback.answer(l10n.get("fluid_done_saved", "✅ Marked as done for today."))
     else:
         await callback.answer(l10n.get("already_done", "Already done ✅"))
@@ -546,12 +586,85 @@ async def state_fluid_pick_manual_time(
     await state.clear()
     await message.answer(l10n["fluid_time_saved"].format(time=hhmm), parse_mode="Markdown")
 
+@router.callback_query(F.data.startswith("not_today_"))
+async def cb_not_today(
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    scheduler_service: SchedulerService,
+    user: User,
+    l10n: dict[str, Any],
+) -> None:
+    payload = callback.data[len("not_today_"):]
+    parts = payload.split("_")
+    try:
+        reminder_id = int(parts[0])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    cycle_due_at_utc_naive = None
+    if len(parts) >= 2:
+        try:
+            cycle_due_ts = int(parts[1])
+            cycle_due_at_utc_naive = datetime.fromtimestamp(cycle_due_ts, tz=timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            cycle_due_at_utc_naive = None
+
+    reminder = await reminder_dao.get_by_id(reminder_id)
+    is_fluid = bool(reminder and getattr(reminder, "is_fluid_habit", False))
+    if not reminder or not (_is_habit_like(reminder) or is_fluid):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    record_kwargs: dict[str, Any] = {}
+    if is_fluid:
+        try:
+            tz = pytz.timezone(user.timezone)
+        except Exception:
+            tz = pytz.UTC
+        record_kwargs["local_date"] = datetime.now(tz).date().isoformat()
+    else:
+        record_kwargs["due_at_utc_naive"] = cycle_due_at_utc_naive or reminder.habit_active_due_at
+
+    recorded = await habit_event_dao.record(
+        reminder=reminder,
+        user_tz=user.timezone,
+        outcome="not_today",
+        source="button",
+        **record_kwargs,
+    )
+    if not recorded:
+        await callback.answer(l10n.get("already_done", "Already done ✅"))
+        return
+
+    if is_fluid:
+        reminder.fluid_streak_current = 0
+    else:
+        reminder.habit_streak_current = 0
+    await reminder_dao.mark_habit_not_today(reminder.id)
+    scheduler_service.remove_nagging_job(reminder.id)
+
+    try:
+        saved_text = f"{escape_markdown_legacy(callback.message.text)}\n\n{l10n['habit_not_today_saved']}"
+        await callback.message.edit_text(saved_text, reply_markup=None, parse_mode="Markdown")
+    except TelegramBadRequest:
+        pass  # Concurrent tap — safe to ignore
+
+    await callback.answer(l10n["habit_not_today_saved"])
+
+
 @router.callback_query(F.data.startswith("del_habit_"))
 async def cb_del_habit(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    scheduler_service: SchedulerService,
+    l10n: dict[str, Any],
 ) -> None:
     task_id = int(callback.data.split("_")[-1])
     try:
+        await habit_event_dao.delete_for_reminder(task_id)
         await reminder_dao.delete_by_id(task_id)
         scheduler_service.remove_reminder_job(task_id)
             

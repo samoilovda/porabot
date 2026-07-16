@@ -84,14 +84,19 @@ USAGE:
 
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 # Import Base from engine module (defines table metadata)
 from bot.database.engine import Base
+
+
+def _utcnow_naive() -> datetime:
+    """Python-side default for created_at — UTC regardless of DB dialect (W6)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class User(Base):
@@ -170,20 +175,30 @@ class User(Base):
 
     # Missed-task recovery settings.
     missed_recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    missed_recovery_time: Mapped[str] = mapped_column(String, default="10:00", server_default="10:00")
     last_missed_recovery_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    morning_brief_hour: Mapped[int] = mapped_column(BigInteger, default=9, server_default="9")
-    evening_brief_hour: Mapped[int] = mapped_column(BigInteger, default=23, server_default="23")
     morning_brief_time: Mapped[str] = mapped_column(String, default="09:00", server_default="09:00")
     evening_brief_time: Mapped[str] = mapped_column(String, default="23:00", server_default="23:00")
-    
+
+    # Weekly/monthly habit reports settings.
+    habit_reports_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Python datetime.weekday(): Mon=0 .. Sun=6. Default Sunday.
+    habit_report_weekday: Mapped[int] = mapped_column(Integer, default=6, server_default="6")
+    habit_report_time: Mapped[str] = mapped_column(String, default="23:50", server_default="23:50")
+
     # When user was added to database (for analytics/debugging)
+    # Python-side default wins on ORM inserts (SQLAlchemy always applies it),
+    # so this is UTC regardless of dialect — server_default=func.now() is a
+    # fallback for rows inserted by raw SQL only, and is UTC on SQLite but the
+    # server's local time on Postgres. Code that treats created_at as UTC
+    # (e.g. habit_sweeper) depends on the Python-side default actually firing.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, 
-        default=func.now(),  # Python datetime object
-        server_default=func.now()  # SQL timestamp literal
+        DateTime,
+        default=_utcnow_naive,
+        server_default=func.now(),
     )
 
     def __repr__(self) -> str:
@@ -441,13 +456,61 @@ class Reminder(Base):
     # When task was marked as completed (for analytics/debugging)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # When reminder was added to database (for analytics/debugging)
+    # When reminder was added to database (for analytics/debugging).
+    # See User.created_at above — Python-side default keeps this UTC on both
+    # SQLite and Postgres; habit_sweeper relies on that (W6).
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, 
-        default=func.now(),  # Python datetime object
-        server_default=func.now()  # SQL timestamp literal
+        DateTime,
+        default=_utcnow_naive,
+        server_default=func.now(),
     )
 
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"<Reminder(id={self.id}, user_id={self.user_id}, time={self.execution_time})>"
+
+
+class HabitEvent(Base):
+    """
+    One row per resolved habit cycle (done / not_today / missed).
+
+    This is the event log that streak counters on Reminder never provided —
+    it powers weekly/monthly habit reports and lets a completion be undone
+    without guessing which cycle it belonged to.
+
+    `habit_text` is a snapshot, not a join: habits are hard-deleted, so the
+    event log must survive a deleted or renamed habit without dangling FKs
+    or rewriting history.
+
+    `cycle_key` makes recording idempotent per (reminder_id, cycle_key):
+      - fixed habits:  f"due:{int(due_at_utc.timestamp())}"
+      - fluid habits:  f"day:{local_date}"
+    """
+
+    __tablename__ = "habit_events"
+
+    __table_args__ = (
+        UniqueConstraint("reminder_id", "cycle_key", name="uq_habit_events_cycle"),
+        Index("idx_habit_events_user_date", "user_id", "local_date"),
+        Index("idx_habit_events_reminder", "reminder_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    reminder_id: Mapped[int] = mapped_column(Integer, ForeignKey("reminders.id"), nullable=False)
+    habit_text: Mapped[str] = mapped_column(String, nullable=False)
+    cycle_key: Mapped[str] = mapped_column(String, nullable=False)
+    local_date: Mapped[str] = mapped_column(String, nullable=False)
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # done | not_today | missed
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    # button | wrapup | auto
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=func.now(),
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<HabitEvent(reminder_id={self.reminder_id}, outcome={self.outcome}, local_date={self.local_date})>"

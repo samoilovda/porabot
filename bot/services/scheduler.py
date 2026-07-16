@@ -18,6 +18,7 @@ from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder
 from bot.keyboards.inline import get_task_done_keyboard
@@ -103,6 +104,30 @@ class SchedulerService:
             self.scheduler.remove_job(f"nag_{reminder_id}")
         except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
+
+    async def rehydrate_missed_reminders(self) -> int:
+        """Recover pending reminders whose scheduler job is missing.
+
+        APScheduler silently discards a 'date' job whose run_date is older
+        than misfire_grace_time when the scheduler starts (or drops it if the
+        jobstore lost it for any other reason). A reminder or habit cycle
+        that misses its fire time never reschedules itself, so without this
+        it would go silent forever. Call once at startup, after
+        ``scheduler.start()``.
+        """
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        recovered = 0
+        async with self.session_pool() as session:
+            reminder_dao = ReminderDAO(session)
+            due = await reminder_dao.get_pending_due(now_utc_naive)
+            for reminder in due:
+                if self.scheduler.get_job(str(reminder.id)) is not None:
+                    continue
+                self.schedule_reminder(reminder.id, datetime.now(timezone.utc), is_nagging=reminder.is_nagging)
+                recovered += 1
+        if recovered:
+            logger.warning("Rehydrated %s reminder(s) with missing scheduler jobs on startup.", recovered)
+        return recovered
 
     # ------------------------------------------------------------------
     # Internal
@@ -233,7 +258,12 @@ class SchedulerService:
                     cycle_due_ts = int(active_due.replace(tzinfo=timezone.utc).timestamp())
 
                 l10n = get_l10n(user.language)
-                keyboard = get_task_done_keyboard(reminder.id, l10n, cycle_due_ts=cycle_due_ts)
+                keyboard = get_task_done_keyboard(
+                    reminder.id,
+                    l10n,
+                    cycle_due_ts=cycle_due_ts,
+                    show_not_today=self._is_habit_like(reminder) or reminder.is_fluid_habit,
+                )
                 await self._send_or_replace_nag_message(
                     reminder=reminder,
                     l10n=l10n,

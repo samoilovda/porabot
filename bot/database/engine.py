@@ -46,16 +46,18 @@ async def init_db(engine: AsyncEngine) -> None:
         
         # Soft-migration for Custom Daily Briefs Feature
         for col, col_type in [
-            ("briefs_enabled", "BOOLEAN DEFAULT 1"), 
-            ("morning_brief_hour", "INTEGER DEFAULT 9"), 
-            ("evening_brief_hour", "INTEGER DEFAULT 23"),
+            ("briefs_enabled", "BOOLEAN DEFAULT 1"),
             ("morning_brief_time", "VARCHAR DEFAULT '09:00'"),
             ("evening_brief_time", "VARCHAR DEFAULT '23:00'"),
             ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
             ("quiet_hours_start", "VARCHAR DEFAULT '23:00'"),
             ("quiet_hours_end", "VARCHAR DEFAULT '07:00'"),
             ("missed_recovery_enabled", "BOOLEAN DEFAULT 1"),
+            ("missed_recovery_time", "VARCHAR DEFAULT '10:00'"),
             ("last_missed_recovery_date", "VARCHAR"),
+            ("habit_reports_enabled", "BOOLEAN DEFAULT 1"),
+            ("habit_report_weekday", "INTEGER DEFAULT 6"),
+            ("habit_report_time", "VARCHAR DEFAULT '23:50'"),
         ]:
             try:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))

@@ -14,6 +14,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from sqlalchemy import select
 
+from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
@@ -22,6 +23,7 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
+from bot.utils.markdown import escape_markdown_legacy
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,7 @@ def _build_morning_text(tasks, user, l10n: dict) -> str:
     lines = [l10n.get("brief_morning", "🌅 **Доброе утро! План на сегодня:**\n")]
     for t in tasks:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"▫️ `{time_str}`: {t.reminder_text}")
+        lines.append(f"▫️ `{time_str}`: {escape_markdown_legacy(t.reminder_text)}")
     return "\n".join(lines)
 
 
@@ -47,10 +49,10 @@ def _build_evening_text(completed, pending, user, l10n: dict) -> str:
     ]
     for t in completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"✅ ~{t.reminder_text}~ ({time_str})")
+        lines.append(f"✅ ~{escape_markdown_legacy(t.reminder_text)}~ ({time_str})")
     for t in pending:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"❌ {t.reminder_text} ({time_str})")  # BUG-4 fixed: closing paren added
+        lines.append(f"❌ {escape_markdown_legacy(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
     return "\n".join(lines)
 
 
@@ -139,10 +141,15 @@ async def process_daily_briefs() -> None:
                     tz = pytz.UTC
                     
                 local_time_str = datetime.now(tz).strftime("%H:%M")
-                if _is_quiet_local(user, datetime.now(tz)):
-                    continue
+                # W1: the morning/evening brief itself is exempt from quiet hours —
+                # it fires exactly at the time the user configured, so suppressing
+                # it (e.g. default evening_brief_time == default quiet_hours_start)
+                # would silently make the brief unreachable. Quiet hours still
+                # apply to the ancillary fluid-habit prompts below.
+                is_quiet = _is_quiet_local(user, datetime.now(tz))
                 reminder_dao = ReminderDAO(session)
-                
+                habit_event_dao = HabitEventDAO(session)
+
                 from bot.lexicon import get_l10n
                 l10n = get_l10n(user.language)
                 fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
@@ -159,10 +166,12 @@ async def process_daily_briefs() -> None:
                     if fluid_brief_only:
                         lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
                         for h in fluid_brief_only:
-                            lines.append(f"▫️ {h.reminder_text}")
+                            lines.append(f"▫️ {escape_markdown_legacy(h.reminder_text)}")
                         await _send_safe(bot, user.id, "\n".join(lines))
 
                     for h in fluid_habits:
+                        if is_quiet:
+                            continue
                         if (h.fluid_mode or "brief_only") != "ask_time":
                             continue
                         if h.fluid_planned_date == today_str:
@@ -170,15 +179,14 @@ async def process_daily_briefs() -> None:
                         await _send_safe(
                             bot,
                             user.id,
-                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=h.reminder_text),
+                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown_legacy(h.reminder_text)),
                             reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
                         )
                         logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
 
                 elif local_time_str == getattr(user, 'evening_brief_time', "23:00"):
-                    for h in fluid_habits:
-                        await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
-
+                    # Streak reset now lives in habit_sweeper.sweep_habit_cycles,
+                    # which runs every minute regardless of briefs settings (W3).
                     completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
@@ -191,8 +199,15 @@ async def process_daily_briefs() -> None:
                         )
                         logger.info("Evening brief sent to user %s", user.id)
 
-                    pending_fluid = [h for h in fluid_habits if h.fluid_last_completed_date != today_str]
-                    if pending_fluid:
+                    # "Cycle resolved today" is defined by the presence of a habit
+                    # event, not by fluid_last_completed_date — otherwise a user who
+                    # tapped "Not today" this morning would be asked again tonight.
+                    pending_fluid = [
+                        h
+                        for h in fluid_habits
+                        if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
+                    ]
+                    if pending_fluid and not is_quiet:
                         await _send_safe(
                             bot,
                             user.id,

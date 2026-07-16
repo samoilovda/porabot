@@ -13,6 +13,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
+from bot.utils.markdown import escape_markdown_legacy
 from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def process_missed_task_recovery() -> None:
                 except Exception:
                     tz = pytz.UTC
                 now_local = datetime.now(tz)
-                if now_local.strftime("%H:%M") != "10:00":
+                if now_local.strftime("%H:%M") != getattr(user, "missed_recovery_time", "10:00"):
                     continue
                 if _is_quiet_local(user, now_local):
                     continue
@@ -108,7 +109,7 @@ async def process_missed_task_recovery() -> None:
                 lines = [l10n.get("missed_recovery_title", "📎 Missed tasks: {count}").format(count=len(overdue))]
                 for task in overdue:
                     dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-                    lines.append(f"▫️ `{dt_str}`: {task.reminder_text}")
+                    lines.append(f"▫️ `{dt_str}`: {escape_markdown_legacy(task.reminder_text)}")
                 text = "\n".join(lines)
 
                 await _send_safe(bot, user.id, text, l10n)

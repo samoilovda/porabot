@@ -10,8 +10,12 @@ BUG FIX APPLIED (Phase 1):
   ✅ Added warning if DATABASE_URL uses default value
 """
 
+import logging
+
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -63,16 +67,20 @@ def validate_config():
         >>> validate_config()  # Check for misconfigurations
     """
     
-    # Check if ADMIN_ID is 0 and ALLOWED_USERS is empty
-    if config.ADMIN_ID == 0 and not config.ALLOWED_USERS:
-        print("[WARNING] No admin or allowed users configured!")
-        print("   The bot will have no access control - only you can use it.")
-        print(f"   Set ADMIN_ID in .env file to enable proper access control.")
-    
+    # N7: WhitelistMiddleware is intentionally disabled (see bot/__main__.py) —
+    # access is open regardless of ADMIN_ID/ALLOWED_USERS, so warn about that
+    # directly instead of a conditional check those settings can't fix.
+    logger.warning(
+        "Access control is disabled: WhitelistMiddleware is commented out in "
+        "bot/__main__.py, so ADMIN_ID/ALLOWED_USERS have no effect and anyone "
+        "can use this bot. Re-enable it there if that's not intended."
+    )
+
     # Check if DATABASE_URL uses default value (production warning)
     if config.DATABASE_URL == "sqlite+aiosqlite:///porabot.db":
-        print("[WARNING] Using default SQLite database URL!")
-        print("   For production, set DATABASE_URL in .env file.")
+        logger.warning(
+            "Using default SQLite database URL! For production, set DATABASE_URL in .env file."
+        )
 
 # Export for use in __main__.py
 __all__ = ["config", "validate_config"]

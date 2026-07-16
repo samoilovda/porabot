@@ -340,6 +340,28 @@ class ReminderDAO(BaseDAO[Reminder]):
         await self.session.flush()
         return {"already_counted": False, "counted": True, "late": False}
 
+    async def mark_habit_not_today(self, reminder_id: int) -> None:
+        """
+        Close the current habit cycle as unresolved ("Not today").
+
+        Hides the cycle from active lists like mark_done, but deliberately
+        does NOT set completed_at — the evening brief counts completions by
+        completed_at, and a "Not today" habit must not show up there as done.
+        """
+        reminder = await self.get_by_id(reminder_id)
+        if reminder:
+            now_utc_naive = datetime.now(pytz.UTC).replace(tzinfo=None)
+            execution_time_cmp = reminder.execution_time
+            if execution_time_cmp.tzinfo is not None:
+                execution_time_cmp = execution_time_cmp.astimezone(pytz.UTC).replace(tzinfo=None)
+            # Same guard as mark_done: only hide the cycle that already fired,
+            # otherwise we'd hide a cycle already rolled forward by the scheduler.
+            if execution_time_cmp <= now_utc_naive:
+                reminder.completed_for_execution_time = reminder.execution_time
+            reminder.last_nag_chat_id = None
+            reminder.last_nag_message_id = None
+            await self.session.flush()
+
     async def set_last_completion_note(self, reminder_id: int, note: str) -> None:
         """Attach a note to the latest completion of a reminder."""
         reminder = await self.get_by_id(reminder_id)
@@ -686,6 +708,21 @@ class ReminderDAO(BaseDAO[Reminder]):
         if (today_local - last_date).days > 1 and int(reminder.fluid_streak_current or 0) != 0:
             reminder.fluid_streak_current = 0
             await self.session.flush()
+
+    async def get_pending_due(self, now_utc_naive: datetime) -> Sequence[Reminder]:
+        """
+        Pending reminders whose execution_time has already passed.
+
+        Used on startup to recover reminders whose APScheduler job was
+        silently dropped (misfire_grace_time exceeded, jobstore loss, etc.).
+        """
+        result = await self.session.execute(
+            select(Reminder).where(
+                Reminder.status == "pending",
+                Reminder.execution_time <= now_utc_naive,
+            )
+        )
+        return result.scalars().all()
 
     async def update_execution_time(
         self, reminder_id: int, new_time: datetime

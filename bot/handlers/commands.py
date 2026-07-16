@@ -49,6 +49,11 @@ async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: Us
     await callback.answer()
 
 
+@router.message(F.text == "/help")
+async def cmd_help(message: Message, l10n: dict[str, Any]) -> None:
+    await message.answer(l10n["cmd_help"], parse_mode="Markdown")
+
+
 @router.message(F.text == "/cancel")
 async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()

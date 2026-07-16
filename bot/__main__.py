@@ -14,9 +14,16 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 from bot.config import config, validate_config
 
@@ -29,12 +36,24 @@ from bot.handlers import all_routers
 from bot.services.scheduler import SchedulerService
 from bot.services.daily_briefs import setup_daily_briefs
 from bot.services.missed_recovery import setup_missed_task_recovery
+from bot.services.habit_sweeper import setup_habit_sweeper
+from bot.services.habit_reports import setup_habit_reports
+from bot.handlers.reminders import _cleanup_stale_timers
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
-)
-logger = logging.getLogger(__name__)
+
+async def _set_bot_commands(bot: Bot) -> None:
+    """Populate Telegram's command menu (N2) — otherwise /help and /cancel are
+    invisible unless a user already knows to type them."""
+    from bot.lexicon import get_l10n
+
+    for lang in (None, "en", "ru", "es"):
+        l10n = get_l10n(lang)
+        commands = [
+            BotCommand(command="start", description=l10n.get("cmd_desc_start", "Main menu")),
+            BotCommand(command="help", description=l10n.get("cmd_desc_help", "Show help")),
+            BotCommand(command="cancel", description=l10n.get("cmd_desc_cancel", "Cancel current action")),
+        ]
+        await bot.set_my_commands(commands, language_code=lang)
 
 
 async def main() -> None:
@@ -52,15 +71,28 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
     )
     dp = Dispatcher()
+    await _set_bot_commands(bot)
 
     # Scheduler
     scheduler = AsyncIOScheduler(
         jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)},
         pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
+        # Default is 1 second — any downtime (deploy, restart, crash) would make
+        # APScheduler silently discard every job whose run_date fell during it.
+        job_defaults={"misfire_grace_time": 3600, "coalesce": True},
     )
     scheduler_service = SchedulerService(scheduler, bot, session_pool)
     setup_daily_briefs(scheduler)
     setup_missed_task_recovery(scheduler)
+    setup_habit_sweeper(scheduler)
+    setup_habit_reports(scheduler)
+    scheduler.add_job(
+        _cleanup_stale_timers,
+        "interval",
+        minutes=10,
+        id="cleanup_stale_timers",
+        replace_existing=True,
+    )
     logger.info("Scheduler configured.")
 
     # Middleware — whitelist intentionally disabled (open access).
@@ -76,6 +108,7 @@ async def main() -> None:
     dp.workflow_data.update({"scheduler_service": scheduler_service, "config": config})
 
     scheduler.start()
+    await scheduler_service.rehydrate_missed_reminders()
     logger.info("Starting polling…")
 
     try:

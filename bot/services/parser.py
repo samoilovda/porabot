@@ -82,6 +82,16 @@ class InputParser:
         "на выходных": "в субботу в 10:00",
         "в выходные": "в субботу в 10:00",
         "в конце недели": "в пятницу в 18:00",
+        # Spanish equivalents (mirrors the Russian set above).
+        "media hora": "30 minutos",
+        "una hora y media": "1 hora 30 minutos",
+        "dentro de un par de minutos": "dentro de 2 minutos",
+        "después del almuerzo": "a las 14:00",
+        "por la tarde": "a las 19:00",
+        "por la noche": "a las 21:00",
+        "por la mañana": "a las 09:00",
+        "el fin de semana": "el sábado a las 10:00",
+        "a finales de la semana": "el viernes a las 18:00",
     }
 
     # ------------------------------------------------------------------
@@ -96,8 +106,9 @@ class InputParser:
             normalized = re.sub(re.escape(key), value, normalized, flags=re.IGNORECASE)
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
-        # "в 12" / "at 14" → "в 12:00" / "at 14:00" mapping (helps dateparser avoid treating lonely hours as years)
+        # "в 12" / "at 14" / "a las 9" → "…:00" mapping (helps dateparser avoid treating lonely hours as years)
         normalized = re.sub(r"(?i)\b(в|at)\s+(\d{1,2})\b(?!\s*[:.])", r"\1 \2:00", normalized)
+        normalized = re.sub(r"(?i)\ba\s+las?\s+(\d{1,2})\b(?!\s*[:.])", r"a las \1:00", normalized)
         return normalized
 
     def _process_hour_expression(
@@ -114,8 +125,8 @@ class InputParser:
             return None
 
         token = (period_token or "").lower()
-        has_pm = token in {"pm", "вечера", "послеобеденно"}
-        has_am = token in {"am", "утра", "ночи"}
+        has_pm = token in {"pm", "вечера", "послеобеденно", "tarde", "noche"}
+        has_am = token in {"am", "утра", "ночи", "mañana"}
         is_24h = hour >= 13
 
         period_hour = hour
@@ -164,7 +175,7 @@ class InputParser:
             "PREFER_DAY_OF_MONTH": "current",
         }
         dp_matches = dateparser.search.search_dates(
-            normalized_text, languages=["ru", "en"], settings=dp_settings
+            normalized_text, languages=["ru", "en", "es"], settings=dp_settings
         )
 
         parsed_datetime: Optional[datetime] = None
@@ -183,7 +194,8 @@ class InputParser:
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             hour_pattern = re.compile(
-                r"(?:^|\s)(?:в|at)\s+(\d{1,2})(?:\s+(утра|послеобеденно|вечера|ночи|am|pm))?",
+                r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})"
+                r"(?:\s+(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
                 re.IGNORECASE,
             )
             hour_match = hour_pattern.search(normalized_text)
@@ -207,18 +219,19 @@ class InputParser:
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             duration_match = re.search(
-                r"через\s+(\d+)?\s*(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки)",
+                r"(?:через|dentro\s+de|en)\s+(\d+)?\s*"
+                r"(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки|minutos?|horas?|d[ií]as?)",
                 normalized_text,
                 re.IGNORECASE,
             )
             if duration_match:
                 amount = int(duration_match.group(1) or 1)
                 unit = duration_match.group(2).lower()
-                if unit in ("минут", "минуты", "min"):
+                if unit in ("минут", "минуты", "min", "minutos", "minuto"):
                     parsed_datetime = now + timedelta(minutes=amount)
-                elif unit in ("часов", "часа", "час", "ч"):
+                elif unit in ("часов", "часа", "час", "ч", "horas", "hora"):
                     parsed_datetime = now + timedelta(hours=amount)
-                else:  # дней, дня, день, сутки
+                else:  # дней, дня, день, сутки, días, día
                     parsed_datetime = now + timedelta(days=amount)
                 parse_source = "regex_duration"
                 confidence = 0.5
@@ -229,7 +242,8 @@ class InputParser:
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             hour_match = re.search(
-                r"в\s+(\d{1,2})(?:[:.](\d{2}))?\s*(утра|послеобеденно|вечера|ночи|часов?)?",
+                r"(?:в|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?\s*"
+                r"(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|часов?|mañana|tarde|noche)?",
                 normalized_text,
                 re.IGNORECASE,
             )
@@ -249,7 +263,12 @@ class InputParser:
                         clean_text = clean_text.replace(hour_match.group(0), "", 1)
 
         # Stage 5 — final cleanup: strip dangling prepositions
-        clean_text = re.sub(r"^(в|на|через|в районе)\s+", "", clean_text.strip(), flags=re.IGNORECASE)
+        clean_text = re.sub(
+            r"^(в|на|через|в районе|a\s+las?|en|dentro\s+de|el)\s+",
+            "",
+            clean_text.strip(),
+            flags=re.IGNORECASE,
+        )
         clean_text = " ".join(clean_text.split())
 
         logger.debug("Parser: clean_text=%r parsed_datetime=%s", clean_text, parsed_datetime)

@@ -210,6 +210,14 @@ def get_edit_keyboard(
         )
     )
 
+    # Snooze — swaps this keyboard for the compact snooze-picker layout.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_snooze", "⏰ Snooze"),
+            callback_data=f"snooze_show_{reminder_id}",
+        )
+    )
+
     # Delete button
     builder.row(
         InlineKeyboardButton(text=l10n["btn_delete"], callback_data=f"edit_delete_{reminder_id}")
@@ -235,6 +243,7 @@ def get_task_done_keyboard(
     l10n: dict[str, Any],
     show_time_of_day_options: bool = True,
     cycle_due_ts: Optional[int] = None,
+    show_not_today: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for marking a task as done or snoozing.
@@ -266,7 +275,19 @@ def get_task_done_keyboard(
         )
     )
 
-    # Row 2: Short intervals (15m, 30m, 1h, 2h)
+    # Row 2: "Not today" (habits only) — directly under Done, before snooze options.
+    if show_not_today:
+        not_today_callback = f"not_today_{reminder_id}"
+        if cycle_due_ts is not None:
+            not_today_callback = f"{not_today_callback}_{int(cycle_due_ts)}"
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n["btn_not_today"],
+                callback_data=not_today_callback,
+            )
+        )
+
+    # Row 3: Short intervals (15m, 30m, 1h, 2h)
     builder.row(
         InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
         InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
@@ -606,6 +627,20 @@ def get_settings_keyboard(
 
     builder.row(
         InlineKeyboardButton(
+            text=l10n.get("btn_habit_reports_setup", "📊 Habit reports"),
+            callback_data="settings_habit_reports_setup",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_missed_recovery_setup", "📎 Missed tasks"),
+            callback_data="settings_missed_recovery_setup",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),
             callback_data="settings_clear_all",
         )
@@ -668,6 +703,66 @@ def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_str: 
         InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening")
     )
     
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
+    return builder.as_markup()
+
+
+def get_habit_reports_setup_keyboard(
+    l10n: dict[str, Any],
+    enabled: bool,
+    weekday: int,
+    time_str: str,
+) -> InlineKeyboardMarkup:
+    """Keyboard for weekly/monthly habit reports setup."""
+    builder = InlineKeyboardBuilder()
+
+    toggle_text = l10n.get("btn_habit_reports_on") if enabled else l10n.get("btn_habit_reports_off")
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="habit_reports_toggle"))
+
+    weekday_names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    day_label = weekday_names[weekday] if 0 <= weekday < len(weekday_names) else str(weekday)
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_habit_report_day", "📅 Day: {day}").format(day=day_label),
+            callback_data="habit_report_edit_day",
+        ),
+        InlineKeyboardButton(
+            text=l10n.get("btn_habit_report_time", "🕒 Time: {time}").format(time=time_str),
+            callback_data="habit_report_edit_time",
+        ),
+    )
+
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
+    return builder.as_markup()
+
+
+def get_habit_report_day_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for picking the habit report weekday (0=Mon .. 6=Sun)."""
+    builder = InlineKeyboardBuilder()
+    weekday_names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    for i, name in enumerate(weekday_names):
+        builder.row(InlineKeyboardButton(text=name, callback_data=f"habit_report_day_{i}"))
+    return builder.as_markup()
+
+
+def get_missed_recovery_setup_keyboard(
+    l10n: dict[str, Any],
+    enabled: bool,
+    time_str: str,
+) -> InlineKeyboardMarkup:
+    """Keyboard for missed-task recovery digest setup."""
+    builder = InlineKeyboardBuilder()
+
+    toggle_text = l10n.get("btn_missed_recovery_on") if enabled else l10n.get("btn_missed_recovery_off")
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="missed_recovery_toggle"))
+
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_missed_recovery_time", "🕒 Time: {time}").format(time=time_str),
+            callback_data="missed_recovery_edit_time",
+        )
+    )
+
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 

@@ -9,6 +9,17 @@ ES.update(
     {
         # Menu & Commands
         "cmd_start": "👋 Hola, {name}!\nSoy **Porabot**. Te ayudaré a procrastinar menos.\n\nElige una acción del menú 👇",
+        "cmd_help": (
+            "🤖 **Comandos de Porabot**\n\n"
+            "/start — mostrar el menú principal\n"
+            "/help — este mensaje\n"
+            "/cancel — cancelar la acción actual\n\n"
+            "Escribe o reenvía un mensaje como *«recuérdame en 15 minutos beber agua»* "
+            "y detectaré la hora por ti. Usa los botones del menú para tareas, hábitos y ajustes."
+        ),
+        "cmd_desc_start": "Menú principal",
+        "cmd_desc_help": "Mostrar ayuda",
+        "cmd_desc_cancel": "Cancelar la acción actual",
         "btn_new_task": "➕ Nueva tarea",
         "btn_my_tasks": "📅 Mis tareas",
         "btn_settings": "⚙️ Ajustes",
@@ -35,7 +46,7 @@ ES.update(
         "quiet_time_invalid": "❌ Introduce la hora en formato HH:MM (por ejemplo `23:00`).",
         "quiet_time_saved": "✅ Hora de silencio actualizada: `{time}`",
         "choose_tz": "Elige tu zona horaria:",
-        "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0` o `-6`.",
+        "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0`, `-6`, o un desfase de media hora conocido como `+5:30`.",
         "tz_manual_button": "⌨️ Introducir manualmente",
         "tz_success": "✅ Zona horaria: `{tz}`",
         "tz_invalid": "❌ Desfase inválido. Envía `+5`, `0` o `-6` (rango: -12 a +14).",
@@ -113,6 +124,7 @@ ES.update(
         "brief_evening_done": "✅ Hechas: {count}",
         "brief_evening_pending": "⏳ Pendientes/Perdidas: {count}\n",
         "btn_done": "✅ Hecho",
+        "btn_not_today": "🚫 Hoy no",
         "btn_done_short": "✅ Sí",
         "btn_not_done_short": "❌ No",
         "wrapup_task_hint": "Tarea del resumen nocturno",
@@ -162,6 +174,12 @@ ES.update(
         "btn_recovery_snooze_all": "⏰ +1h todo",
         "recovery_done_all_done": "✅ Se marcaron como hechas {count} tareas vencidas.",
         "recovery_snooze_all_done": "⏰ Se pospusieron {count} tareas vencidas por 1 hora.",
+        "btn_missed_recovery_setup": "📎 Tareas perdidas",
+        "btn_missed_recovery_on": "📎 Resumen de perdidas: ACTIVADO",
+        "btn_missed_recovery_off": "📎 Resumen de perdidas: DESACTIVADO",
+        "btn_missed_recovery_time": "🕒 Hora: {time}",
+        "missed_recovery_time_prompt": "Escribe la hora del resumen en formato HH:MM (p. ej. `10:00`).",
+        "missed_recovery_time_saved": "✅ Hora del resumen actualizada: {time}",
         "btn_completed_tasks": "📜 Completadas",
         "no_completed_tasks": "🧨 Aún no hay tareas completadas. ¡Vamos a cambiar eso!",
         "completed_header": "🏆 **Tareas completadas (últimos 7 días):**\n",
@@ -224,5 +242,21 @@ ES.update(
         "fluid_time_invalid": "❌ Usa formato HH:MM (por ejemplo `14:30`).",
         "fluid_time_past": "❌ Esa hora ya pasó hoy.",
         "fluid_time_saved": "✅ Te recordaré hoy a las `{time}`.",
+        "habit_not_today_saved": "🚫 Marcado como «hoy no». Racha reiniciada.",
+
+        # Informes de hábitos
+        "btn_habit_reports_setup": "📊 Informes de hábitos",
+        "btn_habit_reports_on": "📊 Informes de hábitos: ACTIVADO",
+        "btn_habit_reports_off": "📊 Informes de hábitos: DESACTIVADO",
+        "btn_habit_report_day": "📅 Día: {day}",
+        "btn_habit_report_time": "🕒 Hora: {time}",
+        "habit_report_day_prompt": "Elige el día para tu informe de hábitos:",
+        "habit_report_time_prompt": "Envía la hora del informe en formato HH:MM (por ejemplo `23:50`).",
+        "habit_report_time_saved": "✅ Hora del informe actualizada: {time}",
+        "habit_report_weekly_title": "📊 **Resumen semanal**",
+        "habit_report_monthly_title": "📊 **Resumen mensual**",
+        "habit_report_line": "🫧 {habit}: {done} de {total} ({rate}%)",
+        "habit_report_total": "**Total:** ✅ {done} logrados · ❌ {not_done} fallados ({rate}%)",
+        "weekday_names": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     }
 )

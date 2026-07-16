@@ -60,3 +60,35 @@ async def test_spanish_absolute_time_expression_is_parsed() -> None:
     assert result.parsed_datetime is not None
     assert result.parsed_datetime.hour == 9
     assert "beber agua" in result.clean_text
+
+
+def test_normalized_time_phrase_does_not_leak_into_clean_text() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("напомни вечером выпить чай", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == 19
+    assert "19:00" not in result.clean_text
+    assert result.clean_text == "напомни выпить чай"
+
+
+def test_normalization_keys_respect_word_boundaries() -> None:
+    parser = InputParser()
+
+    # "вечеринка" ("party") must not be corrupted by the "вечером" → "в 19:00"
+    # heuristic matching a prefix inside a longer, unrelated word.
+    normalized = parser._apply_heuristics("вечеринка в субботу")
+
+    assert normalized.startswith("вечеринка")
+
+
+def test_spanish_time_phrases_are_parsed() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("recuérdame por la mañana llamar a mama", "Europe/Madrid")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == 9
+    assert "a las 09:00" not in result.clean_text
+    assert "llamar a mama" in result.clean_text

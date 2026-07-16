@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
+from bot.database.dao.user import UserDAO
 from bot.database.models import HabitEvent, User
 from bot.handlers.reminders import callback_delete_task, callback_edit_delete
 from bot.handlers.settings import callback_clear_all_confirm
@@ -80,6 +81,7 @@ def _callback(data: str):
 async def test_del_task_path_removes_habit_events(session) -> None:
     # Fixed habits appear in "My Tasks", whose rows carry a del_task_ button.
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
+    user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1
 
     await callback_delete_task(
@@ -87,6 +89,7 @@ async def test_del_task_path_removes_habit_events(session) -> None:
         reminder_dao=reminder_dao,
         habit_event_dao=habit_event_dao,
         scheduler_service=SimpleNamespace(remove_reminder_job=lambda _id: None),
+        user=user,
         l10n=L10N,
     )
 
@@ -96,6 +99,7 @@ async def test_del_task_path_removes_habit_events(session) -> None:
 async def test_edit_delete_path_removes_habit_events(session) -> None:
     # Habits reach this path through the ⚙️ button in the habits list.
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
+    user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1
 
     await callback_edit_delete(
@@ -103,6 +107,7 @@ async def test_edit_delete_path_removes_habit_events(session) -> None:
         reminder_dao=reminder_dao,
         habit_event_dao=habit_event_dao,
         scheduler_service=SimpleNamespace(remove_reminder_job=lambda _id: None),
+        user=user,
         l10n=L10N,
     )
 

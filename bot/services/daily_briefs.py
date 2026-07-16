@@ -7,7 +7,7 @@ and sends the appropriate summary.
 """
 
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
 import pytz
 from aiogram import Bot
@@ -23,8 +23,8 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
-from bot.utils.markdown import escape_markdown_legacy
-from bot.utils.time_ext import format_time
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
+from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _build_morning_text(tasks, user, l10n: dict) -> str:
     lines = [l10n.get("brief_morning", "🌅 **Доброе утро! План на сегодня:**\n")]
     for t in tasks:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"▫️ `{time_str}`: {escape_markdown_legacy(t.reminder_text)}")
+        lines.append(f"▫️ `{time_str}`: {escape_markdown(t.reminder_text)}")
     return "\n".join(lines)
 
 
@@ -49,48 +49,34 @@ def _build_evening_text(completed, pending, user, l10n: dict) -> str:
     ]
     for t in completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"✅ ~{escape_markdown_legacy(t.reminder_text)}~ ({time_str})")
+        lines.append(f"✅ ~{escape_markdown(t.reminder_text)}~ ({time_str})")
     for t in pending:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"❌ {escape_markdown_legacy(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
+        lines.append(f"❌ {escape_markdown(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
     return "\n".join(lines)
 
 
-def _parse_hhmm(raw: str, fallback: str) -> dt_time:
-    value = (raw or fallback).strip()
-    try:
-        hh, mm = value.split(":", 1)
-        h = int(hh)
-        m = int(mm)
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return dt_time(hour=h, minute=m)
-    except Exception:
-        pass
-    fh, fm = fallback.split(":")
-    return dt_time(hour=int(fh), minute=int(fm))
-
-
-def _is_quiet_local(user, now_local: datetime) -> bool:
-    if not bool(getattr(user, "quiet_hours_enabled", False)):
-        return False
-    start = _parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-    end = _parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-    current = now_local.time()
-    if start == end:
-        return True
-    if start < end:
-        return start <= current < end
-    return current >= start or current < end
-
-
 async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> None:
-    """Send a message, silently suppressing bot-blocked and bad-request errors."""
+    """Send a message, silently suppressing bot-blocked and bad-request errors.
+
+    Falls back to plain text if Markdown entities fail to parse, so a stray
+    unescaped character never causes the whole brief to be silently dropped.
+    """
     try:
         await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
     except TelegramBadRequest as e:
-        logger.error("Bad request sending brief to %s: %s", user_id, e)
+        logger.error("Bad request sending brief to %s: %s — retrying without Markdown.", user_id, e)
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=strip_markdown_escapes(text),
+                parse_mode=None,
+                reply_markup=reply_markup,
+            )
+        except Exception as retry_e:
+            logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
     except Exception as e:
         logger.error("Failed to send brief to %s: %s", user_id, e, exc_info=True)
 
@@ -146,7 +132,7 @@ async def process_daily_briefs() -> None:
                 # it (e.g. default evening_brief_time == default quiet_hours_start)
                 # would silently make the brief unreachable. Quiet hours still
                 # apply to the ancillary fluid-habit prompts below.
-                is_quiet = _is_quiet_local(user, datetime.now(tz))
+                is_quiet = is_quiet_hours(user, datetime.now(tz))
                 reminder_dao = ReminderDAO(session)
                 habit_event_dao = HabitEventDAO(session)
 
@@ -155,7 +141,38 @@ async def process_daily_briefs() -> None:
                 fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
                 today_str = datetime.now(tz).date().isoformat()
 
-                if local_time_str == getattr(user, 'morning_brief_time', "09:00"):
+                morning_brief_time = getattr(user, 'morning_brief_time', "09:00")
+                evening_brief_time = getattr(user, 'evening_brief_time', "23:00")
+                # If the user configured evening_brief_time at or before
+                # morning_brief_time, there's no valid morning..evening window
+                # to bound — fall back to an open-ended morning check instead
+                # of one that can never be true, which would otherwise
+                # silently and permanently suppress the morning brief.
+                has_valid_window = evening_brief_time > morning_brief_time
+                morning_due = (
+                    local_time_str >= morning_brief_time
+                    and (not has_valid_window or local_time_str < evening_brief_time)
+                    and getattr(user, 'last_morning_brief_date', None) != today_str
+                )
+                evening_due = (
+                    local_time_str >= evening_brief_time
+                    and getattr(user, 'last_evening_brief_date', None) != today_str
+                )
+
+                if (
+                    has_valid_window
+                    and local_time_str >= evening_brief_time
+                    and getattr(user, 'last_morning_brief_date', None) != today_str
+                ):
+                    # The morning window (morning_brief_time..evening_brief_time)
+                    # has already fully passed today — e.g. the bot was down, or
+                    # briefs got enabled after evening_brief_time. Sending a
+                    # "good morning" brief this late would be confusing; mark
+                    # it as handled instead of sending a stale one.
+                    user.last_morning_brief_date = today_str
+
+                if morning_due:
+                    user.last_morning_brief_date = today_str
                     tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if tasks:
                         text = _build_morning_text(tasks, user, l10n)
@@ -166,7 +183,7 @@ async def process_daily_briefs() -> None:
                     if fluid_brief_only:
                         lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
                         for h in fluid_brief_only:
-                            lines.append(f"▫️ {escape_markdown_legacy(h.reminder_text)}")
+                            lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
                         await _send_safe(bot, user.id, "\n".join(lines))
 
                     for h in fluid_habits:
@@ -179,14 +196,21 @@ async def process_daily_briefs() -> None:
                         await _send_safe(
                             bot,
                             user.id,
-                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown_legacy(h.reminder_text)),
+                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
                             reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
                         )
                         logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
 
-                elif local_time_str == getattr(user, 'evening_brief_time', "23:00"):
-                    # Streak reset now lives in habit_sweeper.sweep_habit_cycles,
-                    # which runs every minute regardless of briefs settings (W3).
+                elif evening_due:
+                    user.last_evening_brief_date = today_str
+                    # Also reset in habit_sweeper.sweep_habit_cycles every minute
+                    # (W3) — briefs_enabled=False or a suppressed brief must not
+                    # leave a stale streak stuck until the user reopens the app.
+                    # Kept here too so the reset isn't delayed until evening_due
+                    # for users who do get briefs.
+                    for h in fluid_habits:
+                        await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
+
                     completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                     pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                     if completed or pending:
@@ -215,6 +239,8 @@ async def process_daily_briefs() -> None:
                             reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
                         )
 
+                await session.commit()
+
     except Exception as e:
         logger.error("Error in daily briefs job: %s", e, exc_info=True)
 
@@ -230,6 +256,6 @@ def setup_daily_briefs(scheduler) -> None:
         process_daily_briefs,
         "cron",
         minute="*",
-        id="hourly_daily_briefs",
+        id="daily_briefs_minutely",
         replace_existing=True,
     )

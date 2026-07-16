@@ -82,15 +82,16 @@ class InputParser:
         "на выходных": "в субботу в 10:00",
         "в выходные": "в субботу в 10:00",
         "в конце недели": "в пятницу в 18:00",
-        # Spanish equivalents (mirrors the Russian set above).
+        # Spanish
+        "por la mañana": "a las 09:00",
+        "por la tarde": "a las 14:00",
+        "por la noche": "a las 19:00",
+        "en un rato": "en 2 minutos",
+        "el fin de semana": "el sábado a las 10:00",
         "media hora": "30 minutos",
         "una hora y media": "1 hora 30 minutos",
         "dentro de un par de minutos": "dentro de 2 minutos",
         "después del almuerzo": "a las 14:00",
-        "por la tarde": "a las 19:00",
-        "por la noche": "a las 21:00",
-        "por la mañana": "a las 09:00",
-        "el fin de semana": "el sábado a las 10:00",
         "a finales de la semana": "el viernes a las 18:00",
     }
 
@@ -102,8 +103,9 @@ class InputParser:
         """Apply heuristic replacements while preserving original casing."""
         normalized = text
         for key, value in self._NORMALIZATIONS.items():
-            # Use case-insensitive substitution to match heuristics without forcing lowercase
-            normalized = re.sub(re.escape(key), value, normalized, flags=re.IGNORECASE)
+            # Use case-insensitive substitution to match heuristics without forcing lowercase.
+            # Word boundaries keep short keys (e.g. "утром") from matching inside longer words.
+            normalized = re.sub(r"\b" + re.escape(key) + r"\b", value, normalized, flags=re.IGNORECASE)
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
         # "в 12" / "at 14" / "a las 9" → "…:00" mapping (helps dateparser avoid treating lonely hours as years)
@@ -269,6 +271,14 @@ class InputParser:
             clean_text.strip(),
             flags=re.IGNORECASE,
         )
+        clean_text = " ".join(clean_text.split())
+
+        # Stage 6 — if a heuristic-substituted phrase (e.g. "в 19:00" standing in
+        # for "вечером") survived every extraction stage above, it wasn't part of
+        # the original text and must not leak into the task description.
+        for value in self._NORMALIZATIONS.values():
+            if value in clean_text and value.lower() not in text.lower():
+                clean_text = clean_text.replace(value, "", 1)
         clean_text = " ".join(clean_text.split())
 
         logger.debug("Parser: clean_text=%r parsed_datetime=%s", clean_text, parsed_datetime)

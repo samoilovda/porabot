@@ -1,7 +1,7 @@
 """Missed-task recovery digests for overdue pending tasks."""
 
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
 import pytz
 from aiogram import Bot
@@ -13,37 +13,15 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.markdown import escape_markdown_legacy
-from bot.utils.time_ext import format_time
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
+from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
 
-
-def _parse_hhmm(raw: str, fallback: str) -> dt_time:
-    value = (raw or fallback).strip()
-    try:
-        hh, mm = value.split(":", 1)
-        h = int(hh)
-        m = int(mm)
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return dt_time(hour=h, minute=m)
-    except Exception:
-        pass
-    fh, fm = fallback.split(":")
-    return dt_time(hour=int(fh), minute=int(fm))
-
-
-def _is_quiet_local(user: User, now_local: datetime) -> bool:
-    if not bool(getattr(user, "quiet_hours_enabled", False)):
-        return False
-    start = _parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-    end = _parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-    current = now_local.time()
-    if start == end:
-        return True
-    if start < end:
-        return start <= current < end
-    return current >= start or current < end
+RECOVERY_LOCAL_TIME = "10:00"
+# Max overdue tasks shown in one digest — "Done all"/"+1h all" must act on
+# exactly this many, not more, so the bulk action matches what was shown.
+RECOVERY_DIGEST_LIMIT = 5
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
@@ -57,7 +35,16 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping missed recovery.", user_id)
     except TelegramBadRequest as e:
-        logger.error("Bad request sending missed recovery to %s: %s", user_id, e)
+        logger.error("Bad request sending missed recovery to %s: %s — retrying without Markdown.", user_id, e)
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=strip_markdown_escapes(text),
+                parse_mode=None,
+                reply_markup=get_missed_recovery_keyboard(l10n),
+            )
+        except Exception as retry_e:
+            logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
     except Exception as e:
         logger.error("Failed to send missed recovery to %s: %s", user_id, e, exc_info=True)
 
@@ -91,9 +78,9 @@ async def process_missed_task_recovery() -> None:
                 except Exception:
                     tz = pytz.UTC
                 now_local = datetime.now(tz)
-                if now_local.strftime("%H:%M") != getattr(user, "missed_recovery_time", "10:00"):
+                if now_local.strftime("%H:%M") < getattr(user, "missed_recovery_time", RECOVERY_LOCAL_TIME):
                     continue
-                if _is_quiet_local(user, now_local):
+                if is_quiet_hours(user, now_local):
                     continue
 
                 today_key = now_local.strftime("%Y-%m-%d")
@@ -101,7 +88,9 @@ async def process_missed_task_recovery() -> None:
                     continue
 
                 reminder_dao = ReminderDAO(session)
-                overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=5)
+                overdue = await reminder_dao.get_overdue_pending_tasks(
+                    user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT
+                )
                 if not overdue:
                     continue
 
@@ -109,7 +98,7 @@ async def process_missed_task_recovery() -> None:
                 lines = [l10n.get("missed_recovery_title", "📎 Missed tasks: {count}").format(count=len(overdue))]
                 for task in overdue:
                     dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-                    lines.append(f"▫️ `{dt_str}`: {escape_markdown_legacy(task.reminder_text)}")
+                    lines.append(f"▫️ `{dt_str}`: {escape_markdown(task.reminder_text)}")
                 text = "\n".join(lines)
 
                 await _send_safe(bot, user.id, text, l10n)

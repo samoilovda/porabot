@@ -1,3 +1,10 @@
+# setuptools>=81 removes pkg_resources (used at runtime by pymorphy2, a
+# natasha dependency) and breaks building docopt (natasha -> yargy ->
+# pymorphy2 -> docopt) from its legacy setup.py-only sdist. Install this
+# pin BEFORE the rest of this file, e.g.:
+#   pip install "setuptools<81" wheel && pip install -r requirements.txt
+setuptools<81
+
 aiogram>=3.17.0
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0

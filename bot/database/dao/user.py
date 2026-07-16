@@ -26,6 +26,12 @@ class UserDAO(BaseDAO[User]):
             user = User(id=user_id, username=username, timezone=timezone, language=language)
             self.session.add(user)
             await self.session.flush()
+        elif user.username != username:
+            # Telegram usernames can change (or be removed entirely); keep
+            # it in sync on every message instead of freezing it at
+            # whatever it was when the user first started the bot.
+            user.username = username
+            await self.session.flush()
         return user
 
     async def update_timezone(self, user_id: int, timezone: str) -> None:

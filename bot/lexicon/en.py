@@ -44,7 +44,7 @@ EN: dict[str, Any] = {
     "choose_tz": "Choose your timezone:",
     "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, `-6`, or a known half-hour offset like `+5:30`.",
     "tz_manual_button": "⌨️ Enter manually",
-    "tz_success": "✅ Timezone: `{tz}`",
+    "tz_success": "✅ Timezone: `{tz}`\n\nExisting tasks aren't recalculated — they'll still fire at their previous time. Adjust them manually if needed.",
     "tz_invalid": "❌ Invalid offset. Please send `+5`, `0`, or `-6` (range: -12 to +14).",
     "tz_label_america_new_york": "US Eastern (EST/EDT)",
     "tz_label_america_chicago": "US Central (CST/CDT)",
@@ -80,7 +80,8 @@ EN: dict[str, Any] = {
 
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",
-    "tasks_header": "📋 **Your tasks:**\n",
+    "tasks_header": "📋 *Your tasks:*\n",
+    "tasks_more": "…and {count} more",
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
     "btn_close": "❌ Close",
@@ -90,9 +91,11 @@ EN: dict[str, Any] = {
     "parse_error": "Error parsing text. Check the format.",
     "ask_time": "Ok, task: \"{text}\".\nWhen to remind?",
     "try_again_manual": "Try again to write the FULL task, including date and time.",
+    "time_in_past": "⏰ This time has already passed. Please choose a future time.",
+    "forwarded_from": "Forwarded from",
 
     # Confirmation logic -> Edit logic
-    "preview": "✅ **Task saved!**\n📌 {text}\n⏰ {time}",
+    "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Repeat:",
     "btn_nagging_prefix": "{icon} Nagging:",
     "btn_nagging_repeats_prefix": "🔁 Nag repeats: {count}",
@@ -142,15 +145,15 @@ EN: dict[str, Any] = {
     "btn_done_undo": "↩ Undo",
     "btn_snooze": "⏰ Snooze",
     "task_done_replies": [
-        "✅ **You go!**",
-        "✅ **Great!**",
-        "✅ **Nice progress!**",
-        "✅ **Strong move!**",
-        "✅ **You nailed it!**",
-        "✅ **Love that momentum!**",
-        "✅ **Another win!**",
+        "✅ *You go\\!*",
+        "✅ *Great\\!*",
+        "✅ *Nice progress\\!*",
+        "✅ *Strong move\\!*",
+        "✅ *You nailed it\\!*",
+        "✅ *Love that momentum\\!*",
+        "✅ *Another win\\!*",
     ],
-    "task_done_reply": "✅ **Good job. I'll leave you alone.**",
+    "task_done_reply": "✅ *Good job\\. I'll leave you alone\\.*",
     "already_done": "Already done ✅",
     "invalid_action": "❌ Invalid action",
     "invalid_mode": "❌ Invalid mode",
@@ -202,7 +205,7 @@ EN: dict[str, Any] = {
     # Completed tasks section
     "btn_completed_tasks": "📜 Completed",
     "no_completed_tasks": "🧨 No completed tasks yet. Let's change that!",
-    "completed_header": "🏆 **Completed tasks (last 7 days):**\n",
+    "completed_header": "🏆 *Completed tasks \\(last 7 days\\):*\n",
     "btn_done_task_prefix": "✅ Done:",
 
     # Habits

@@ -313,6 +313,47 @@ def get_task_done_keyboard(
     return builder.as_markup()
 
 
+def get_snooze_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+) -> InlineKeyboardMarkup:
+    """
+    Compact snooze-only keyboard (2-column layout with text labels instead of
+    emojis), swapped in for the task-settings edit keyboard via "⏰ Snooze".
+
+    Args:
+        reminder_id: Primary key of the reminder
+        l10n: Localization dictionary
+
+    Returns:
+        InlineKeyboardMarkup with snooze options in compact layout
+    """
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
+        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
+        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_morning"], callback_data=f"snooze_act_{reminder_id}_morning"),
+        InlineKeyboardButton(text=l10n["snooze_day"], callback_data=f"snooze_act_{reminder_id}_day"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_evening"], callback_data=f"snooze_act_{reminder_id}_evening"),
+        InlineKeyboardButton(text=l10n["snooze_night"], callback_data=f"snooze_act_{reminder_id}_night"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
+        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
+    )
+
+    return builder.as_markup()
+
+
 def get_done_followup_keyboard(
     reminder_id: int,
     l10n: dict[str, Any],
@@ -379,64 +420,6 @@ def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
                 callback_data=f"wrap_not_done_{task_id}",
             ),
         )
-    return builder.as_markup()
-
-
-# =============================================================================
-# SNOOZE KEYBOARD (alternative layout)
-# =============================================================================
-
-def get_snooze_keyboard(
-    reminder_id: int,
-    l10n: dict[str, Any],
-) -> InlineKeyboardMarkup:
-    """
-    Alternative keyboard for snoozing tasks.
-
-    Uses a more compact 2-column layout with text labels instead of emojis.
-    Use this when you want clearer labels or need to fit more buttons.
-
-    Args:
-        reminder_id: Primary key of the reminder
-        l10n: Localization dictionary
-
-    Returns:
-        InlineKeyboardMarkup with snooze options in compact layout
-
-    Example:
-        >>> markup = get_snooze_keyboard(456, ru)
-        # Shows +15m, +30m, etc. plus text labels for time slots
-    """
-    builder = InlineKeyboardBuilder()
-
-    # Row 1: Short intervals (2 columns per row)
-    builder.row(
-        InlineKeyboardButton(text=l10n["snooze_15m"], callback_data=f"snooze_act_{reminder_id}_15m"),
-        InlineKeyboardButton(text=l10n["snooze_30m"], callback_data=f"snooze_act_{reminder_id}_30m"),
-    )
-    builder.row(
-        InlineKeyboardButton(text=l10n["snooze_1h"], callback_data=f"snooze_act_{reminder_id}_1h"),
-        InlineKeyboardButton(text=l10n["snooze_2h"], callback_data=f"snooze_act_{reminder_id}_2h"),
-    )
-
-    # Row 2: Morning/Day (text labels)
-    builder.row(
-        InlineKeyboardButton(text=l10n["snooze_morning"], callback_data=f"snooze_act_{reminder_id}_morning"),
-        InlineKeyboardButton(text=l10n["snooze_day"], callback_data=f"snooze_act_{reminder_id}_day"),
-    )
-
-    # Row 3: Evening/Night (text labels)
-    builder.row(
-        InlineKeyboardButton(text=l10n["snooze_evening"], callback_data=f"snooze_act_{reminder_id}_evening"),
-        InlineKeyboardButton(text=l10n["snooze_night"], callback_data=f"snooze_act_{reminder_id}_night"),
-    )
-
-    # Row 4: Long intervals (2 columns)
-    builder.row(
-        InlineKeyboardButton(text=l10n["snooze_1d"], callback_data=f"snooze_act_{reminder_id}_1d"),
-        InlineKeyboardButton(text=l10n["snooze_custom"], callback_data=f"snooze_act_{reminder_id}_custom"),
-    )
-
     return builder.as_markup()
 
 

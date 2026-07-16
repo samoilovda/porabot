@@ -67,19 +67,20 @@ def validate_config():
         >>> validate_config()  # Check for misconfigurations
     """
     
-    # N7: WhitelistMiddleware is intentionally disabled (see bot/__main__.py) —
-    # access is open regardless of ADMIN_ID/ALLOWED_USERS, so warn about that
-    # directly instead of a conditional check those settings can't fix.
-    logger.warning(
-        "Access control is disabled: WhitelistMiddleware is commented out in "
-        "bot/__main__.py, so ADMIN_ID/ALLOWED_USERS have no effect and anyone "
-        "can use this bot. Re-enable it there if that's not intended."
-    )
+    # Check if ADMIN_ID is 0 and ALLOWED_USERS is empty
+    if config.ADMIN_ID == 0 and not config.ALLOWED_USERS:
+        logger.warning(
+            "No admin or allowed users configured. WhitelistMiddleware is "
+            "currently disabled in __main__.py, so the bot has NO access "
+            "control — anyone can use it. Set ADMIN_ID in .env and re-enable "
+            "WhitelistMiddleware to restrict access."
+        )
 
     # Check if DATABASE_URL uses default value (production warning)
     if config.DATABASE_URL == "sqlite+aiosqlite:///porabot.db":
         logger.warning(
-            "Using default SQLite database URL! For production, set DATABASE_URL in .env file."
+            "Using default SQLite database URL. For production, set "
+            "DATABASE_URL in .env file."
         )
 
 # Export for use in __main__.py

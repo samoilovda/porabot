@@ -10,6 +10,8 @@ session_pool()`. The DatabaseMiddleware commits on success and rolls back on
 exception (Unit of Work). Background jobs manage their own sessions.
 """
 
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -35,15 +37,34 @@ def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> None:
+    """Best-effort ALTER TABLE ADD COLUMN, isolated in its own SAVEPOINT.
+
+    On PostgreSQL, a failed statement poisons the rest of the enclosing
+    transaction until it's rolled back — begin_nested() (SAVEPOINT) scopes
+    the rollback to just this one statement so later migrations in the same
+    init_db() transaction still run. OperationalError covers SQLite's
+    "duplicate column" error; ProgrammingError covers PostgreSQL's.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    try:
+        async with conn.begin_nested():
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+    except (OperationalError, ProgrammingError):
+        pass  # column already exists
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """Create all tables defined in models.py. Call once at startup."""
     from bot.database import models  # noqa: F401 — registers models in metadata
     from sqlalchemy import text
-    from sqlalchemy.exc import OperationalError
-    
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        
+
         # Soft-migration for Custom Daily Briefs Feature
         for col, col_type in [
             ("briefs_enabled", "BOOLEAN DEFAULT 1"),
@@ -55,14 +76,13 @@ async def init_db(engine: AsyncEngine) -> None:
             ("missed_recovery_enabled", "BOOLEAN DEFAULT 1"),
             ("missed_recovery_time", "VARCHAR DEFAULT '10:00'"),
             ("last_missed_recovery_date", "VARCHAR"),
+            ("last_morning_brief_date", "VARCHAR"),
+            ("last_evening_brief_date", "VARCHAR"),
             ("habit_reports_enabled", "BOOLEAN DEFAULT 1"),
             ("habit_report_weekday", "INTEGER DEFAULT 6"),
             ("habit_report_time", "VARCHAR DEFAULT '23:50'"),
         ]:
-            try:
-                await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
-            except OperationalError:
-                pass  # column already exists
+            await _add_column_if_missing(conn, "users", col, col_type)
 
         # Soft-migration for nagging limits per reminder
         for col, col_type in [
@@ -84,29 +104,54 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_nag_message_id", "INTEGER"),
             ("completed_for_execution_time", "DATETIME"),
             ("last_completion_note", "VARCHAR"),
+            ("forbidden_strikes", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_fired_at", "DATETIME"),
+            ("habit_undo_pending", "BOOLEAN NOT NULL DEFAULT 0"),
         ]:
-            try:
-                await conn.execute(text(f"ALTER TABLE reminders ADD COLUMN {col} {col_type}"))
-            except OperationalError:
-                pass  # column already exists
+            await _add_column_if_missing(conn, "reminders", col, col_type)
 
         # Backfill legacy habits created before `is_habit` existed.
         # Heuristic: daily recurring + nagging reminders were produced by Habits flow.
         try:
-            await conn.execute(
-                text(
-                    """
-                    UPDATE reminders
-                    SET is_habit = 1
-                    WHERE COALESCE(is_habit, 0) = 0
-                      AND COALESCE(is_recurring, 0) = 1
-                      AND COALESCE(is_nagging, 0) = 1
-                      AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
-                    """
+            async with conn.begin_nested():
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE reminders
+                        SET is_habit = 1
+                        WHERE COALESCE(is_habit, 0) = 0
+                          AND COALESCE(is_recurring, 0) = 1
+                          AND COALESCE(is_nagging, 0) = 1
+                          AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
+                        """
+                    )
                 )
-            )
-        except OperationalError:
+        except (OperationalError, ProgrammingError):
             # Extremely old schemas may temporarily miss one of these columns.
+            pass
+
+        # Backfill last_fired_at for pre-existing rows: it's used to tell
+        # "never delivered" apart from "delivered, awaiting Done" for
+        # overdue one-off reminders during reconcile_jobs_with_db. Without
+        # this, every legacy overdue-but-still-pending one-off reminder
+        # looks undelivered on the first post-deploy restart and gets a
+        # duplicate catch-up notification, even if the user already saw it.
+        try:
+            async with conn.begin_nested():
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE reminders
+                        SET last_fired_at = execution_time
+                        WHERE last_fired_at IS NULL
+                          AND status = 'pending'
+                          AND COALESCE(is_recurring, 0) = 0
+                          AND execution_time <= :now
+                        """
+                    ),
+                    {"now": datetime.utcnow()},
+                )
+        except (OperationalError, ProgrammingError):
             pass
 
 

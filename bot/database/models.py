@@ -177,7 +177,13 @@ class User(Base):
     missed_recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     missed_recovery_time: Mapped[str] = mapped_column(String, default="10:00", server_default="10:00")
     last_missed_recovery_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+
+    # Local date (YYYY-MM-DD) the morning/evening brief was last sent — used to
+    # gate briefs by a "time has passed and not sent yet today" window instead
+    # of an exact-minute string match, which is fragile against job delay/jitter.
+    last_morning_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    last_evening_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     morning_brief_time: Mapped[str] = mapped_column(String, default="09:00", server_default="09:00")
@@ -388,6 +394,16 @@ class Reminder(Base):
     habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the last completed habit cycle (UTC naive).
     habit_last_completed_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # True right after an Undo reverts the cycle at habit_last_completed_due_at.
+    # Lets a re-completion of that same cycle restore the exact streak it had
+    # before the revert instead of restarting the chain at 1 (there is no
+    # stored history of prior cycles to recompute the gap-based streak from).
+    habit_undo_pending: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
     # Fluid habit streaks are day-based (local date strings YYYY-MM-DD).
     fluid_streak_current: Mapped[int] = mapped_column(
         Integer,
@@ -429,11 +445,30 @@ class Reminder(Base):
         nullable=False,
     )
 
+    # Consecutive TelegramForbiddenError count (user blocked the bot).
+    # Reset to 0 on any successful send; once it reaches
+    # SchedulerService.FORBIDDEN_STRIKES_LIMIT, this reminder stops being
+    # rescheduled (recurrence and nagging both stop) instead of retrying
+    # forever against a user who will never receive it.
+    forbidden_strikes: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
     # Last Telegram message used for nagging rotation (single active nag message).
     # When sending a new nag, scheduler deletes this message first (best effort),
     # then stores the new message id here.
     last_nag_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     last_nag_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # When the main (non-nagging) notification for the CURRENT execution_time
+    # cycle was last sent (naive UTC). One-off reminders stay status='pending'
+    # until the user taps Done, so reconcile_jobs_with_db needs this to tell
+    # "never delivered, needs a catch-up job" apart from "already delivered,
+    # just waiting on the user" after a restart.
+    last_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # For recurring reminders, stores the execution_time value that user has
     # already completed. Active list hides reminders when this equals current
@@ -508,9 +543,26 @@ class HabitEvent(Base):
     source: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=func.now(),
+        default=_utcnow_naive,
         server_default=func.now(),
     )
 
     def __repr__(self) -> str:
         return f"<HabitEvent(reminder_id={self.reminder_id}, outcome={self.outcome}, local_date={self.local_date})>"
+
+
+def is_habit_like(reminder) -> bool:
+    """Detect reminders that participate in fixed-time habit streak tracking.
+
+    Fluid habits (day-based, no fixed time) are tracked separately and are
+    never habit-like in this sense.
+    """
+    if getattr(reminder, "is_fluid_habit", False):
+        return False
+    return bool(
+        getattr(reminder, "is_habit", False)
+        or getattr(reminder, "habit_active_due_at", None) is not None
+        or getattr(reminder, "habit_last_completed_due_at", None) is not None
+        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
+        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
+    )

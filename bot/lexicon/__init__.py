@@ -20,3 +20,19 @@ def get_l10n(language_code: Optional[str]) -> dict[str, Any]:
     if not language_code:
         return _LEXICONS[DEFAULT_LANG]
     return _LEXICONS.get(language_code, _LEXICONS[DEFAULT_LANG])
+
+
+# Main-menu button texts, keyed by lexicon key, one frozenset per button
+# holding that button's label in every supported language. Building these
+# from _LEXICONS instead of hardcoding literals means a wording/emoji change
+# to a btn_* lexicon entry (or a new language added to _LEXICONS) stays in
+# sync everywhere these are used to recognize a menu-button tap.
+_MENU_BUTTON_KEYS = ("btn_new_task", "btn_my_tasks", "btn_settings", "btn_habits")
+
+MENU_BUTTON_TEXTS_BY_KEY: dict[str, frozenset[str]] = {
+    key: frozenset(lex[key] for lex in _LEXICONS.values()) for key in _MENU_BUTTON_KEYS
+}
+
+ALL_MENU_BUTTON_TEXTS: frozenset[str] = frozenset(
+    text for texts in MENU_BUTTON_TEXTS_BY_KEY.values() for text in texts
+)

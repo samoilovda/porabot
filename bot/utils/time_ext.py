@@ -1,7 +1,71 @@
 """Time utilities for UTC normalization and display formatting."""
 
-from datetime import datetime, timezone
+from datetime import datetime, time as dt_time, timezone
+from typing import Optional
+
 import pytz
+from dateutil.rrule import rrulestr
+
+
+def parse_hhmm(raw: str, fallback: str) -> dt_time:
+    """Parse an "HH:MM" string, falling back to *fallback* (also "HH:MM") on any error."""
+    value = (raw or fallback).strip()
+    try:
+        hh, mm = value.split(":", 1)
+        h = int(hh)
+        m = int(mm)
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return dt_time(hour=h, minute=m)
+    except Exception:
+        pass
+    fh, fm = fallback.split(":")
+    return dt_time(hour=int(fh), minute=int(fm))
+
+
+def is_quiet_hours(user, now_local: datetime) -> bool:
+    """Whether *now_local* (timezone-aware, already in the user's local zone)
+    falls within the user's configured quiet hours window."""
+    if not bool(getattr(user, "quiet_hours_enabled", False)):
+        return False
+    start = parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
+    end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+    current = now_local.time()
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
+
+
+def next_occurrence_utc(
+    rrule_string: str,
+    dtstart_utc_naive: datetime,
+    user_tz_str: str,
+    after_utc_naive: datetime,
+) -> Optional[datetime]:
+    """Compute the next rrule occurrence after *after_utc_naive*, in the user's
+    local timezone, and return it as naive UTC.
+
+    execution_time is stored in UTC, but a daily/weekly rrule anchored to a
+    UTC dtstart drifts by an hour across DST transitions (the wall-clock time
+    a user sees shifts even though the recurrence rule didn't change). Doing
+    the rrule math in local time keeps the local wall-clock time stable.
+    """
+    try:
+        user_tz = pytz.timezone(user_tz_str)
+    except Exception:
+        user_tz = pytz.UTC
+
+    dtstart_local_naive = to_utc_aware(dtstart_utc_naive).astimezone(user_tz).replace(tzinfo=None)
+    after_local_naive = to_utc_aware(after_utc_naive).astimezone(user_tz).replace(tzinfo=None)
+
+    rule = rrulestr(rrule_string, dtstart=dtstart_local_naive)
+    next_local_naive = rule.after(after_local_naive)
+    if next_local_naive is None:
+        return None
+
+    next_local_aware = user_tz.localize(next_local_naive)
+    return to_utc_naive(next_local_aware)
 
 
 def to_utc_aware(dt: datetime) -> datetime:

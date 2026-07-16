@@ -7,26 +7,28 @@ reach the service at call time. This is a known APScheduler tradeoff.
 """
 
 import logging
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
-from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
-from bot.database.models import Reminder
+from bot.database.models import Reminder, User, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import to_utc_aware, to_utc_naive
+from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
+# After this many consecutive TelegramForbiddenError sends, stop rescheduling
+# the reminder (both recurrence and nagging) instead of retrying forever
+# against a user who blocked the bot.
+FORBIDDEN_STRIKES_LIMIT = 3
 
 # Module-level singleton — set by SchedulerService.__init__
 _instance = None
@@ -69,7 +71,14 @@ class SchedulerService:
     # ------------------------------------------------------------------
 
     def schedule_reminder(self, reminder_id: int, run_date: datetime, *, is_nagging: bool = False) -> None:
-        """Add (or replace) a one-shot date-trigger job for *reminder_id*."""
+        """Add (or replace) a one-shot date-trigger job for *reminder_id*.
+
+        *is_nagging* only affects the log line below — it does not schedule a
+        follow-up job. The actual nagging chain is started by
+        _execute_reminder once the main reminder has fired and checks
+        reminder.is_nagging from the DB at that point. Callers pass it here
+        purely so the schedule log reflects current nagging state.
+        """
         if run_date.tzinfo is None:
             logger.warning("Reminder %s has naive run_date — assuming UTC.", reminder_id)
         run_date_utc = to_utc_aware(run_date)
@@ -89,6 +98,81 @@ class SchedulerService:
             # instead of committing reminders that were never actually scheduled.
             raise
 
+    async def reconcile_jobs_with_db(self) -> None:
+        """Recreate scheduler jobs for pending reminders missing from the jobstore.
+
+        Run once at startup: a job can be missing from the jobstore after bot
+        downtime spanning a misfire window, or after a jobstore reset. Without
+        this, a dropped date-job means the reminder (and, for recurring ones,
+        the whole future chain) silently never fires again.
+
+        One-off reminders stay status='pending' after firing (until the user
+        taps Done), so an overdue one-off with no job isn't necessarily
+        undelivered — it may just be waiting on the user. Only create a
+        catch-up job for it if last_fired_at shows this cycle was never sent.
+        Reminders that already gave up after repeated TelegramForbiddenError
+        (see FORBIDDEN_STRIKES_LIMIT) are skipped entirely.
+        """
+        now_utc = datetime.now(timezone.utc)
+        now_utc_naive = now_utc.replace(tzinfo=None)
+        restored = 0
+        async with self.session_pool() as session:
+            result = await session.execute(
+                select(Reminder).where(
+                    Reminder.status == "pending",
+                    Reminder.is_fluid_habit.is_(False),
+                    Reminder.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT,
+                )
+            )
+            reminders = result.scalars().all()
+
+            user_tz_result = await session.execute(select(User.id, User.timezone))
+            user_tz_map = {uid: tz for uid, tz in user_tz_result.all()}
+
+            for reminder in reminders:
+                if self.scheduler.get_job(str(reminder.id)) is not None:
+                    continue
+
+                run_at_utc = to_utc_aware(reminder.execution_time)
+
+                if run_at_utc <= now_utc:
+                    if reminder.is_recurring and reminder.rrule_string:
+                        # Compute the next occurrence in the user's local
+                        # timezone (not raw UTC) so a bot restart across a DST
+                        # transition doesn't shift the reminder's local
+                        # wall-clock time — same reasoning as _execute_reminder.
+                        user_tz = user_tz_map.get(reminder.user_id, "UTC")
+                        try:
+                            next_run_utc_naive = next_occurrence_utc(
+                                reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
+                            )
+                        except (ValueError, TypeError) as e:
+                            logger.error(
+                                "Invalid rrule for reminder %s during reconcile: %s", reminder.id, e
+                            )
+                            next_run_utc_naive = None
+                        if not next_run_utc_naive:
+                            continue
+                        reminder.execution_time = next_run_utc_naive
+                        run_at_utc = to_utc_aware(next_run_utc_naive)
+                    else:
+                        last_fired = reminder.last_fired_at
+                        already_delivered = (
+                            last_fired is not None and last_fired >= reminder.execution_time
+                        )
+                        if already_delivered:
+                            # Notification already reached the user; they just
+                            # haven't tapped Done yet — don't resend it.
+                            continue
+                        run_at_utc = now_utc + timedelta(minutes=1)
+
+                self.schedule_reminder(reminder.id, run_at_utc, is_nagging=reminder.is_nagging)
+                restored += 1
+
+            await session.commit()
+
+        logger.info("Reconciled scheduler jobs with DB: restored %s job(s).", restored)
+
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job and any nagging job for *reminder_id*."""
         for job_id in (str(reminder_id), f"nag_{reminder_id}"):
@@ -105,64 +189,56 @@ class SchedulerService:
         except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
 
-    async def rehydrate_missed_reminders(self) -> int:
-        """Recover pending reminders whose scheduler job is missing.
+    def resume_nagging_if_stalled(self, reminder: Reminder) -> bool:
+        """Recreate the nag job if raising the limit should revive a dead chain.
 
-        APScheduler silently discards a 'date' job whose run_date is older
-        than misfire_grace_time when the scheduler starts (or drops it if the
-        jobstore lost it for any other reason). A reminder or habit cycle
-        that misses its fire time never reschedules itself, so without this
-        it would go silent forever. Call once at startup, after
-        ``scheduler.start()``.
+        _execute_reminder stops scheduling follow-ups once nagging_sent_count
+        reaches nagging_max_repeats, without touching any job (there's none
+        left to remove). If the user later raises the limit, that chain stays
+        dead until the next main reminder fire — days away for a recurring
+        reminder, never for a one-off. If the reminder is overdue and has no
+        job pending, schedule one immediately instead of waiting.
         """
-        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        recovered = 0
-        async with self.session_pool() as session:
-            reminder_dao = ReminderDAO(session)
-            due = await reminder_dao.get_pending_due(now_utc_naive)
-            for reminder in due:
-                if self.scheduler.get_job(str(reminder.id)) is not None:
-                    continue
-                self.schedule_reminder(reminder.id, datetime.now(timezone.utc), is_nagging=reminder.is_nagging)
-                recovered += 1
-        if recovered:
-            logger.warning("Rehydrated %s reminder(s) with missing scheduler jobs on startup.", recovered)
-        return recovered
+        if not reminder.is_nagging or reminder.status == "completed":
+            return False
+        if int(reminder.forbidden_strikes or 0) >= FORBIDDEN_STRIKES_LIMIT:
+            return False
+        max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
+        sent_nags = max(0, int(reminder.nagging_sent_count or 0))
+        if sent_nags >= max_nag_repeats:
+            return False
+        run_at_utc = to_utc_aware(reminder.execution_time)
+        now_utc = datetime.now(timezone.utc)
+        if run_at_utc > now_utc:
+            return False
+        if (
+            self.scheduler.get_job(str(reminder.id)) is not None
+            or self.scheduler.get_job(f"nag_{reminder.id}") is not None
+        ):
+            return False
+        next_nag = now_utc + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
+        self.scheduler.add_job(
+            execute_reminder_job,
+            "date",
+            run_date=next_nag,
+            args=[reminder.id, True],
+            id=f"nag_{reminder.id}",
+            replace_existing=True,
+        )
+        logger.info("Resumed stalled nagging chain for reminder %s at %s.", reminder.id, next_nag)
+        return True
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_hhmm(raw: str, fallback: str) -> dt_time:
-        val = (raw or fallback).strip()
-        try:
-            hour_str, min_str = val.split(":", 1)
-            h = int(hour_str)
-            m = int(min_str)
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return dt_time(hour=h, minute=m)
-        except Exception:
-            pass
-        fh, fm = fallback.split(":")
-        return dt_time(hour=int(fh), minute=int(fm))
-
     def _is_quiet_hours_now(self, user, now_utc: datetime) -> bool:
-        if not bool(getattr(user, "quiet_hours_enabled", False)):
-            return False
         try:
             user_tz = pytz.timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        start = self._parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-        current = now_local.time()
-        if start == end:
-            return True
-        if start < end:
-            return start <= current < end
-        return current >= start or current < end
+        return is_quiet_hours(user, now_local)
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
         try:
@@ -170,23 +246,11 @@ class SchedulerService:
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        end = self._parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+        end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
         candidate = now_local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
         if candidate <= now_local:
             candidate += timedelta(days=1)
         return candidate.astimezone(timezone.utc)
-
-    @staticmethod
-    def _is_habit_like(reminder: Reminder) -> bool:
-        if reminder.is_fluid_habit:
-            return False
-        return bool(
-            reminder.is_habit
-            or reminder.habit_active_due_at is not None
-            or reminder.habit_last_completed_due_at is not None
-            or int(reminder.habit_streak_current or 0) > 0
-            or int(reminder.habit_streak_best or 0) > 0
-        )
 
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""
@@ -237,8 +301,10 @@ class SchedulerService:
                     return
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                if not is_nagging_execution:
+                    reminder.last_fired_at = now_utc_naive
                 cycle_due_ts = None
-                if self._is_habit_like(reminder):
+                if is_habit_like(reminder):
                     if not is_nagging_execution:
                         prev_due = reminder.habit_active_due_at
                         if (
@@ -251,7 +317,15 @@ class SchedulerService:
                         current_due = reminder.execution_time
                         if current_due.tzinfo is not None:
                             current_due = current_due.astimezone(timezone.utc).replace(tzinfo=None)
-                        reminder.habit_active_due_at = current_due
+                        # Only adopt execution_time as the active cycle when it
+                        # hasn't already been advanced to the NEXT cycle. A
+                        # snooze re-fire runs after the original on-time fire
+                        # already pushed execution_time forward (see "Recurring
+                        # reschedule" below) — overwriting active_due here would
+                        # credit the snoozed Done to tomorrow's cycle instead of
+                        # today's, and leave today's cycle permanently unclaimed.
+                        if current_due <= now_utc_naive + timedelta(minutes=5):
+                            reminder.habit_active_due_at = current_due
                     active_due = reminder.habit_active_due_at or reminder.execution_time
                     if active_due.tzinfo is not None:
                         active_due = active_due.astimezone(timezone.utc).replace(tzinfo=None)
@@ -262,14 +336,33 @@ class SchedulerService:
                     reminder.id,
                     l10n,
                     cycle_due_ts=cycle_due_ts,
-                    show_not_today=self._is_habit_like(reminder) or reminder.is_fluid_habit,
+                    show_not_today=is_habit_like(reminder) or reminder.is_fluid_habit,
                 )
-                await self._send_or_replace_nag_message(
+                send_outcome = await self._send_or_replace_nag_message(
                     reminder=reminder,
                     l10n=l10n,
                     keyboard=keyboard,
                     is_nagging_execution=is_nagging_execution,
                 )
+                # Only a confirmed "user blocked the bot" counts toward the
+                # strike limit. A transient network/bad-request error must
+                # NOT reset an existing streak of forbidden strikes — a user
+                # who has blocked the bot doesn't stop being blocked just
+                # because one delivery attempt happened to hit an unrelated
+                # error instead of TelegramForbiddenError.
+                if send_outcome == "forbidden":
+                    reminder.forbidden_strikes = int(reminder.forbidden_strikes or 0) + 1
+                elif send_outcome == "ok":
+                    reminder.forbidden_strikes = 0
+                gave_up = reminder.forbidden_strikes >= FORBIDDEN_STRIKES_LIMIT
+                if gave_up:
+                    logger.warning(
+                        "Reminder %s: %s consecutive blocked sends — giving up on rescheduling.",
+                        reminder_id,
+                        reminder.forbidden_strikes,
+                    )
+                    self.remove_reminder_job(reminder_id)
+                    self.remove_nagging_job(reminder_id)
 
                 if is_nagging_execution:
                     reminder.nagging_sent_count = max(0, int(reminder.nagging_sent_count or 0)) + 1
@@ -278,15 +371,15 @@ class SchedulerService:
                     reminder.nagging_sent_count = 0
 
                 # Recurring reschedule
-                if not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
-                    start_dt = reminder.execution_time
-                    if start_dt.tzinfo is None:
-                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                if not gave_up and not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
                     try:
-                        rule = rrulestr(reminder.rrule_string, dtstart=start_dt)
-                        next_run = rule.after(datetime.now(start_dt.tzinfo))
-                        if next_run:
-                            next_run_utc_naive = to_utc_naive(next_run)
+                        next_run_utc_naive = next_occurrence_utc(
+                            reminder.rrule_string,
+                            reminder.execution_time,
+                            user.timezone,
+                            now_utc_naive,
+                        )
+                        if next_run_utc_naive:
                             reminder.execution_time = next_run_utc_naive
                             self.schedule_reminder(
                                 reminder_id,
@@ -304,7 +397,7 @@ class SchedulerService:
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))
-                if reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
+                if not gave_up and reminder.is_nagging and reminder.status != "completed" and sent_nags < max_nag_repeats:
                     tz = reminder.execution_time.tzinfo or timezone.utc
                     next_nag = datetime.now(tz) + timedelta(minutes=NAGGING_INTERVAL_MINUTES)
                     self.scheduler.add_job(
@@ -343,22 +436,30 @@ class SchedulerService:
     ):
         """Send a reminder notification, suppressing bot-blocked and bad-request errors.
 
-        Returns the Telegram Message object on success, otherwise None.
+        Returns a (message, outcome) tuple: message is the Telegram Message
+        object on success (otherwise None); outcome is one of:
+          "ok"        — delivered successfully.
+          "forbidden" — the user has blocked the bot.
+          "error"     — some other failure (bad request, network, etc.) —
+                        NOT the user's fault, so callers must not treat this
+                        the same as "forbidden" (see forbidden_strikes).
         """
         try:
-            return await self.bot.send_message(
+            message = await self.bot.send_message(
                 chat_id=user_id,
                 text=f"{l10n['reminder_prefix']}{text}",
                 reply_markup=reply_markup,
                 parse_mode=None,
             )
+            return message, "ok"
         except TelegramForbiddenError:
             logger.warning("User %s has blocked the bot.", user_id)
+            return None, "forbidden"
         except TelegramBadRequest as e:
             logger.error("Bad request sending to %s: %s", user_id, e)
         except Exception as e:
             logger.error("Failed to send message to %s: %s", user_id, e, exc_info=True)
-        return None
+        return None, "error"
 
     async def _delete_telegram_message(self, chat_id: int, message_id: int) -> None:
         """Best-effort Telegram message deletion helper."""
@@ -389,8 +490,12 @@ class SchedulerService:
         l10n: dict,
         keyboard,
         is_nagging_execution: bool,
-    ) -> None:
-        """For nagging reminders, keep only one active reminder message visible."""
+    ) -> str:
+        """For nagging reminders, keep only one active reminder message visible.
+
+        Returns the send outcome — "ok" / "forbidden" / "error" — see
+        _send_telegram_message.
+        """
         if (
             is_nagging_execution
             and reminder.last_nag_chat_id is not None
@@ -401,7 +506,7 @@ class SchedulerService:
                 message_id=int(reminder.last_nag_message_id),
             )
 
-        sent_message = await self._send_telegram_message(
+        sent_message, outcome = await self._send_telegram_message(
             reminder.user_id,
             reminder.reminder_text,
             l10n,
@@ -410,8 +515,10 @@ class SchedulerService:
 
         if not reminder.is_nagging:
             self._clear_nag_tracking(reminder)
-            return
+            return outcome
 
         if sent_message is not None:
             reminder.last_nag_chat_id = int(sent_message.chat.id)
             reminder.last_nag_message_id = int(sent_message.message_id)
+
+        return outcome

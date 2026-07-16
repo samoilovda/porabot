@@ -134,12 +134,11 @@ def _render_settings_text(user: User, l10n: dict[str, Any]) -> str:
     )
 
 
-@router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings", "⚙️ Ajustes"]))
-async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
-    await state.clear()  # Reset FSM if user navigates here mid-wizard
-    text = _render_settings_text(user, l10n)
-    await message.answer(text, reply_markup=get_settings_keyboard(l10n, user.show_utc_offset), parse_mode="Markdown")
-
+# NOTE: the "⚙️ Settings" main-menu button handler lives in
+# bot/handlers/menu.py (registered on an earlier router) so it can't be
+# swallowed by another router's stateful FSM handlers. _render_settings_text
+# above is still used throughout this module and imported from here by
+# menu.py's btn_settings.
 
 @router.callback_query(F.data == "settings_toggle_utc")
 async def callback_toggle_utc(callback: CallbackQuery, user_dao: UserDAO, user: User, l10n: dict[str, Any]) -> None:

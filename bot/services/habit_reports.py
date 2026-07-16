@@ -18,7 +18,7 @@ from sqlalchemy import select
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
-from bot.utils.markdown import escape_markdown_legacy
+from bot.utils.markdown import escape_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def _build_report_text(
         streak_suffix = f" · 🔥 {streak}" if streak > 0 else ""
         lines.append(
             l10n.get("habit_report_line", "🫧 {habit} — {done}/{total} ({rate}%){streak}").format(
-                habit=escape_markdown_legacy(row["habit_text"]),
+                habit=escape_markdown(row["habit_text"]),
                 done=row["done"],
                 total=row["total"],
                 rate=row["rate"],

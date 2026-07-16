@@ -18,8 +18,8 @@ from bot.database.dao.habit_event import HabitEventDAO
 from bot.keyboards.inline import get_fluid_pick_time_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
-from bot.utils.markdown import escape_markdown_legacy
-from bot.utils.time_ext import format_time, to_utc_aware, to_utc_naive
+from bot.utils.markdown import escape_markdown
+from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -140,26 +140,11 @@ def get_habits_keyboard(l10n: dict[str, Any]) -> InlineKeyboardBuilder:
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_cancel"], callback_data="habit_cancel"))
     return builder
 
-@router.message(F.text.in_(["🫧 Привычки", "🫧 Habits", "🫧 Hábitos"]))
-async def btn_habits(
-    message: Message,
-    state: FSMContext,
-    l10n: dict[str, Any],
-    reminder_dao: ReminderDAO,
-    user: User,
-) -> None:
-    """Show the habits dashboard."""
-    await state.clear()
-    stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-    motivation = _habit_motivation_text(l10n, stats)
-    text = l10n["habits_dashboard"]
-    if motivation.strip():
-        text = f"{text}\n\n{motivation}"
-    await message.answer(
-        text,
-        reply_markup=get_habits_keyboard(l10n).as_markup(),
-        parse_mode="Markdown",
-    )
+# NOTE: the "🫧 Habits" main-menu button handler lives in bot/handlers/menu.py
+# (registered on an earlier router) so it can't be swallowed by another
+# router's stateful FSM handlers. _habit_motivation_text and
+# get_habits_keyboard above are still used throughout this module and
+# imported from here by menu.py's btn_habits.
 
 @router.callback_query(F.data == "habit_cancel")
 async def cb_habit_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
@@ -273,7 +258,7 @@ async def cb_fluid_habit_mode(
     await state.clear()
     await callback.message.edit_text(
         l10n["habit_fluid_created"].format(
-            habit=escape_markdown_legacy(habit_text),
+            habit=escape_markdown(habit_text),
             mode=l10n["habit_fluid_mode_brief_only"] if mode == "brief_only" else l10n["habit_fluid_mode_ask_time"],
         ),
         parse_mode="Markdown",
@@ -312,7 +297,16 @@ async def state_habit_time(
         
     # Normalize to UTC once and store as naive UTC in DB.
     execution_time_utc = to_utc_naive(result.parsed_datetime)
-    
+
+    # The parser can return an ambiguous/past time (e.g. "at 9" when it's
+    # already past 9 today in the user's zone). Since this habit is always
+    # FREQ=DAILY, just advance to the next daily slot instead of creating a
+    # reminder whose date-job would fire the instant it's scheduled.
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    if execution_time_utc <= now_utc_naive:
+        advanced = next_occurrence_utc("FREQ=DAILY", execution_time_utc, user.timezone, now_utc_naive)
+        execution_time_utc = advanced or (execution_time_utc + timedelta(days=1))
+
     # Schedule it as a strict daily recurring task with nagging enabled
     try:
         reminder = await reminder_dao.create_reminder(
@@ -333,7 +327,7 @@ async def state_habit_time(
         
         time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
         await message.answer(
-            l10n["habit_created"].format(habit=escape_markdown_legacy(habit_text), time=time_str),
+            l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str),
             parse_mode="Markdown"
         )
         await state.clear()
@@ -351,10 +345,17 @@ async def state_habit_time(
 async def cb_habit_list(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any]
 ) -> None:
+    # get_user_reminders excludes fluid habits (they live in their own UI
+    # flow), so without merging in get_active_fluid_habits here, fluid
+    # habits would never show up in "My Habits" — making them impossible to
+    # delete short of the account-wide "Clear all" reset.
     reminders = await reminder_dao.get_user_reminders(user.id)
+    fluid_reminders = await reminder_dao.get_active_fluid_habits(user.id)
     # Filter for active recurring tasks
-    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)]
-    
+    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)] + [
+        r for r in fluid_reminders if _is_habit_entry(r)
+    ]
+
     if not habits:
         await callback.message.edit_text(
             l10n["habit_no_active"],
@@ -378,8 +379,9 @@ async def cb_habit_list(
         if h.is_fluid_habit:
             # fluid_planned_time is only meaningful for today's cycle — a stale
             # value from a previous day must not be displayed as if still valid.
-            if h.fluid_planned_date == today_str and h.fluid_planned_time:
-                time_str = h.fluid_planned_time
+            planned_time = getattr(h, "fluid_planned_time", None)
+            if getattr(h, "fluid_planned_date", None) == today_str and planned_time:
+                time_str = planned_time
             else:
                 time_str = l10n.get("habit_fluid_time_anytime", "anytime")
         else:
@@ -387,25 +389,34 @@ async def cb_habit_list(
         text_lines.append(
             l10n["habit_list_item"].format(
                 index=i,
-                habit=escape_markdown_legacy(h.reminder_text),
+                habit=escape_markdown(h.reminder_text),
                 time=time_str,
                 streak=streak,
                 best=best,
                 mode=_fluid_mode_label(h, l10n),
             )
         )
-        # Add deletion button
-        builder.row(
-            InlineKeyboardButton(
-                text=l10n.get("btn_task_settings", "⚙️"),
-                callback_data=f"task_settings_{h.id}",
-            ),
+        # Settings + deletion buttons. Fluid habits are scheduled entirely
+        # through the fluid-specific flow (_schedule_fluid_habit_for_today),
+        # not the repeat/nagging toggles that task_settings exposes — those
+        # would set fields the fluid path never reads, so skip the gear for
+        # them and only offer delete.
+        row = []
+        if not h.is_fluid_habit:
+            row.append(
+                InlineKeyboardButton(
+                    text=l10n.get("btn_task_settings", "⚙️"),
+                    callback_data=f"task_settings_{h.id}",
+                )
+            )
+        row.append(
             InlineKeyboardButton(
                 text=l10n["habit_btn_delete_n"].format(index=i),
                 callback_data=f"del_habit_{h.id}",
             )
         )
-    
+        builder.row(*row)
+
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_back_dash"))
     
     await callback.message.edit_text(
@@ -449,6 +460,10 @@ async def cb_fluid_done(
         reminder_id = int(callback.data.split("fluid_done_")[1])
     except Exception:
         await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    if not await reminder_dao.get_owned(reminder_id, user.id):
+        await callback.answer(l10n["item_not_found"], show_alert=True)
         return
 
     done = await reminder_dao.mark_fluid_habit_done_today(reminder_id, user.timezone)
@@ -505,7 +520,7 @@ async def cb_fluid_pick_time(
         await callback.answer(l10n["invalid_action"], show_alert=True)
         return
 
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder or not reminder.is_fluid_habit:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
@@ -559,7 +574,7 @@ async def state_fluid_pick_manual_time(
         await state.clear()
         return
 
-    reminder = await reminder_dao.get_by_id(int(reminder_id))
+    reminder = await reminder_dao.get_owned(int(reminder_id), user.id)
     if not reminder or not reminder.is_fluid_habit:
         await state.clear()
         await message.answer(l10n["item_not_found"])
@@ -646,7 +661,7 @@ async def cb_not_today(
     scheduler_service.remove_nagging_job(reminder.id)
 
     try:
-        saved_text = f"{escape_markdown_legacy(callback.message.text)}\n\n{l10n['habit_not_today_saved']}"
+        saved_text = f"{escape_markdown(callback.message.text)}\n\n{l10n['habit_not_today_saved']}"
         await callback.message.edit_text(saved_text, reply_markup=None, parse_mode="Markdown")
     except TelegramBadRequest:
         pass  # Concurrent tap — safe to ignore
@@ -660,9 +675,13 @@ async def cb_del_habit(
     reminder_dao: ReminderDAO,
     habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
+    user: User,
     l10n: dict[str, Any],
 ) -> None:
     task_id = int(callback.data.split("_")[-1])
+    if not await reminder_dao.get_owned(task_id, user.id):
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
     try:
         await habit_event_dao.delete_for_reminder(task_id)
         await reminder_dao.delete_by_id(task_id)

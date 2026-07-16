@@ -51,7 +51,12 @@ def _fixed_habit(**overrides) -> SimpleNamespace:
 async def _run_habit_list(habit) -> str:
     l10n = get_l10n("en")
     user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    reminder_dao = SimpleNamespace(get_user_reminders=AsyncMock(return_value=[habit]))
+    fixed = [habit] if not habit.is_fluid_habit else []
+    fluid = [habit] if habit.is_fluid_habit else []
+    reminder_dao = SimpleNamespace(
+        get_user_reminders=AsyncMock(return_value=fixed),
+        get_active_fluid_habits=AsyncMock(return_value=fluid),
+    )
     message = SimpleNamespace(edit_text=AsyncMock())
     callback = SimpleNamespace(data="habit_list", message=message, answer=AsyncMock())
 

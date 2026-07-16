@@ -7,7 +7,6 @@ No business logic lives here.
 
 import asyncio
 import logging
-import pickle
 import signal
 import sys
 
@@ -74,9 +73,10 @@ async def main() -> None:
     await _set_bot_commands(bot)
 
     # Scheduler
+    # Note: SQLAlchemyJobStore's own pickle_protocol already defaults to the
+    # highest available protocol, so nothing needs to be set here explicitly.
     scheduler = AsyncIOScheduler(
         jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)},
-        pickle_protocol=pickle.HIGHEST_PROTOCOL,      # Best pickling protocol for args
         # Default is 1 second — any downtime (deploy, restart, crash) would make
         # APScheduler silently discard every job whose run_date fell during it.
         job_defaults={"misfire_grace_time": 3600, "coalesce": True},
@@ -108,7 +108,7 @@ async def main() -> None:
     dp.workflow_data.update({"scheduler_service": scheduler_service, "config": config})
 
     scheduler.start()
-    await scheduler_service.rehydrate_missed_reminders()
+    await scheduler_service.reconcile_jobs_with_db()
     logger.info("Starting polling…")
 
     try:

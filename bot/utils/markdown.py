@@ -12,11 +12,14 @@ def escape_markdown_v2(text: str) -> str:
     return _MDV2_SPECIAL_CHARS_RE.sub(r"\\\1", text)
 
 
-def escape_markdown_legacy(text: str) -> str:
-    """Escape user-controlled text for legacy Telegram Markdown (parse_mode='Markdown').
-
-    Only `_ * \\` [` are special in this mode — escaping the full MarkdownV2 set
-    would leave stray backslashes visible since V1 doesn't treat them as escapes.
-    """
+def escape_markdown(text: str) -> str:
+    """Escape user-controlled text for Telegram legacy Markdown (parse_mode='Markdown')."""
     return _MD_LEGACY_SPECIAL_CHARS_RE.sub(r"\\\1", text)
+
+
+def strip_markdown_escapes(text: str) -> str:
+    """Reverse escape_markdown() — for the plain-text (parse_mode=None) fallback
+    used when a Markdown-formatted send fails to parse, so the user sees the
+    original characters instead of stray backslashes."""
+    return re.sub(r"\\([_*`\[])", r"\1", text)
 

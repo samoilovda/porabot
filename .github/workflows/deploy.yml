@@ -19,6 +19,8 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
       - name: Run tests
+        env:
+          BOT_TOKEN: "test-token"
         run: python -m pytest -q
 
   deploy:

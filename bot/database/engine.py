@@ -12,6 +12,7 @@ exception (Unit of Work). Background jobs manage their own sessions.
 
 from datetime import datetime
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -29,7 +30,26 @@ class Base(DeclarativeBase):
 
 def create_engine(database_url: str) -> AsyncEngine:
     """Create an async engine from *database_url*. Call once at startup."""
-    return create_async_engine(database_url, echo=False)
+    engine = create_async_engine(database_url, echo=False)
+
+    if engine.dialect.name == "sqlite":
+        # WAL mode lets a writer and readers proceed concurrently instead of
+        # locking the whole file on every write; busy_timeout makes a writer
+        # that does collide wait and retry instead of raising immediately.
+        # Without this, the several per-minute cron jobs sharing this one
+        # sqlite file (daily_briefs, habit_sweeper, missed_recovery,
+        # habit_reports) intermittently fail a commit with "database is
+        # locked" — for daily_briefs specifically, that meant a brief already
+        # sent to the user but its "already sent today" flag never
+        # persisted, so the same brief resent on the next tick.
+        @event.listens_for(engine.sync_engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.close()
+
+    return engine
 
 
 def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

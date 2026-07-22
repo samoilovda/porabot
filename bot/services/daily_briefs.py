@@ -91,7 +91,7 @@ async def process_daily_briefs() -> None:
     if not _instance:
         logger.error("Failed to process daily briefs: SchedulerService not initialized")
         return
-    
+
     bot = _instance.bot
     session_pool_factory = _instance.session_pool
     logger.info("Starting hourly daily briefs check...")
@@ -119,127 +119,156 @@ async def process_daily_briefs() -> None:
                 user = await user_dao.get_by_id(uid)
                 if not user:
                     continue
-                    
+
+                # BUG-D1 FIX: isolate each user in its own try/except (mirroring
+                # habit_reports.py). Previously the whole batch shared a single
+                # try/except at the function level, so an error anywhere in one
+                # user's processing (e.g. a transient SQLite "database is locked"
+                # during commit — likely here since several per-minute cron jobs
+                # share one sqlite file) aborted the rest of the batch, and left
+                # that user's last_morning/evening_brief_date uncommitted even
+                # though the brief had already been sent — causing the identical
+                # brief to resend on the next tick.
                 try:
-                    tz = pytz.timezone(user.timezone)
-                except Exception:
-                    logger.warning("Invalid timezone '%s' for user %s, using UTC", user.timezone, user.id)
-                    tz = pytz.UTC
-                    
-                local_time_str = datetime.now(tz).strftime("%H:%M")
-                # W1: the morning/evening brief itself is exempt from quiet hours —
-                # it fires exactly at the time the user configured, so suppressing
-                # it (e.g. default evening_brief_time == default quiet_hours_start)
-                # would silently make the brief unreachable. Quiet hours still
-                # apply to the ancillary fluid-habit prompts below.
-                is_quiet = is_quiet_hours(user, datetime.now(tz))
-                reminder_dao = ReminderDAO(session)
-                habit_event_dao = HabitEventDAO(session)
+                    try:
+                        tz = pytz.timezone(user.timezone)
+                    except Exception:
+                        logger.warning("Invalid timezone '%s' for user %s, using UTC", user.timezone, user.id)
+                        tz = pytz.UTC
 
-                from bot.lexicon import get_l10n
-                l10n = get_l10n(user.language)
-                fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
-                today_str = datetime.now(tz).date().isoformat()
+                    local_time_str = datetime.now(tz).strftime("%H:%M")
+                    # W1: the morning/evening brief itself is exempt from quiet hours —
+                    # it fires exactly at the time the user configured, so suppressing
+                    # it (e.g. default evening_brief_time == default quiet_hours_start)
+                    # would silently make the brief unreachable. Quiet hours still
+                    # apply to the ancillary fluid-habit prompts below.
+                    is_quiet = is_quiet_hours(user, datetime.now(tz))
+                    reminder_dao = ReminderDAO(session)
+                    habit_event_dao = HabitEventDAO(session)
 
-                morning_brief_time = getattr(user, 'morning_brief_time', "09:00")
-                evening_brief_time = getattr(user, 'evening_brief_time', "23:00")
-                # If the user configured evening_brief_time at or before
-                # morning_brief_time, there's no valid morning..evening window
-                # to bound — fall back to an open-ended morning check instead
-                # of one that can never be true, which would otherwise
-                # silently and permanently suppress the morning brief.
-                has_valid_window = evening_brief_time > morning_brief_time
-                morning_due = (
-                    local_time_str >= morning_brief_time
-                    and (not has_valid_window or local_time_str < evening_brief_time)
-                    and getattr(user, 'last_morning_brief_date', None) != today_str
-                )
-                evening_due = (
-                    local_time_str >= evening_brief_time
-                    and getattr(user, 'last_evening_brief_date', None) != today_str
-                )
+                    from bot.lexicon import get_l10n
+                    l10n = get_l10n(user.language)
+                    fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
+                    today_str = datetime.now(tz).date().isoformat()
 
-                if (
-                    has_valid_window
-                    and local_time_str >= evening_brief_time
-                    and getattr(user, 'last_morning_brief_date', None) != today_str
-                ):
-                    # The morning window (morning_brief_time..evening_brief_time)
-                    # has already fully passed today — e.g. the bot was down, or
-                    # briefs got enabled after evening_brief_time. Sending a
-                    # "good morning" brief this late would be confusing; mark
-                    # it as handled instead of sending a stale one.
-                    user.last_morning_brief_date = today_str
+                    morning_brief_time = getattr(user, 'morning_brief_time', "09:00")
+                    evening_brief_time = getattr(user, 'evening_brief_time', "23:00")
+                    # If the user configured evening_brief_time at or before
+                    # morning_brief_time, there's no valid morning..evening window
+                    # to bound — fall back to an open-ended morning check instead
+                    # of one that can never be true, which would otherwise
+                    # silently and permanently suppress the morning brief.
+                    has_valid_window = evening_brief_time > morning_brief_time
+                    morning_due = (
+                        local_time_str >= morning_brief_time
+                        and (not has_valid_window or local_time_str < evening_brief_time)
+                        and getattr(user, 'last_morning_brief_date', None) != today_str
+                    )
+                    evening_due = (
+                        local_time_str >= evening_brief_time
+                        and getattr(user, 'last_evening_brief_date', None) != today_str
+                    )
 
-                if morning_due:
-                    user.last_morning_brief_date = today_str
-                    tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                    if tasks:
-                        text = _build_morning_text(tasks, user, l10n)
-                        await _send_safe(bot, user.id, text)
-                        logger.info("Morning brief sent to user %s", user.id)
+                    if (
+                        has_valid_window
+                        and local_time_str >= evening_brief_time
+                        and getattr(user, 'last_morning_brief_date', None) != today_str
+                    ):
+                        # The morning window (morning_brief_time..evening_brief_time)
+                        # has already fully passed today — e.g. the bot was down, or
+                        # briefs got enabled after evening_brief_time. Sending a
+                        # "good morning" brief this late would be confusing; mark
+                        # it as handled instead of sending a stale one.
+                        user.last_morning_brief_date = today_str
 
-                    fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
-                    if fluid_brief_only:
-                        lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
-                        for h in fluid_brief_only:
-                            lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
-                        await _send_safe(bot, user.id, "\n".join(lines))
+                    if morning_due:
+                        user.last_morning_brief_date = today_str
+                        tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                        if tasks:
+                            text = _build_morning_text(tasks, user, l10n)
+                            await _send_safe(bot, user.id, text)
+                            logger.info("Morning brief sent to user %s", user.id)
 
-                    for h in fluid_habits:
-                        if is_quiet:
-                            continue
-                        if (h.fluid_mode or "brief_only") != "ask_time":
-                            continue
-                        if h.fluid_planned_date == today_str:
-                            continue
-                        await _send_safe(
-                            bot,
-                            user.id,
-                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
-                            reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
-                        )
-                        logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
+                        # BUG-D1 FIX: commit the "brief sent" flag right away,
+                        # before the best-effort fluid-habit extras below — so a
+                        # failure in those extras can't leave this flag
+                        # uncommitted and cause a duplicate resend next minute.
+                        await session.commit()
 
-                elif evening_due:
-                    user.last_evening_brief_date = today_str
-                    # Also reset in habit_sweeper.sweep_habit_cycles every minute
-                    # (W3) — briefs_enabled=False or a suppressed brief must not
-                    # leave a stale streak stuck until the user reopens the app.
-                    # Kept here too so the reset isn't delayed until evening_due
-                    # for users who do get briefs.
-                    for h in fluid_habits:
-                        await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
+                        try:
+                            fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
+                            if fluid_brief_only:
+                                lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
+                                for h in fluid_brief_only:
+                                    lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
+                                await _send_safe(bot, user.id, "\n".join(lines))
 
-                    completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
-                    pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                    if completed or pending:
-                        text = _build_evening_text(completed, pending, user, l10n)
-                        await _send_safe(
-                            bot,
-                            user.id,
-                            text,
-                            reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
-                        )
-                        logger.info("Evening brief sent to user %s", user.id)
+                            for h in fluid_habits:
+                                if is_quiet:
+                                    continue
+                                if (h.fluid_mode or "brief_only") != "ask_time":
+                                    continue
+                                if h.fluid_planned_date == today_str:
+                                    continue
+                                await _send_safe(
+                                    bot,
+                                    user.id,
+                                    l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
+                                    reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
+                                )
+                                logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
+                        except Exception as e:
+                            logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
 
-                    # "Cycle resolved today" is defined by the presence of a habit
-                    # event, not by fluid_last_completed_date — otherwise a user who
-                    # tapped "Not today" this morning would be asked again tonight.
-                    pending_fluid = [
-                        h
-                        for h in fluid_habits
-                        if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
-                    ]
-                    if pending_fluid and not is_quiet:
-                        await _send_safe(
-                            bot,
-                            user.id,
-                            l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
-                            reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
-                        )
+                    elif evening_due:
+                        user.last_evening_brief_date = today_str
+                        # Also reset in habit_sweeper.sweep_habit_cycles every minute
+                        # (W3) — briefs_enabled=False or a suppressed brief must not
+                        # leave a stale streak stuck until the user reopens the app.
+                        # Kept here too so the reset isn't delayed until evening_due
+                        # for users who do get briefs.
+                        for h in fluid_habits:
+                            await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
 
-                await session.commit()
+                        completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
+                        pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                        if completed or pending:
+                            text = _build_evening_text(completed, pending, user, l10n)
+                            await _send_safe(
+                                bot,
+                                user.id,
+                                text,
+                                reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
+                            )
+                            logger.info("Evening brief sent to user %s", user.id)
+
+                        # BUG-D1 FIX: same reasoning as the morning branch above —
+                        # commit before the best-effort fluid-completion prompt.
+                        await session.commit()
+
+                        try:
+                            # "Cycle resolved today" is defined by the presence of a habit
+                            # event, not by fluid_last_completed_date — otherwise a user who
+                            # tapped "Not today" this morning would be asked again tonight.
+                            pending_fluid = [
+                                h
+                                for h in fluid_habits
+                                if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
+                            ]
+                            if pending_fluid and not is_quiet:
+                                await _send_safe(
+                                    bot,
+                                    user.id,
+                                    l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
+                                    reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                                )
+                        except Exception as e:
+                            logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    logger.error("Error processing daily brief for user %s: %s", uid, e, exc_info=True)
 
     except Exception as e:
         logger.error("Error in daily briefs job: %s", e, exc_info=True)

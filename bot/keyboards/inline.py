@@ -210,6 +210,14 @@ def get_edit_keyboard(
         )
     )
 
+    # Change the scheduled time in place, without recreating the reminder.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_edit_time", "🕒 Change time"),
+            callback_data=f"edit_edit_{reminder_id}",
+        )
+    )
+
     # Snooze — swaps this keyboard for the compact snooze-picker layout.
     builder.row(
         InlineKeyboardButton(
@@ -231,6 +239,18 @@ def get_edit_keyboard(
         )
     )
 
+    return builder.as_markup()
+
+
+def get_undo_delete_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard shown after deletion with a time-limited Undo button."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_delete_undo", "↩ Undo delete"),
+            callback_data=f"undo_del_{reminder_id}",
+        )
+    )
     return builder.as_markup()
 
 

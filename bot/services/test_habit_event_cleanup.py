@@ -20,6 +20,7 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
 from bot.database.dao.user import UserDAO
 from bot.database.models import HabitEvent, User
+import bot.handlers.reminders as reminders_module
 from bot.handlers.reminders import callback_delete_task, callback_edit_delete
 from bot.handlers.settings import callback_clear_all_confirm
 from bot.lexicon import get_l10n
@@ -29,14 +30,22 @@ L10N = get_l10n("en")
 
 
 @pytest.fixture
-async def session():
+async def session_factory():
+    # Deferred-delete tests need to open a second session against the same
+    # in-memory DB (mirrors how _finalize_delete opens its own session via
+    # scheduler_service.session_pool once the undo window elapses).
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with maker() as s:
-        yield s
+    yield maker
     await engine.dispose()
+
+
+@pytest.fixture
+async def session(session_factory):
+    async with session_factory() as s:
+        yield s
 
 
 async def _seed_habit_with_event(session):
@@ -72,14 +81,24 @@ def _callback(data: str):
         chat=SimpleNamespace(id=1),
         message_id=1,
         edit_text=AsyncMock(),
+        edit_reply_markup=AsyncMock(),
         answer=AsyncMock(),
         delete=AsyncMock(),
     )
     return SimpleNamespace(data=data, answer=AsyncMock(), message=message)
 
 
-async def test_del_task_path_removes_habit_events(session) -> None:
+def _fake_scheduler(session_factory) -> SimpleNamespace:
+    return SimpleNamespace(
+        remove_reminder_job=lambda _id: None,
+        remove_nagging_job=lambda _id: None,
+        session_pool=session_factory,
+    )
+
+
+async def test_del_task_path_removes_habit_events(session, session_factory, monkeypatch) -> None:
     # Fixed habits appear in "My Tasks", whose rows carry a del_task_ button.
+    monkeypatch.setattr(reminders_module, "_UNDO_DELETE_WINDOW", 0)
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
     user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1
@@ -87,17 +106,19 @@ async def test_del_task_path_removes_habit_events(session) -> None:
     await callback_delete_task(
         _callback(f"del_task_{reminder.id}"),
         reminder_dao=reminder_dao,
-        habit_event_dao=habit_event_dao,
-        scheduler_service=SimpleNamespace(remove_reminder_job=lambda _id: None),
+        scheduler_service=_fake_scheduler(session_factory),
         user=user,
         l10n=L10N,
     )
+    # Deletion is deferred behind an undo window; wait for it to finalize.
+    await reminders_module.pending_hard_deletes[reminder.id]
 
     assert await _event_count(session) == 0
 
 
-async def test_edit_delete_path_removes_habit_events(session) -> None:
+async def test_edit_delete_path_removes_habit_events(session, session_factory, monkeypatch) -> None:
     # Habits reach this path through the ⚙️ button in the habits list.
+    monkeypatch.setattr(reminders_module, "_UNDO_DELETE_WINDOW", 0)
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
     user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1
@@ -105,13 +126,42 @@ async def test_edit_delete_path_removes_habit_events(session) -> None:
     await callback_edit_delete(
         _callback(f"edit_delete_{reminder.id}"),
         reminder_dao=reminder_dao,
-        habit_event_dao=habit_event_dao,
-        scheduler_service=SimpleNamespace(remove_reminder_job=lambda _id: None),
+        scheduler_service=_fake_scheduler(session_factory),
+        user=user,
+        l10n=L10N,
+    )
+    await reminders_module.pending_hard_deletes[reminder.id]
+
+    assert await _event_count(session) == 0
+
+
+async def test_undo_delete_within_window_keeps_reminder_and_events(session, session_factory) -> None:
+    # Undo tap before the window elapses must cancel the deferred hard-delete
+    # and leave the reminder (and its habit_events) untouched.
+    reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
+    user = await UserDAO(session).get_by_id(1)
+
+    await callback_delete_task(
+        _callback(f"del_task_{reminder.id}"),
+        reminder_dao=reminder_dao,
+        scheduler_service=_fake_scheduler(session_factory),
+        user=user,
+        l10n=L10N,
+    )
+    assert reminder.id in reminders_module.pending_hard_deletes
+
+    await reminders_module.callback_undo_delete(
+        _callback(f"undo_del_{reminder.id}"),
+        reminder_dao=reminder_dao,
+        scheduler_service=SimpleNamespace(schedule_reminder=lambda *a, **kw: None),
         user=user,
         l10n=L10N,
     )
 
-    assert await _event_count(session) == 0
+    assert reminder.id not in reminders_module.pending_hard_deletes
+    assert await _event_count(session) == 1
+    restored = await reminder_dao.get_owned(reminder.id, user.id)
+    assert restored is not None
 
 
 async def test_clear_all_removes_habit_events(session) -> None:

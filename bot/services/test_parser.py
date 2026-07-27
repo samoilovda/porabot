@@ -92,3 +92,154 @@ def test_spanish_time_phrases_are_parsed() -> None:
     assert result.parsed_datetime.hour == 9
     assert "a las 09:00" not in result.clean_text
     assert "llamar a mama" in result.clean_text
+
+
+def test_phone_number_does_not_swallow_weekday() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(
+        "Позвони в Минобр 428-94-45 в среду в 11", "Europe/Moscow"
+    )
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.weekday() == 2  # Wednesday
+    assert result.parsed_datetime.hour == 11
+    assert result.clean_text == "Позвони в Минобр 428-94-45"
+
+
+def test_bare_phone_digits_do_not_swallow_weekday() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(
+        "Позвони маме 89261234567 в пятницу в 18:00", "Europe/Moscow"
+    )
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.weekday() == 4  # Friday
+    assert result.parsed_datetime.hour == 18
+    assert "89261234567" in result.clean_text
+
+
+# ---------------------------------------------------------------------------
+# Written-out numeric dates must survive the phone-number mask
+# ---------------------------------------------------------------------------
+
+def test_dashed_numeric_date_is_not_masked_as_phone_number() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("напомни 15-08-2026 позвонить врачу", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert (result.parsed_datetime.month, result.parsed_datetime.day) == (8, 15)
+    assert result.parsed_datetime.year == 2026
+    assert result.clean_text == "напомни позвонить врачу"
+
+
+def test_space_separated_numeric_date_is_not_masked_as_phone_number() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("напомни 28 07 2026 позвонить врачу", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert (result.parsed_datetime.month, result.parsed_datetime.day) == (7, 28)
+    assert result.parsed_datetime.year == 2026
+
+
+def test_iso_date_is_not_masked_as_phone_number() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("оплатить кредит 2027-05-01", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert (result.parsed_datetime.year, result.parsed_datetime.month, result.parsed_datetime.day) == (2027, 5, 1)
+
+
+# ---------------------------------------------------------------------------
+# dateparser sometimes reads an unrelated bare number (price, quantity, a
+# library bug doubling "N году") as an implausible year — must not surface.
+# ---------------------------------------------------------------------------
+
+def test_price_like_number_is_not_misread_as_a_year() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("заплатить 2000 рублей", "Europe/Moscow")
+
+    assert result.parsed_datetime is None
+    assert result.clean_text == "заплатить 2000 рублей"
+
+
+def test_quantity_number_is_not_misread_as_a_past_year() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("купить 1500 подарок", "Europe/Moscow")
+
+    assert result.parsed_datetime is None
+
+
+def test_bare_number_is_not_misread_as_a_far_future_year() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("занять 3000", "Europe/Moscow")
+
+    assert result.parsed_datetime is None
+
+
+def test_birth_year_mention_is_not_misread_as_a_date() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("напомнить про день рождения 1994", "Europe/Moscow")
+
+    assert result.parsed_datetime is None
+
+
+def test_year_word_dateparser_bug_does_not_produce_absurd_future_date() -> None:
+    # dateparser has a bug where "N году" can be read as year 2*N (e.g.
+    # "2026 году" -> year 4052). Whatever this resolves to, it must not
+    # land wildly outside a plausible reminder window.
+    parser = InputParser()
+
+    result = parser._parse_sync("в 2026 году открыть бизнес", "Europe/Moscow")
+
+    if result.parsed_datetime is not None:
+        assert result.parsed_datetime.year <= datetime.now().year + 5
+
+
+# ---------------------------------------------------------------------------
+# dateparser.search.search_dates returns None (not []) when nothing matches;
+# the year-plausibility filter must not choke on that.
+# ---------------------------------------------------------------------------
+
+def test_no_dateparser_match_does_not_crash(monkeypatch) -> None:
+    import bot.services.parser as parser_module
+
+    monkeypatch.setattr(
+        parser_module.dateparser.search, "search_dates", lambda *a, **kw: None
+    )
+    parser = InputParser()
+
+    result = parser._parse_sync("просто текст без даты", "Europe/Moscow")
+
+    assert result.parsed_datetime is None
+    assert result.clean_text == "просто текст без даты"
+
+
+# ---------------------------------------------------------------------------
+# Regex fallback (stage 4a) must keep minutes and not leak a stray ":MM"
+# into the cleaned task text when dateparser fails to match at all.
+# ---------------------------------------------------------------------------
+
+def test_regex_hour_fallback_preserves_minutes(monkeypatch) -> None:
+    import bot.services.parser as parser_module
+
+    monkeypatch.setattr(
+        parser_module.dateparser.search, "search_dates", lambda *a, **kw: None
+    )
+    parser = InputParser()
+
+    result = parser._parse_sync("в 14:30 позвонить банку", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == 14
+    assert result.parsed_datetime.minute == 30
+    assert result.clean_text == "позвонить банку"
+    assert ":30" not in result.clean_text

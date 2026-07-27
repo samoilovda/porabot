@@ -36,6 +36,25 @@ _morph_vocab: MorphVocab = MorphVocab()
 _dates_extractor: DatesExtractor = DatesExtractor(_morph_vocab)
 _NATASHA_LOCK: threading.Lock = threading.Lock()
 
+# Phone numbers and other long digit runs (with or without separators) confuse
+# dateparser.search_dates's internal text splitting, causing it to drop
+# surrounding date words (e.g. a weekday) and match only a trailing time.
+# Masking them before the search keeps offsets stable for everything else.
+_PHONE_LIKE_RE = re.compile(r"(?<!\d)(?:\d{2,4}(?:[-\s]\d{2,4}){2,4}|\d{7,})(?!\d)")
+# A numeric group in the plausible-year range means the token is a written-out
+# date (e.g. "15-08-2026", "2027-05-01"), not a phone number — don't mask it.
+_YEAR_GROUP_RE = re.compile(r"^(?:19|20)\d{2}$")
+
+
+def _mask_phone_like(text: str) -> str:
+    def _mask(m: re.Match) -> str:
+        token = m.group(0)
+        if any(_YEAR_GROUP_RE.match(g) for g in re.split(r"[-\s]", token)):
+            return token
+        return "#" * len(token)
+
+    return _PHONE_LIKE_RE.sub(_mask, text)
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -177,13 +196,24 @@ class InputParser:
             "PREFER_DAY_OF_MONTH": "current",
         }
         dp_matches = dateparser.search.search_dates(
-            normalized_text, languages=["ru", "en", "es"], settings=dp_settings
+            _mask_phone_like(normalized_text), languages=["ru", "en", "es"], settings=dp_settings
         )
 
         parsed_datetime: Optional[datetime] = None
         confidence = 0.0
         parse_source = "none"
         normalized_changed = normalized_text != text
+
+        # dateparser sometimes latches onto an unrelated bare number (a price,
+        # a quantity, a leftover digit run) and reads it as a year — including
+        # outright bogus ones (e.g. "2026 году" → year 4052, a library bug).
+        # Bound-check keeps only matches landing in a plausible reminder
+        # window; an implausible first match is skipped in favor of the next
+        # candidate rather than accepted outright.
+        now_local = datetime.now(pytz.timezone(timezone))
+        min_year, max_year = now_local.year, now_local.year + 5
+        dp_matches = [(s, dt) for s, dt in (dp_matches or []) if min_year <= dt.year <= max_year]
+
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
@@ -196,7 +226,7 @@ class InputParser:
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             hour_pattern = re.compile(
-                r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})"
+                r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?"
                 r"(?:\s+(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
                 re.IGNORECASE,
             )
@@ -204,8 +234,8 @@ class InputParser:
             if hour_match:
                 result_dt = self._process_hour_expression(
                     hour=int(hour_match.group(1)),
-                    minute=0,
-                    period_token=hour_match.group(2),
+                    minute=int(hour_match.group(2) or 0),
+                    period_token=hour_match.group(3),
                     timezone=timezone,
                     now=now,
                 )

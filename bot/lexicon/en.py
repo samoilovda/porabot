@@ -99,6 +99,7 @@ EN: dict[str, Any] = {
     "btn_repeat_prefix": "🔁 Repeat:",
     "btn_nagging_prefix": "{icon} Nagging:",
     "btn_nagging_repeats_prefix": "🔁 Nag repeats: {count}",
+    "btn_edit_time": "🕒 Change time",
     "btn_delete": "🗑 Delete",
     "btn_task_settings": "⚙️ Settings",
     "status_on": "ON",
@@ -110,6 +111,9 @@ EN: dict[str, Any] = {
 
     "main_menu_fallback": "Main menu",
     "task_deleted": "❌ Task deleted.",  # single definition — canonical value
+    "btn_delete_undo": "↩ Undo delete",
+    "task_restored": "↩️ Task restored.",
+    "undo_too_late": "⌛ Too late to undo.",
     "what_next": "What next?",
     "cmd_cancel": "❌ Reminder creation cancelled.",
     "btn_cancel": "❌ Cancel",

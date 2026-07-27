@@ -92,3 +92,29 @@ def test_spanish_time_phrases_are_parsed() -> None:
     assert result.parsed_datetime.hour == 9
     assert "a las 09:00" not in result.clean_text
     assert "llamar a mama" in result.clean_text
+
+
+def test_phone_number_does_not_swallow_weekday() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(
+        "Позвони в Минобр 428-94-45 в среду в 11", "Europe/Moscow"
+    )
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.weekday() == 2  # Wednesday
+    assert result.parsed_datetime.hour == 11
+    assert result.clean_text == "Позвони в Минобр 428-94-45"
+
+
+def test_bare_phone_digits_do_not_swallow_weekday() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(
+        "Позвони маме 89261234567 в пятницу в 18:00", "Europe/Moscow"
+    )
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.weekday() == 4  # Friday
+    assert result.parsed_datetime.hour == 18
+    assert "89261234567" in result.clean_text

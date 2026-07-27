@@ -99,6 +99,7 @@ RU: dict[str, Any] = {
     "btn_repeat_prefix": "🔁 Повтор:",
     "btn_nagging_prefix": "{icon} Зуд (Nagging):",
     "btn_nagging_repeats_prefix": "🔁 Повторы зуда: {count}",
+    "btn_edit_time": "🕒 Изменить время",
     "btn_delete": "🗑 Удалить",
     "btn_task_settings": "⚙️ Настройки",
     "status_on": "ВКЛ",
@@ -110,6 +111,9 @@ RU: dict[str, Any] = {
     
     "main_menu_fallback": "Главное меню",
     "task_deleted": "❌ Задача удалена.",  # single definition — canonical value
+    "btn_delete_undo": "↩ Отменить удаление",
+    "task_restored": "↩️ Задача восстановлена.",
+    "undo_too_late": "⌛ Время для отмены истекло.",
     "what_next": "Что дальше?",
     "cmd_cancel": "❌ Создание напоминания отменено.",
     "btn_cancel": "❌ Отмена",

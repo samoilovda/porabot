@@ -36,6 +36,16 @@ _morph_vocab: MorphVocab = MorphVocab()
 _dates_extractor: DatesExtractor = DatesExtractor(_morph_vocab)
 _NATASHA_LOCK: threading.Lock = threading.Lock()
 
+# Phone numbers and other long digit runs (with or without separators) confuse
+# dateparser.search_dates's internal text splitting, causing it to drop
+# surrounding date words (e.g. a weekday) and match only a trailing time.
+# Masking them before the search keeps offsets stable for everything else.
+_PHONE_LIKE_RE = re.compile(r"(?<!\d)(?:\d{2,4}(?:[-\s]\d{2,4}){2,4}|\d{7,})(?!\d)")
+
+
+def _mask_phone_like(text: str) -> str:
+    return _PHONE_LIKE_RE.sub(lambda m: "#" * len(m.group(0)), text)
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -177,7 +187,7 @@ class InputParser:
             "PREFER_DAY_OF_MONTH": "current",
         }
         dp_matches = dateparser.search.search_dates(
-            normalized_text, languages=["ru", "en", "es"], settings=dp_settings
+            _mask_phone_like(normalized_text), languages=["ru", "en", "es"], settings=dp_settings
         )
 
         parsed_datetime: Optional[datetime] = None

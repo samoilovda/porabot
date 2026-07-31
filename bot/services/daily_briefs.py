@@ -12,7 +12,7 @@ from datetime import datetime
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
@@ -54,6 +54,30 @@ def _build_evening_text(completed, pending, user, l10n: dict) -> str:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         lines.append(f"❌ {escape_markdown(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
     return "\n".join(lines)
+
+
+async def _claim_brief_slot(session, *, user, column, today_str: str) -> bool:
+    """Atomically mark today's brief slot as sent, returning False if lost.
+
+    A plain read-then-write (check the date, send, then persist the flag)
+    has a TOCTOU window: if this job ever runs concurrently — an overlapping
+    deploy, a stray second process, anything not ruled out by APScheduler's
+    own single-process max_instances=1 — two ticks can both read "not sent
+    yet" before either commits, and both send the identical brief. A single
+    conditional UPDATE makes the claim atomic: SQLite serializes writers, so
+    only one caller's UPDATE can match the WHERE clause and actually change
+    a row; a loser sees rowcount 0 and must not send.
+    """
+    result = await session.execute(
+        update(User)
+        .where(User.id == user.id, or_(column.is_(None), column != today_str))
+        .values(**{column.key: today_str})
+    )
+    await session.commit()
+    claimed = result.rowcount == 1
+    if claimed:
+        setattr(user, column.key, today_str)
+    return claimed
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> None:
@@ -182,46 +206,46 @@ async def process_daily_briefs() -> None:
                         user.last_morning_brief_date = today_str
 
                     if morning_due:
-                        user.last_morning_brief_date = today_str
-                        tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                        if tasks:
-                            text = _build_morning_text(tasks, user, l10n)
-                            await _send_safe(bot, user.id, text)
-                            logger.info("Morning brief sent to user %s", user.id)
+                        # Atomically claim today's morning slot before sending —
+                        # see _claim_brief_slot. A lost claim means another
+                        # (possibly concurrent) run already handled this user
+                        # today, so skip the brief and its extras entirely.
+                        claimed = await _claim_brief_slot(
+                            session, user=user, column=User.last_morning_brief_date, today_str=today_str
+                        )
+                        if claimed:
+                            tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                            if tasks:
+                                text = _build_morning_text(tasks, user, l10n)
+                                await _send_safe(bot, user.id, text)
+                                logger.info("Morning brief sent to user %s", user.id)
 
-                        # BUG-D1 FIX: commit the "brief sent" flag right away,
-                        # before the best-effort fluid-habit extras below — so a
-                        # failure in those extras can't leave this flag
-                        # uncommitted and cause a duplicate resend next minute.
-                        await session.commit()
+                            try:
+                                fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
+                                if fluid_brief_only:
+                                    lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
+                                    for h in fluid_brief_only:
+                                        lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
+                                    await _send_safe(bot, user.id, "\n".join(lines))
 
-                        try:
-                            fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
-                            if fluid_brief_only:
-                                lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
-                                for h in fluid_brief_only:
-                                    lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
-                                await _send_safe(bot, user.id, "\n".join(lines))
-
-                            for h in fluid_habits:
-                                if is_quiet:
-                                    continue
-                                if (h.fluid_mode or "brief_only") != "ask_time":
-                                    continue
-                                if h.fluid_planned_date == today_str:
-                                    continue
-                                await _send_safe(
-                                    bot,
-                                    user.id,
-                                    l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
-                                    reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
-                                )
-                                logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
-                        except Exception as e:
-                            logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
+                                for h in fluid_habits:
+                                    if is_quiet:
+                                        continue
+                                    if (h.fluid_mode or "brief_only") != "ask_time":
+                                        continue
+                                    if h.fluid_planned_date == today_str:
+                                        continue
+                                    await _send_safe(
+                                        bot,
+                                        user.id,
+                                        l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
+                                        reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
+                                    )
+                                    logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
+                            except Exception as e:
+                                logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
 
                     elif evening_due:
-                        user.last_evening_brief_date = today_str
                         # Also reset in habit_sweeper.sweep_habit_cycles every minute
                         # (W3) — briefs_enabled=False or a suppressed brief must not
                         # leave a stale streak stuck until the user reopens the app.
@@ -230,40 +254,41 @@ async def process_daily_briefs() -> None:
                         for h in fluid_habits:
                             await reminder_dao.reset_stale_fluid_streak_if_needed(h.id, user.timezone)
 
-                        completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
-                        pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                        if completed or pending:
-                            text = _build_evening_text(completed, pending, user, l10n)
-                            await _send_safe(
-                                bot,
-                                user.id,
-                                text,
-                                reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
-                            )
-                            logger.info("Evening brief sent to user %s", user.id)
-
-                        # BUG-D1 FIX: same reasoning as the morning branch above —
-                        # commit before the best-effort fluid-completion prompt.
-                        await session.commit()
-
-                        try:
-                            # "Cycle resolved today" is defined by the presence of a habit
-                            # event, not by fluid_last_completed_date — otherwise a user who
-                            # tapped "Not today" this morning would be asked again tonight.
-                            pending_fluid = [
-                                h
-                                for h in fluid_habits
-                                if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
-                            ]
-                            if pending_fluid and not is_quiet:
+                        # Same atomic claim as the morning branch above.
+                        claimed = await _claim_brief_slot(
+                            session, user=user, column=User.last_evening_brief_date, today_str=today_str
+                        )
+                        if claimed:
+                            completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
+                            pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                            if completed or pending:
+                                text = _build_evening_text(completed, pending, user, l10n)
                                 await _send_safe(
                                     bot,
                                     user.id,
-                                    l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
-                                    reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                                    text,
+                                    reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
                                 )
-                        except Exception as e:
-                            logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)
+                                logger.info("Evening brief sent to user %s", user.id)
+
+                            try:
+                                # "Cycle resolved today" is defined by the presence of a habit
+                                # event, not by fluid_last_completed_date — otherwise a user who
+                                # tapped "Not today" this morning would be asked again tonight.
+                                pending_fluid = [
+                                    h
+                                    for h in fluid_habits
+                                    if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
+                                ]
+                                if pending_fluid and not is_quiet:
+                                    await _send_safe(
+                                        bot,
+                                        user.id,
+                                        l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
+                                        reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                                    )
+                            except Exception as e:
+                                logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)
 
                     await session.commit()
                 except Exception as e:

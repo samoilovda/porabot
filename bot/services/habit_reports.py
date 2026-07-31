@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.user import UserDAO
@@ -216,6 +216,25 @@ async def process_habit_reports() -> None:
                     if now_local.strftime("%H:%M") != getattr(user, "habit_report_time", "23:50"):
                         continue
                     if now_local.weekday() != int(getattr(user, "habit_report_weekday", 6)):
+                        continue
+
+                    # Atomic claim before sending — mirrors daily_briefs's
+                    # _claim_brief_slot. Without a persisted dedup flag, an
+                    # exact-minute string match has no protection at all
+                    # against the job somehow firing twice during that minute.
+                    today_key = now_local.date().isoformat()
+                    if getattr(user, "last_habit_report_date", None) == today_key:
+                        continue
+                    claim = await session.execute(
+                        update(User)
+                        .where(
+                            User.id == user.id,
+                            or_(User.last_habit_report_date.is_(None), User.last_habit_report_date != today_key),
+                        )
+                        .values(last_habit_report_date=today_key)
+                    )
+                    await session.commit()
+                    if claim.rowcount != 1:
                         continue
 
                     await _process_user_reports(session, bot, user, now_local)

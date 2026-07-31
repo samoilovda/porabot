@@ -194,6 +194,10 @@ class User(Base):
     # Python datetime.weekday(): Mon=0 .. Sun=6. Default Sunday.
     habit_report_weekday: Mapped[int] = mapped_column(Integer, default=6, server_default="6")
     habit_report_time: Mapped[str] = mapped_column(String, default="23:50", server_default="23:50")
+    # Local date (YYYY-MM-DD) the habit report was last sent — without this,
+    # an exact-minute match with no persisted dedup flag would resend the
+    # report if the job ever fired more than once during that minute.
+    last_habit_report_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # When user was added to database (for analytics/debugging)
     # Python-side default wins on ORM inserts (SQLAlchemy always applies it),

@@ -21,9 +21,10 @@ def _load_module(module_rel_path: str):
 class _FakeSession:
     def __init__(self):
         self.commit = AsyncMock()
+        self.rollback = AsyncMock()
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]))
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]), rowcount=1)
 
     async def __aenter__(self):
         return self

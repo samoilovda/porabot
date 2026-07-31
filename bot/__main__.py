@@ -111,8 +111,31 @@ async def main() -> None:
     await scheduler_service.reconcile_jobs_with_db()
     logger.info("Starting polling…")
 
+    # Docker sends SIGTERM on `docker compose up -d --build` recreate / `stop`.
+    # Python's default disposition for SIGTERM terminates the process
+    # immediately — no `finally` blocks, no chance to finish an in-flight
+    # brief/reminder send before its "already sent" flag is committed. Convert
+    # it into a normal asyncio shutdown instead, so a deploy landing mid-tick
+    # can't race with the next tick and send a duplicate.
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            # add_signal_handler isn't supported on Windows event loops —
+            # Ctrl+C there still falls through to the KeyboardInterrupt
+            # handler at the bottom of this file.
+            pass
+
     try:
-        await dp.start_polling(bot)
+        polling_task = asyncio.create_task(dp.start_polling(bot))
+        await stop_event.wait()
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
     finally:
         try:
             await bot.session.close()

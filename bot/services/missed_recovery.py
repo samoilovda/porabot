@@ -6,7 +6,7 @@ from datetime import datetime
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
@@ -94,6 +94,21 @@ async def process_missed_task_recovery() -> None:
                 if not overdue:
                     continue
 
+                # Atomic claim before sending — mirrors daily_briefs._claim_brief_slot.
+                # A plain read-then-send-then-write leaves a window where two
+                # concurrent ticks can both see "not sent yet" and both send.
+                claim = await session.execute(
+                    update(User)
+                    .where(
+                        User.id == user.id,
+                        or_(User.last_missed_recovery_date.is_(None), User.last_missed_recovery_date != today_key),
+                    )
+                    .values(last_missed_recovery_date=today_key)
+                )
+                await session.commit()
+                if claim.rowcount != 1:
+                    continue
+
                 l10n = get_l10n(user.language)
                 lines = [l10n.get("missed_recovery_title", "📎 Missed tasks: {count}").format(count=len(overdue))]
                 for task in overdue:
@@ -102,8 +117,6 @@ async def process_missed_task_recovery() -> None:
                 text = "\n".join(lines)
 
                 await _send_safe(bot, user.id, text, l10n)
-                user.last_missed_recovery_date = today_key
-                await session.commit()
 
     except Exception as e:
         logger.error("Error in missed-task recovery job: %s", e, exc_info=True)

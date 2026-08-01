@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -32,7 +32,9 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
     reminders_module = _load_module("bot/handlers/reminders.py")
 
     old_execution_time = datetime(2026, 5, 1, 9, 0, 0)
-    chosen_time = datetime.now().replace(microsecond=0) + timedelta(hours=2)
+    # Naive but UTC — user_timezone below is "UTC", and _save_and_show_edit
+    # takes this naive datetime as-is in that timezone, not machine-local.
+    chosen_time = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None) + timedelta(hours=2)
 
     reminder = SimpleNamespace(
         id=5,

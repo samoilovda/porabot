@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -51,7 +51,7 @@ async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatc
         last_evening_brief_date=None,
     )
     task = SimpleNamespace(
-        execution_time=datetime.now(),
+        execution_time=datetime.now(timezone.utc).replace(tzinfo=None),
         reminder_text="Standup",
     )
 
@@ -86,7 +86,7 @@ async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatc
         # "%H:%M" match would have missed it entirely).
         await daily_briefs.process_daily_briefs()
         assert send_message.await_count == 1
-        assert fake_user.last_morning_brief_date == datetime.now().date().isoformat()
+        assert fake_user.last_morning_brief_date == datetime.now(timezone.utc).date().isoformat()
 
         # Second run a minute later same day must not resend.
         await daily_briefs.process_daily_briefs()

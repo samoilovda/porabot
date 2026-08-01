@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -55,7 +55,7 @@ async def test_stale_morning_window_is_suppressed_only_evening_brief_sent(monkey
         last_morning_brief_date=None,
         last_evening_brief_date=None,
     )
-    pending_task = SimpleNamespace(id=1, execution_time=datetime.now(), reminder_text="Standup")
+    pending_task = SimpleNamespace(id=1, execution_time=datetime.now(timezone.utc).replace(tzinfo=None), reminder_text="Standup")
 
     class _FakeReminderDAO:
         def __init__(self, session):
@@ -97,7 +97,7 @@ async def test_stale_morning_window_is_suppressed_only_evening_brief_sent(monkey
         sent_text = send_message.await_args.kwargs.get("text") or send_message.await_args.args[1]
         assert "Standup" in sent_text  # evening text lists pending tasks
 
-        today_str = datetime.now().date().isoformat()
+        today_str = datetime.now(timezone.utc).date().isoformat()
         assert fake_user.last_morning_brief_date == today_str
         assert fake_user.last_evening_brief_date == today_str
     finally:
@@ -125,7 +125,7 @@ async def test_morning_brief_still_sent_when_evening_time_misconfigured_before_m
         last_morning_brief_date=None,
         last_evening_brief_date=None,
     )
-    pending_task = SimpleNamespace(id=1, execution_time=datetime.now(), reminder_text="Standup")
+    pending_task = SimpleNamespace(id=1, execution_time=datetime.now(timezone.utc).replace(tzinfo=None), reminder_text="Standup")
 
     class _FakeReminderDAO:
         def __init__(self, session):

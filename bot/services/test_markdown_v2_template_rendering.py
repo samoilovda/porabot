@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -43,7 +43,9 @@ async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() ->
     from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.memory import MemoryStorage
 
-    future_time = datetime.now().replace(microsecond=0) + timedelta(hours=2)
+    # Naive but UTC — user.timezone below is "UTC", and the handler takes
+    # this naive datetime as-is in that timezone, not machine-local.
+    future_time = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None) + timedelta(hours=2)
     reminder = SimpleNamespace(
         id=1,
         reminder_text="call *mom*",

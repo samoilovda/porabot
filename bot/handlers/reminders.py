@@ -769,6 +769,7 @@ async def callback_refresh_tasks(
 async def callback_recovery_done_all(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
@@ -783,11 +784,22 @@ async def callback_recovery_done_all(
         if _is_habit_like(task):
             due_at = task.habit_active_due_at or task.execution_time
             if due_at is not None:
-                await reminder_dao.apply_habit_streak_completion(
+                streak_result = await reminder_dao.apply_habit_streak_completion(
                     task.id,
                     due_at_utc_naive=due_at,
                     completed_at_utc_naive=now_utc.replace(tzinfo=None),
                 )
+                # P1-5: without this, weekly/monthly habit reports (built
+                # from habit_events, not the streak counters) never see a
+                # habit completed via this bulk "Done all" recovery action.
+                if not streak_result.get("already_counted"):
+                    await habit_event_dao.record(
+                        reminder=task,
+                        user_tz=user.timezone,
+                        outcome="done",
+                        source="recovery",
+                        due_at_utc_naive=due_at,
+                    )
         await reminder_dao.mark_done(task.id)
         if task.is_recurring and task.rrule_string:
             try:

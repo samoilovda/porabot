@@ -189,16 +189,17 @@ async def test_recovery_done_all_updates_habit_streak() -> None:
     )
     reminder_dao = SimpleNamespace(
         get_overdue_pending_tasks=AsyncMock(return_value=[task]),
-        apply_habit_streak_completion=AsyncMock(),
+        apply_habit_streak_completion=AsyncMock(return_value={"already_counted": False, "counted": True}),
         mark_done=AsyncMock(),
         session=SimpleNamespace(rollback=AsyncMock()),
     )
+    habit_event_dao = SimpleNamespace(record=AsyncMock(return_value=True))
     scheduler_service = SimpleNamespace(
         schedule_reminder=lambda *a, **k: None,
         remove_reminder_job=lambda *a, **k: None,
         remove_nagging_job=lambda *a, **k: None,
     )
-    user = SimpleNamespace(id=42)
+    user = SimpleNamespace(id=42, timezone="UTC")
     callback = SimpleNamespace(
         message=SimpleNamespace(edit_text=AsyncMock()),
         answer=AsyncMock(),
@@ -206,7 +207,7 @@ async def test_recovery_done_all_updates_habit_streak() -> None:
     l10n = {"recovery_done_all_done": "✅ Marked {count} overdue tasks as done."}
 
     await reminders_module.callback_recovery_done_all(
-        callback, reminder_dao, scheduler_service, user, l10n
+        callback, reminder_dao, habit_event_dao, scheduler_service, user, l10n
     )
 
     reminder_dao.apply_habit_streak_completion.assert_awaited_once()
@@ -214,3 +215,12 @@ async def test_recovery_done_all_updates_habit_streak() -> None:
     assert call.args[0] == 1
     assert call.kwargs["due_at_utc_naive"] == due
     reminder_dao.mark_done.assert_awaited_once_with(1)
+
+    # P1-5: weekly/monthly reports are built from habit_events, not the
+    # streak counters — "Done all" must record one too.
+    habit_event_dao.record.assert_awaited_once()
+    record_call = habit_event_dao.record.await_args
+    assert record_call.kwargs["reminder"] is task
+    assert record_call.kwargs["outcome"] == "done"
+    assert record_call.kwargs["source"] == "recovery"
+    assert record_call.kwargs["due_at_utc_naive"] == due

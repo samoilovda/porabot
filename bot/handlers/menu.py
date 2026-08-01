@@ -21,7 +21,7 @@ from aiogram.types import Message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.handlers.habits import _habit_motivation_text, get_habits_keyboard
-from bot.handlers.reminders import _format_task_line_md2, _paginate_tasks_for_list
+from bot.handlers.reminders import _paginate_tasks_for_list, _render_tasks_list_text
 from bot.handlers.settings import _render_settings_text
 from bot.keyboards.inline import get_settings_keyboard, get_tasks_list_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard
@@ -48,13 +48,13 @@ async def btn_my_tasks(
         await message.answer(l10n["no_tasks"], reply_markup=get_main_menu_keyboard(l10n))
         return
 
-    shown_tasks, overflow_suffix = _paginate_tasks_for_list(tasks, l10n)
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
-    if overflow_suffix:
-        lines.append(overflow_suffix)
-
-    safe_text = "\n".join(lines)
-    await message.answer(safe_text, reply_markup=get_tasks_list_keyboard(shown_tasks, l10n), parse_mode="MarkdownV2")
+    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks)
+    safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
+    await message.answer(
+        safe_text,
+        reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
+        parse_mode="MarkdownV2",
+    )
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_settings"]))

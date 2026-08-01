@@ -240,7 +240,11 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            .order_by(Reminder.execution_time)  # Order by when task fires (earliest first)
+            # P1-12: .id as a tiebreaker makes the order fully stable across
+            # requests (two tasks with the identical execution_time could
+            # otherwise swap positions between page loads, which would
+            # shuffle pagination).
+            .order_by(Reminder.execution_time, Reminder.id)  # Order by when task fires (earliest first)
         )
         return result.scalars().all()
 

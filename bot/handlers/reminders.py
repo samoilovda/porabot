@@ -62,8 +62,9 @@ _PARSE_CONFIDENCE_THRESHOLD = 0.7
 # Telegram caps inline keyboards well below 100 buttons and messages at 4096
 # chars. get_tasks_list_keyboard adds up to 3 buttons per task, so an
 # unbounded task list can blow both limits and the list silently fails to
-# render at all. Cap what's shown/rendered into buttons.
-_TASKS_PAGE_LIMIT = 25
+# render at all. Page what's shown/rendered into buttons instead of just
+# truncating with an unreachable "...and N more" tail (P1-12).
+_TASKS_PAGE_SIZE = 25
 
 
 # ---------------------------------------------------------------------------
@@ -121,19 +122,28 @@ def _format_task_line_md2(task, user: User) -> str:
     return f"▫️ `{dt_str}`: {flags}{escape_markdown_v2(task.reminder_text)}"
 
 
-def _paginate_tasks_for_list(tasks: list, l10n: dict[str, Any]) -> tuple[list, str]:
-    """Cap the task list to _TASKS_PAGE_LIMIT so the message text and its
-    per-task keyboard buttons both stay within Telegram's limits.
+def _paginate_tasks_for_list(tasks: list, page: int = 0) -> tuple[list, int, int]:
+    """Slice *tasks* (already in a stable order — see get_user_reminders'
+    (execution_time, id) ordering) into pages of _TASKS_PAGE_SIZE, both so
+    the message text and its per-task keyboard buttons stay within
+    Telegram's limits, and so tasks beyond the first page are actually
+    reachable (P1-12) instead of just listed as "...and N more".
 
-    Returns (shown_tasks, overflow_suffix_line) — overflow_suffix_line is ""
-    when nothing was truncated.
+    *page* is clamped into range. Returns (shown_tasks, clamped_page,
+    total_pages) — total_pages is always >= 1.
     """
-    if len(tasks) <= _TASKS_PAGE_LIMIT:
-        return tasks, ""
-    shown = tasks[:_TASKS_PAGE_LIMIT]
-    remaining = len(tasks) - _TASKS_PAGE_LIMIT
-    suffix = l10n.get("tasks_more", "…and {count} more").format(count=remaining)
-    return shown, suffix
+    total_pages = max(1, (len(tasks) + _TASKS_PAGE_SIZE - 1) // _TASKS_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * _TASKS_PAGE_SIZE
+    shown = tasks[start:start + _TASKS_PAGE_SIZE]
+    return shown, page, total_pages
+
+
+def _render_tasks_list_text(shown_tasks: list, user: User, l10n: dict[str, Any], page: int, total_pages: int) -> str:
+    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
+    if total_pages > 1:
+        lines.append(l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=page + 1, total=total_pages))
+    return "\n".join(lines)
 
 
 def _message_task_key(message: Message) -> tuple[int, int]:
@@ -760,24 +770,38 @@ async def callback_close_tasks(callback: CallbackQuery) -> None:
     await callback.message.delete()
 
 
-@router.callback_query(F.data == "refresh_tasks")
-async def callback_refresh_tasks(
+@router.callback_query(F.data == "noop")
+async def callback_noop(callback: CallbackQuery) -> None:
+    """The page-indicator button in get_tasks_list_keyboard — not clickable
+    in any meaningful sense, just needs SOME callback_data."""
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tasks_page_"))
+async def callback_tasks_page(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
+    """Render a specific page of "My Tasks" — also doubles as Refresh
+    (which points at the CURRENT page, see get_tasks_list_keyboard) so both
+    stay on the same page instead of bouncing back to the first one."""
+    try:
+        requested_page = int(callback.data[len("tasks_page_"):])
+    except ValueError:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
     tasks = await reminder_dao.get_user_reminders(user.id)
     if not tasks:
         await callback.message.edit_text(l10n["no_tasks"], reply_markup=None)
         await callback.answer()
         return
 
-    shown_tasks, overflow_suffix = _paginate_tasks_for_list(tasks, l10n)
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
-    if overflow_suffix:
-        lines.append(overflow_suffix)
-
-    safe_text = "\n".join(lines)
+    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=requested_page)
+    safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
     await callback.message.edit_text(
-        safe_text, reply_markup=get_tasks_list_keyboard(shown_tasks, l10n), parse_mode="MarkdownV2"
+        safe_text,
+        reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
+        parse_mode="MarkdownV2",
     )
     await callback.answer()
 

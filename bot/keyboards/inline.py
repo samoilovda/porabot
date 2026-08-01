@@ -453,6 +453,9 @@ def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
 def get_tasks_list_keyboard(
     tasks: list[Any],  # type: ignore
     l10n: dict[str, Any],
+    *,
+    page: int = 0,
+    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for task list view.
@@ -460,8 +463,10 @@ def get_tasks_list_keyboard(
     Shows Done, Settings, and Delete buttons for each task, plus navigation controls.
 
     Args:
-        tasks: List of Reminder objects (or dicts with 'id' and 'reminder_text')
+        tasks: List of Reminder objects (or dicts with 'id' and 'reminder_text') — one page's worth
         l10n: Localization dictionary
+        page: 0-based index of the page currently shown
+        total_pages: Total number of pages across the full task list
 
     Returns:
         InlineKeyboardMarkup with per-task actions and navigation
@@ -505,9 +510,30 @@ def get_tasks_list_keyboard(
             ),
         )
 
-    # Navigation row
+    # Page navigation row — only shown when there's more than one page.
+    if total_pages > 1:
+        page_row = []
+        if page > 0:
+            page_row.append(
+                InlineKeyboardButton(text=l10n.get("btn_prev_page", "◀️"), callback_data=f"tasks_page_{page - 1}")
+            )
+        page_row.append(
+            InlineKeyboardButton(
+                text=l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=page + 1, total=total_pages),
+                callback_data="noop",
+            )
+        )
+        if page < total_pages - 1:
+            page_row.append(
+                InlineKeyboardButton(text=l10n.get("btn_next_page", "▶️"), callback_data=f"tasks_page_{page + 1}")
+            )
+        builder.row(*page_row)
+
+    # Navigation row — Refresh re-renders the CURRENT page, not page 0, so
+    # an action taken from here and a manual refresh both keep the user
+    # where they were instead of bouncing back to the start of the list.
     builder.row(
-        InlineKeyboardButton(text=l10n["btn_refresh"], callback_data="refresh_tasks"),
+        InlineKeyboardButton(text=l10n["btn_refresh"], callback_data=f"tasks_page_{page}"),
         InlineKeyboardButton(text=l10n["btn_completed_tasks"], callback_data="show_completed"),
         InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
     )

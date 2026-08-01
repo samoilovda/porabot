@@ -81,7 +81,9 @@ EN: dict[str, Any] = {
     # Tasks List
     "no_tasks": "🎉 You have no active tasks. Relax!",
     "tasks_header": "📋 *Your tasks:*\n",
-    "tasks_more": "…and {count} more",
+    "tasks_page_indicator": "📄 {page}/{total}",
+    "btn_prev_page": "◀️",
+    "btn_next_page": "▶️",
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
     "btn_close": "❌ Close",

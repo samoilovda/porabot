@@ -53,6 +53,10 @@ def test_spanish_is_not_accidentally_falling_back_to_english() -> None:
         "snooze_30m",
         "snooze_1h",
         "snooze_2h",
+        # Pagination controls: arrows/page-number format are language-neutral.
+        "btn_prev_page",
+        "btn_next_page",
+        "tasks_page_indicator",
     }
     equal_keys = {k for k, v in EN.items() if ES.get(k) == v}
     assert equal_keys <= allowed_equal

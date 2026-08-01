@@ -41,6 +41,36 @@ from bot.services.delete_cleanup import setup_delete_cleanup
 from bot.handlers.reminders import _cleanup_stale_timers
 
 
+async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
+    """Run *polling_coro* until either *stop_event* is set or it ends on its own.
+
+    Waiting on stop_event alone (the earlier version of this function) left
+    an unhandled exception from polling silently un-retrieved: the process
+    would just hang forever with dead polling, Docker would never see a
+    non-zero exit, and `restart: always` would never kick in. Waiting on
+    FIRST_COMPLETED between the two means a crash surfaces immediately.
+    """
+    polling_task = asyncio.ensure_future(polling_coro)
+    stop_task = asyncio.ensure_future(stop_event.wait())
+    done, pending = await asyncio.wait({polling_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    for task in pending:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    if polling_task in done and not stop_event.is_set():
+        # Polling ended on its own, not via a shutdown signal — surface
+        # whatever it raised (or a plain error if it just returned) so the
+        # process exits non-zero instead of quietly staying alive but dead.
+        exc = polling_task.exception()
+        if exc is not None:
+            raise exc
+        raise RuntimeError("Polling stopped unexpectedly without a shutdown signal.")
+
+
 async def _set_bot_commands(bot: Bot) -> None:
     """Populate Telegram's command menu (N2) — otherwise /help and /cancel are
     invisible unless a user already knows to type them."""
@@ -131,13 +161,7 @@ async def main() -> None:
             pass
 
     try:
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        await stop_event.wait()
-        polling_task.cancel()
-        try:
-            await polling_task
-        except asyncio.CancelledError:
-            pass
+        await _run_until_stopped(dp.start_polling(bot), stop_event)
     finally:
         try:
             await bot.session.close()

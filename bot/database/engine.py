@@ -42,11 +42,21 @@ def create_engine(database_url: str) -> AsyncEngine:
         # locked" — for daily_briefs specifically, that meant a brief already
         # sent to the user but its "already sent today" flag never
         # persisted, so the same brief resent on the next tick.
+        #
+        # foreign_keys=ON: SQLite ships with FK enforcement OFF by default —
+        # the models declare ForeignKey() but nothing was actually checking
+        # them, so the same orphan-creating bug that raises IntegrityError on
+        # PostgreSQL would silently corrupt data here. This only enforces
+        # constraints on FUTURE writes on THIS connection (SQLite never
+        # retroactively validates existing rows), so it can't crash on
+        # startup over pre-existing data — see init_db's foreign_key_check
+        # diagnostic below for surfacing those instead.
         @event.listens_for(engine.sync_engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
     return engine
@@ -58,22 +68,25 @@ def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
 
 
 async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> None:
-    """Best-effort ALTER TABLE ADD COLUMN, isolated in its own SAVEPOINT.
+    """ALTER TABLE ADD COLUMN *col*, but only if it isn't already there.
 
-    On PostgreSQL, a failed statement poisons the rest of the enclosing
-    transaction until it's rolled back — begin_nested() (SAVEPOINT) scopes
-    the rollback to just this one statement so later migrations in the same
-    init_db() transaction still run. OperationalError covers SQLite's
-    "duplicate column" error; ProgrammingError covers PostgreSQL's.
+    P1-7: this used to just attempt the ALTER and swallow ANY
+    OperationalError/ProgrammingError as "column already exists" — which
+    also silently hides a permissions error, a locked/corrupt database, a
+    typo'd column type, or any other genuine failure, on every single
+    startup. Checking the inspector first means the ALTER is only even
+    attempted when the column is actually missing, so an error from that
+    point on is real and gets to propagate (and fail startup loudly,
+    matching P1-7's "startup schema-version check" spirit) instead of
+    being masked forever.
     """
-    from sqlalchemy import text
-    from sqlalchemy.exc import OperationalError, ProgrammingError
+    from sqlalchemy import inspect, text
 
-    try:
-        async with conn.begin_nested():
-            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
-    except (OperationalError, ProgrammingError):
-        pass  # column already exists
+    existing_columns = await conn.run_sync(lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns(table)})
+    if col in existing_columns:
+        return
+    async with conn.begin_nested():
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
 
 
 async def init_db(engine: AsyncEngine) -> None:
@@ -176,6 +189,25 @@ async def init_db(engine: AsyncEngine) -> None:
                 )
         except (OperationalError, ProgrammingError):
             pass
+
+        # P1-7: PRAGMA foreign_keys=ON (see create_engine) only enforces
+        # constraints on future writes — it never retroactively validates
+        # rows that already exist. Surface any pre-existing orphan here as a
+        # loud warning instead of leaving it to fail mysteriously the first
+        # time something touches it, but don't block startup over it: fixing
+        # historical data is a deliberate, separate migration, not something
+        # to improvise at boot.
+        if engine.dialect.name == "sqlite":
+            violations = await conn.execute(text("PRAGMA foreign_key_check"))
+            violation_rows = violations.fetchall()
+            if violation_rows:
+                logger.warning(
+                    "Found %d foreign key violation(s) in existing data — "
+                    "these rows predate strict FK enforcement and need a "
+                    "dedicated cleanup migration: %s",
+                    len(violation_rows),
+                    violation_rows[:10],
+                )
 
 
 async def dispose_engine(engine: AsyncEngine) -> None:

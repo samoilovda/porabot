@@ -163,3 +163,29 @@ async def test_reconcile_restores_delivery_after_send_retries_were_exhausted() -
     await service.reconcile_jobs_with_db()
 
     assert scheduler.get_job("5") is not None
+
+
+async def test_reconcile_backfills_only_the_single_oldest_missed_cycle_for_multi_day_downtime() -> None:
+    """P1-4: bot was down across SEVERAL missed daily occurrences. Reconcile
+    must deliver (late) exactly one catch-up for the oldest missed cycle,
+    not silently skip all of them nor try to backfill every single one —
+    execution_time stays at the original (oldest) missed slot so
+    _execute_reminder computes the true next occurrence relative to "now"
+    once that catch-up actually fires."""
+    scheduler = AsyncIOScheduler()
+    execution_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=5)
+    reminder = _make_reminder(
+        id=6,
+        is_recurring=True,
+        rrule_string="FREQ=DAILY",
+        execution_time=execution_time,
+        last_fired_at=None,
+    )
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory([reminder]))
+
+    await service.reconcile_jobs_with_db()
+
+    job = scheduler.get_job("6")
+    assert job is not None
+    assert job.trigger.run_date < datetime.now(timezone.utc) + timedelta(minutes=5)
+    assert reminder.execution_time == execution_time

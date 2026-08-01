@@ -53,6 +53,9 @@ def _make_reminder(**overrides):
         is_recurring=False,
         rrule_string=None,
         is_nagging=False,
+        last_fired_at=None,
+        forbidden_strikes=0,
+        pending_delete_at=None,
         execution_time=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
     )
     defaults.update(overrides)
@@ -69,10 +72,42 @@ async def test_reconcile_recreates_missing_job_for_pending_reminder() -> None:
     assert scheduler.get_job("42") is not None
 
 
-async def test_reconcile_advances_overdue_recurring_reminder_to_future() -> None:
+async def test_reconcile_schedules_near_term_catchup_for_never_delivered_recurring_cycle() -> None:
+    """P1-4: an overdue recurring reminder whose current cycle was NEVER
+    delivered (last_fired_at unset/stale) must get a near-term catch-up job
+    for that SAME cycle instead of silently jumping straight to the next
+    occurrence — otherwise the missed cycle vanishes without a trace and
+    never reaches recovery/habit tracking."""
     scheduler = AsyncIOScheduler()
     past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
     reminder = _make_reminder(id=7, is_recurring=True, rrule_string="FREQ=DAILY", execution_time=past)
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory([reminder]))
+
+    await service.reconcile_jobs_with_db()
+
+    job = scheduler.get_job("7")
+    assert job is not None
+    # Fires soon (catch-up), not literally at the stale past time.
+    assert job.trigger.run_date > datetime.now(timezone.utc)
+    assert job.trigger.run_date < datetime.now(timezone.utc) + timedelta(minutes=5)
+    # execution_time is left pointing at the missed cycle — _execute_reminder
+    # computes the true next occurrence once the catch-up actually fires.
+    assert reminder.execution_time == past
+
+
+async def test_reconcile_advances_already_delivered_recurring_reminder_to_future() -> None:
+    """If the current cycle WAS already delivered (last_fired_at shows it),
+    reconcile is just restoring a dropped follow-up job — that should still
+    jump straight to the true next occurrence, not resend a stale cycle."""
+    scheduler = AsyncIOScheduler()
+    past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
+    reminder = _make_reminder(
+        id=7,
+        is_recurring=True,
+        rrule_string="FREQ=DAILY",
+        execution_time=past,
+        last_fired_at=past + timedelta(minutes=1),
+    )
     service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory([reminder]))
 
     await service.reconcile_jobs_with_db()

@@ -56,6 +56,13 @@ async def test_reconcile_advances_recurring_reminder_using_user_local_timezone_a
         rrule_string="FREQ=DAILY",
         is_nagging=False,
         forbidden_strikes=0,
+        pending_delete_at=None,
+        # Already delivered — reconcile is just restoring a dropped
+        # follow-up job here, so it should jump straight to the true next
+        # occurrence (which is what this test is actually verifying, DST
+        # correctness of that computation) rather than scheduling a P1-4
+        # catch-up for a cycle that was never delivered.
+        last_fired_at=dtstart_utc_naive + timedelta(minutes=1),
         execution_time=dtstart_utc_naive,
     )
 

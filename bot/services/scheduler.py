@@ -145,30 +145,49 @@ class SchedulerService:
                 run_at_utc = to_utc_aware(reminder.execution_time)
 
                 if run_at_utc <= now_utc:
+                    last_fired = reminder.last_fired_at
+                    already_delivered = (
+                        last_fired is not None and last_fired >= reminder.execution_time
+                    )
                     if reminder.is_recurring and reminder.rrule_string:
-                        # Compute the next occurrence in the user's local
-                        # timezone (not raw UTC) so a bot restart across a DST
-                        # transition doesn't shift the reminder's local
-                        # wall-clock time — same reasoning as _execute_reminder.
-                        user_tz = user_tz_map.get(reminder.user_id, "UTC")
-                        try:
-                            next_run_utc_naive = next_occurrence_utc(
-                                reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
-                            )
-                        except (ValueError, TypeError) as e:
-                            logger.error(
-                                "Invalid rrule for reminder %s during reconcile: %s", reminder.id, e
-                            )
-                            next_run_utc_naive = None
-                        if not next_run_utc_naive:
-                            continue
-                        reminder.execution_time = next_run_utc_naive
-                        run_at_utc = to_utc_aware(next_run_utc_naive)
+                        if already_delivered:
+                            # This cycle was already sent (bot is just
+                            # catching up on scheduling the next one, e.g.
+                            # after a jobstore reset) — compute the true next
+                            # occurrence in the user's local timezone (not raw
+                            # UTC) so a restart across a DST transition
+                            # doesn't shift the reminder's local wall-clock
+                            # time, same reasoning as _execute_reminder.
+                            user_tz = user_tz_map.get(reminder.user_id, "UTC")
+                            try:
+                                next_run_utc_naive = next_occurrence_utc(
+                                    reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
+                                )
+                            except (ValueError, TypeError) as e:
+                                logger.error(
+                                    "Invalid rrule for reminder %s during reconcile: %s", reminder.id, e
+                                )
+                                next_run_utc_naive = None
+                            if not next_run_utc_naive:
+                                continue
+                            reminder.execution_time = next_run_utc_naive
+                            run_at_utc = to_utc_aware(next_run_utc_naive)
+                        else:
+                            # P1-4: this cycle was NEVER delivered (the bot
+                            # was down through it) — schedule a near-term
+                            # catch-up for the CURRENT missed cycle instead of
+                            # silently jumping straight to the next
+                            # occurrence. Leaving execution_time untouched
+                            # also means get_overdue_pending_tasks (missed
+                            # recovery) can surface it until the catch-up
+                            # fires. _execute_reminder's own recurring-
+                            # reschedule logic computes the true next
+                            # occurrence relative to "now" once this fires, so
+                            # the chain self-corrects — only the single oldest
+                            # missed cycle is (late) delivered, not a full
+                            # backfill of every cycle downtime spanned.
+                            run_at_utc = now_utc + timedelta(minutes=1)
                     else:
-                        last_fired = reminder.last_fired_at
-                        already_delivered = (
-                            last_fired is not None and last_fired >= reminder.execution_time
-                        )
                         if already_delivered:
                             # Notification already reached the user; they just
                             # haven't tapped Done yet — don't resend it.

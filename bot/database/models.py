@@ -488,6 +488,17 @@ class Reminder(Base):
         nullable=False,
     )
 
+    # Naive UTC deadline for a soft-deleted reminder: NULL means "not
+    # deleted". Set (persisted, committed) the instant the user taps Delete,
+    # so an Undo tap can still restore it, and cleared back to NULL by Undo.
+    # A cron sweep (see delete_cleanup.py) hard-deletes the row once this
+    # deadline passes. Every query that lists/schedules/reconciles active
+    # reminders must exclude rows where this is set — otherwise a process
+    # restart during the undo window resurrects a task the user just
+    # deleted, because reconcile_jobs_with_db only looks at status='pending'
+    # and finds no scheduler job for it.
+    pending_delete_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # For recurring reminders, stores the execution_time value that user has
     # already completed. Active list hides reminders when this equals current
     # execution_time, and shows them again after recurrence rolls forward.

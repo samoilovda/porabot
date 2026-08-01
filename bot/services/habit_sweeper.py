@@ -37,6 +37,7 @@ async def _sweep_fixed_habits(session, reminder_dao: ReminderDAO, habit_event_da
             Reminder.is_habit.is_(True),
             Reminder.is_fluid_habit.is_(False),
             Reminder.status == "pending",
+            Reminder.pending_delete_at.is_(None),  # Hide soft-deleted (undo window)
         )
     )
     for reminder in result.scalars().all():

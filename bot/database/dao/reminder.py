@@ -232,6 +232,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.user_id == user_id,  # Filter by owner
                 Reminder.status == "pending",  # Only show pending tasks
                 Reminder.is_fluid_habit.is_(False),  # Fluid habits live in Habits UI
+                Reminder.pending_delete_at.is_(None),  # Hide soft-deleted (undo window)
                 # Hide recurring reminders already completed for current cycle.
                 # They become visible again after execution_time rolls forward.
                 or_(
@@ -493,6 +494,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.user_id == user_id,  # Filter by owner
                     Reminder.is_fluid_habit.is_(False),
                     Reminder.status == status,   # Filter by status (pending/completed)
+                    Reminder.pending_delete_at.is_(None),  # Hide soft-deleted (undo window)
                     Reminder.execution_time >= start_utc,  # After midnight UTC
                     Reminder.execution_time < end_utc,     # Before next midnight UTC
                     # Same active-list clutter rule for daily briefs pending section.
@@ -606,6 +608,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.user_id == user_id,
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),  # Hide soft-deleted (undo window)
                 Reminder.execution_time <= threshold_utc,
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
@@ -697,6 +700,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.user_id == user_id,
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(True),
+                Reminder.pending_delete_at.is_(None),  # Hide soft-deleted (undo window)
             )
         )
         return result.scalars().all()

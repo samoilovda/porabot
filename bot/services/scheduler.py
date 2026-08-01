@@ -127,6 +127,10 @@ class SchedulerService:
                     Reminder.status == "pending",
                     Reminder.is_fluid_habit.is_(False),
                     Reminder.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT,
+                    # A soft-deleted reminder (pending_delete_at set) has its
+                    # job removed on purpose, awaiting either Undo or the
+                    # cleanup sweep — reconcile must not resurrect it.
+                    Reminder.pending_delete_at.is_(None),
                 )
             )
             reminders = result.scalars().all()

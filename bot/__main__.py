@@ -37,6 +37,7 @@ from bot.services.daily_briefs import setup_daily_briefs
 from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.habit_reports import setup_habit_reports
+from bot.services.delete_cleanup import setup_delete_cleanup
 from bot.handlers.reminders import _cleanup_stale_timers
 
 
@@ -86,6 +87,7 @@ async def main() -> None:
     setup_missed_task_recovery(scheduler)
     setup_habit_sweeper(scheduler)
     setup_habit_reports(scheduler)
+    setup_delete_cleanup(scheduler)
     scheduler.add_job(
         _cleanup_stale_timers,
         "interval",

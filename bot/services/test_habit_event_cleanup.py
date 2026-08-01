@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import bot.services.scheduler as scheduler_module
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
@@ -24,6 +25,7 @@ import bot.handlers.reminders as reminders_module
 from bot.handlers.reminders import callback_delete_task, callback_edit_delete
 from bot.handlers.settings import callback_clear_all_confirm
 from bot.lexicon import get_l10n
+from bot.services.delete_cleanup import process_deferred_deletes
 
 DUE = datetime(2026, 5, 1, 9, 0, 0)
 L10N = get_l10n("en")
@@ -32,8 +34,8 @@ L10N = get_l10n("en")
 @pytest.fixture
 async def session_factory():
     # Deferred-delete tests need to open a second session against the same
-    # in-memory DB (mirrors how _finalize_delete opens its own session via
-    # scheduler_service.session_pool once the undo window elapses).
+    # in-memory DB (mirrors how process_deferred_deletes opens its own
+    # session via scheduler_service.session_pool during its cron sweep).
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -96,6 +98,19 @@ def _fake_scheduler(session_factory) -> SimpleNamespace:
     )
 
 
+async def _run_cleanup_sweep(session_factory) -> None:
+    """Run the delete_cleanup cron job body against *session_factory*.
+
+    Mirrors how other services' tests point the module-level scheduler
+    singleton at a test session pool.
+    """
+    scheduler_module._instance = SimpleNamespace(session_pool=session_factory)
+    try:
+        await process_deferred_deletes()
+    finally:
+        scheduler_module._instance = None
+
+
 async def test_del_task_path_removes_habit_events(session, session_factory, monkeypatch) -> None:
     # Fixed habits appear in "My Tasks", whose rows carry a del_task_ button.
     monkeypatch.setattr(reminders_module, "_UNDO_DELETE_WINDOW", 0)
@@ -110,8 +125,10 @@ async def test_del_task_path_removes_habit_events(session, session_factory, monk
         user=user,
         l10n=L10N,
     )
-    # Deletion is deferred behind an undo window; wait for it to finalize.
-    await reminders_module.pending_hard_deletes[reminder.id]
+    # Deletion is persisted as pending_delete_at (already in the past since
+    # the window is monkeypatched to 0) and finalized by the cleanup sweep —
+    # restart-safe by construction, unlike the old in-memory timer.
+    await _run_cleanup_sweep(session_factory)
 
     assert await _event_count(session) == 0
 
@@ -130,14 +147,14 @@ async def test_edit_delete_path_removes_habit_events(session, session_factory, m
         user=user,
         l10n=L10N,
     )
-    await reminders_module.pending_hard_deletes[reminder.id]
+    await _run_cleanup_sweep(session_factory)
 
     assert await _event_count(session) == 0
 
 
 async def test_undo_delete_within_window_keeps_reminder_and_events(session, session_factory) -> None:
-    # Undo tap before the window elapses must cancel the deferred hard-delete
-    # and leave the reminder (and its habit_events) untouched.
+    # Undo tap before the window elapses must clear pending_delete_at and
+    # leave the reminder (and its habit_events) untouched.
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
     user = await UserDAO(session).get_by_id(1)
 
@@ -148,7 +165,7 @@ async def test_undo_delete_within_window_keeps_reminder_and_events(session, sess
         user=user,
         l10n=L10N,
     )
-    assert reminder.id in reminders_module.pending_hard_deletes
+    assert reminder.pending_delete_at is not None
 
     await reminders_module.callback_undo_delete(
         _callback(f"undo_del_{reminder.id}"),
@@ -158,7 +175,9 @@ async def test_undo_delete_within_window_keeps_reminder_and_events(session, sess
         l10n=L10N,
     )
 
-    assert reminder.id not in reminders_module.pending_hard_deletes
+    assert reminder.pending_delete_at is None
+    # A cleanup sweep running right after Undo must not delete it either.
+    await _run_cleanup_sweep(session_factory)
     assert await _event_count(session) == 1
     restored = await reminder_dao.get_owned(reminder.id, user.id)
     assert restored is not None

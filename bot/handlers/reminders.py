@@ -51,9 +51,6 @@ logger = logging.getLogger(__name__)
 # asyncio.Task registry for auto-removing inline keyboards after 5 s
 active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
-# reminder_id -> deferred hard-delete task. The DB row is only actually
-# removed once this fires; an Undo tap within the window cancels it.
-pending_hard_deletes: dict[int, asyncio.Task] = {}
 _UNDO_DELETE_WINDOW = 5
 
 _MENU_TEXTS = ALL_MENU_BUTTON_TEXTS
@@ -157,39 +154,16 @@ async def _remove_keyboard_after_delay(message: Message, delay: int = 5) -> None
         active_auto_delete_tasks.pop(_message_task_key(message), None)
 
 
-async def _finalize_delete(reminder_id: int, message: Message, session_pool) -> None:
-    """Background task: hard-delete *reminder_id* once the undo window elapses.
-
-    The request-scoped session/DAOs are gone by the time this fires, so it
-    opens its own session — mirrors how SchedulerService talks to the DB
-    from outside a handler.
-    """
-    try:
-        await asyncio.sleep(_UNDO_DELETE_WINDOW)
-    except asyncio.CancelledError:
-        return
-    finally:
-        pending_hard_deletes.pop(reminder_id, None)
-
-    async with session_pool() as session:
-        await HabitEventDAO(session).delete_for_reminder(reminder_id)
-        await ReminderDAO(session).delete_by_id(reminder_id)
-        await session.commit()
-
-    try:
-        await message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
-
-
-def _start_deferred_delete(reminder_id: int, message: Message, session_pool) -> None:
-    """(Re)arm the undo-delete timer for *reminder_id*."""
-    existing = pending_hard_deletes.pop(reminder_id, None)
-    if existing and not existing.done():
-        existing.cancel()
-    pending_hard_deletes[reminder_id] = asyncio.create_task(
-        _finalize_delete(reminder_id, message, session_pool)
-    )
+# NOTE: the actual hard-delete is NOT driven by an in-memory asyncio.Task
+# any more — that made deletion invisible to a process restart mid-window:
+# the DB row stayed a completely normal status='pending' reminder with its
+# scheduler job already removed, so reconcile_jobs_with_db would create a
+# fresh job for it on the next startup, resurrecting a task the user just
+# deleted. Instead, `reminder.pending_delete_at` is set and committed
+# synchronously (see callback_edit_delete/callback_delete_task below) —
+# every query that lists, schedules, sweeps, or recovers reminders excludes
+# rows with it set — and bot/services/delete_cleanup.py's minutely sweep
+# hard-deletes them once the deadline passes, restart or not.
 
 
 def _reset_auto_delete(message: Message) -> None:
@@ -211,9 +185,6 @@ def _cleanup_stale_timers() -> None:
     for key, task in list(active_auto_delete_tasks.items()):
         if task.done():
             active_auto_delete_tasks.pop(key, None)
-    for reminder_id, task in list(pending_hard_deletes.items()):
-        if task.done():
-            pending_hard_deletes.pop(reminder_id, None)
 
 
 def _format_parse_confidence(confidence: float) -> int:
@@ -645,15 +616,23 @@ async def callback_edit_delete(
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     # Stop the job immediately; the DB row itself is only removed once the
-    # undo window elapses (see _finalize_delete), so an Undo tap can still
+    # undo window elapses (see delete_cleanup.py), so an Undo tap can still
     # restore it without recreating the reminder.
     scheduler_service.remove_reminder_job(reminder_id)
     scheduler_service.remove_nagging_job(reminder_id)
+    # Persisted and committed before confirming to the user — a restart
+    # right after this is still durable (every active-reminder query
+    # excludes pending_delete_at rows), unlike the old in-memory timer.
+    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=_UNDO_DELETE_WINDOW
+    )
+    await reminder_dao.session.commit()
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(
         l10n["task_deleted"], reply_markup=get_undo_delete_keyboard(reminder_id, l10n)
     )
-    _start_deferred_delete(reminder_id, callback.message, scheduler_service.session_pool)
+    task = asyncio.create_task(_remove_keyboard_after_delay(callback.message, _UNDO_DELETE_WINDOW))
+    active_auto_delete_tasks[_message_task_key(callback.message)] = task
 
 
 # ---------------------------------------------------------------------------
@@ -693,14 +672,21 @@ async def callback_delete_task(
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     # Stop the job immediately; the DB row (and any habit_events, for fixed
     # habits reachable from "My Tasks") is only removed once the undo window
-    # elapses (see _finalize_delete), so an Undo tap can still restore it.
+    # elapses (see delete_cleanup.py), so an Undo tap can still restore it.
     scheduler_service.remove_reminder_job(task_id)
     scheduler_service.remove_nagging_job(task_id)
+    # Persisted and committed before confirming to the user — see
+    # callback_edit_delete above for why this must not be an in-memory timer.
+    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=_UNDO_DELETE_WINDOW
+    )
+    await reminder_dao.session.commit()
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(
         l10n["task_deleted"], reply_markup=get_undo_delete_keyboard(task_id, l10n)
     )
-    _start_deferred_delete(task_id, callback.message, scheduler_service.session_pool)
+    task = asyncio.create_task(_remove_keyboard_after_delay(callback.message, _UNDO_DELETE_WINDOW))
+    active_auto_delete_tasks[_message_task_key(callback.message)] = task
 
 
 @router.callback_query(F.data.startswith("undo_del_"))
@@ -710,14 +696,19 @@ async def callback_undo_delete(
 ) -> None:
     reminder_id = int(callback.data.split("undo_del_")[1])
 
-    pending = pending_hard_deletes.pop(reminder_id, None)
-    if not pending or pending.done():
-        return await callback.answer(l10n["undo_too_late"], show_alert=True)
-    pending.cancel()
-
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if reminder.pending_delete_at is None or reminder.pending_delete_at <= now:
+        # Never deleted, already restored, or the cleanup sweep in
+        # delete_cleanup.py is at/past this deadline — too late to undo.
+        return await callback.answer(l10n["undo_too_late"], show_alert=True)
+
+    _reset_auto_delete(callback.message)
+    reminder.pending_delete_at = None
+    await reminder_dao.session.flush()
 
     try:
         _reschedule_current_execution(reminder, user, scheduler_service)

@@ -23,6 +23,7 @@ from bot.keyboards.inline import (
 )
 from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.scheduler import SchedulerService
+from bot.utils.markdown import escape_markdown
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -227,7 +228,7 @@ async def callback_set_tz(
     )
     if is_onboarding_tz:
         await state.clear()
-        text = l10n["cmd_start"].format(name=callback.from_user.first_name)
+        text = l10n["cmd_start"].format(name=escape_markdown(callback.from_user.first_name))
         await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
 
@@ -261,7 +262,7 @@ async def state_set_manual_timezone(
         parse_mode="Markdown",
     )
     if is_onboarding_tz:
-        text = l10n["cmd_start"].format(name=message.from_user.first_name)
+        text = l10n["cmd_start"].format(name=escape_markdown(message.from_user.first_name))
         await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     else:
         await message.answer(

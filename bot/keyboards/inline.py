@@ -183,14 +183,17 @@ def get_edit_keyboard(
     """
     builder = InlineKeyboardBuilder()
 
-    # Toggle recurrence (only for recurring tasks)
-    if is_recurring:
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{l10n['btn_repeat_prefix']} {rrule_text}",
-                callback_data=f"edit_toggle_repeat_{reminder_id}"
-            )
+    # Toggle recurrence. Shown for every task, not just already-recurring
+    # ones — every new task is created with is_recurring=False, so gating
+    # this button on is_recurring made it impossible to ever turn recurrence
+    # on for a plain task through the UI. rrule_text already defaults to
+    # "None" (via _rrule_text) when the task isn't recurring.
+    builder.row(
+        InlineKeyboardButton(
+            text=f"{l10n['btn_repeat_prefix']} {rrule_text}",
+            callback_data=f"edit_toggle_repeat_{reminder_id}"
         )
+    )
 
     # Toggle nagging with icon
     nagging_status = l10n["status_on"] if is_nagging else l10n["status_off"]

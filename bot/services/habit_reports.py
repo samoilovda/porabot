@@ -23,16 +23,24 @@ from bot.utils.markdown import escape_markdown
 logger = logging.getLogger(__name__)
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str) -> None:
-    """Send a report message, suppressing bot-blocked / bad-request errors."""
+async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
+    """Send a report message, suppressing bot-blocked / bad-request errors.
+
+    Returns True if this outcome is final (delivered, blocked, or a bad
+    payload) — False only for a retryable failure. See
+    daily_briefs._send_safe for the rationale."""
     try:
         await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        return True
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping habit report.", user_id)
+        return True
     except TelegramBadRequest as e:
         logger.error("Bad request sending habit report to %s: %s", user_id, e)
+        return True
     except Exception as e:
         logger.error("Failed to send habit report to %s: %s", user_id, e, exc_info=True)
+        return False
 
 
 def _aggregate(events) -> list[dict]:
@@ -122,7 +130,9 @@ def _build_report_text(
     return "\n".join(lines)
 
 
-async def _process_user_reports(session, bot: Bot, user: User, now_local: datetime) -> None:
+async def _process_user_reports(session, bot: Bot, user: User, now_local: datetime) -> bool:
+    """Returns False if any send hit a retryable failure (caller must not
+    record this occurrence as delivered), True otherwise."""
     from bot.lexicon import get_l10n
 
     l10n = get_l10n(user.language)
@@ -132,6 +142,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
     reminders_by_id = {r.id: r for r in result.scalars().all()}
 
     today_local = now_local.date()
+    all_delivered = True
 
     week_start = today_local - timedelta(days=6)
     weekly_events = await habit_event_dao.get_events_in_range(
@@ -148,7 +159,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                 reminders_by_id=reminders_by_id,
                 l10n=l10n,
             )
-            await _send_safe(bot, user.id, text)
+            all_delivered = await _send_safe(bot, user.id, text) and all_delivered
 
     # "+7 days lands in a different month" is the only reliable way to detect
     # the last occurrence of this weekday in the month — day-number arithmetic
@@ -169,7 +180,9 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                     reminders_by_id=reminders_by_id,
                     l10n=l10n,
                 )
-                await _send_safe(bot, user.id, text)
+                all_delivered = await _send_safe(bot, user.id, text) and all_delivered
+
+    return all_delivered
 
 
 async def process_habit_reports() -> None:
@@ -237,7 +250,20 @@ async def process_habit_reports() -> None:
                     if claim.rowcount != 1:
                         continue
 
-                    await _process_user_reports(session, bot, user, now_local)
+                    delivered = await _process_user_reports(session, bot, user, now_local)
+                    if not delivered:
+                        # Retryable failure — release the claim (mirrors
+                        # daily_briefs._release_brief_claim). Note the exact-
+                        # minute match above means this can only actually be
+                        # retried if the job happens to fire again for the
+                        # same minute (e.g. a misfire catch-up); otherwise
+                        # this occurrence is picked up next week instead of
+                        # being wrongly recorded as delivered.
+                        await session.execute(
+                            update(User)
+                            .where(User.id == user.id, User.last_habit_report_date == today_key)
+                            .values(last_habit_report_date=None)
+                        )
                     await session.commit()
                 except Exception as e:
                     await session.rollback()

@@ -24,7 +24,10 @@ RECOVERY_LOCAL_TIME = "10:00"
 RECOVERY_DIGEST_LIMIT = 5
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
+async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
+    """Returns True if this outcome is final (delivered, blocked, or a
+    payload Telegram rejects even after the plain-text retry) — False only
+    for a retryable failure. See daily_briefs._send_safe for the rationale."""
     try:
         await bot.send_message(
             chat_id=user_id,
@@ -32,8 +35,10 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
             parse_mode="Markdown",
             reply_markup=get_missed_recovery_keyboard(l10n),
         )
+        return True
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping missed recovery.", user_id)
+        return True
     except TelegramBadRequest as e:
         logger.error("Bad request sending missed recovery to %s: %s — retrying without Markdown.", user_id, e)
         try:
@@ -43,10 +48,13 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> None:
                 parse_mode=None,
                 reply_markup=get_missed_recovery_keyboard(l10n),
             )
+            return True
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
+            return True
     except Exception as e:
         logger.error("Failed to send missed recovery to %s: %s", user_id, e, exc_info=True)
+        return False
 
 
 async def process_missed_task_recovery() -> None:
@@ -116,7 +124,18 @@ async def process_missed_task_recovery() -> None:
                     lines.append(f"▫️ `{dt_str}`: {escape_markdown(task.reminder_text)}")
                 text = "\n".join(lines)
 
-                await _send_safe(bot, user.id, text, l10n)
+                delivered = await _send_safe(bot, user.id, text, l10n)
+                if not delivered:
+                    # Retryable failure — release the claim (mirrors
+                    # daily_briefs._release_brief_claim) so a later tick
+                    # today retries instead of silently skipping until
+                    # tomorrow.
+                    await session.execute(
+                        update(User)
+                        .where(User.id == user.id, User.last_missed_recovery_date == today_key)
+                        .values(last_missed_recovery_date=None)
+                    )
+                    await session.commit()
 
     except Exception as e:
         logger.error("Error in missed-task recovery job: %s", e, exc_info=True)

@@ -80,16 +80,44 @@ async def _claim_brief_slot(session, *, user, column, today_str: str) -> bool:
     return claimed
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> None:
-    """Send a message, silently suppressing bot-blocked and bad-request errors.
+async def _release_brief_claim(session, *, user, column, today_str: str) -> None:
+    """Undo a claim from _claim_brief_slot after a retryable send failure.
+
+    P1-3: claiming the slot and delivering the message are different
+    things. Without this, a claim that outlives a failed send (timeout,
+    network error) makes the brief silently vanish for the rest of the
+    day/week instead of retrying on the next tick — the atomic claim
+    prevented a duplicate but got conflated with "delivered". Only release
+    if the claim is still ours (column == today_str); if something else
+    already changed it, leave it alone.
+    """
+    await session.execute(
+        update(User)
+        .where(User.id == user.id, column == today_str)
+        .values(**{column.key: None})
+    )
+    await session.commit()
+    setattr(user, column.key, None)
+
+
+async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> bool:
+    """Send a message, suppressing bot-blocked and bad-request errors.
 
     Falls back to plain text if Markdown entities fail to parse, so a stray
     unescaped character never causes the whole brief to be silently dropped.
+
+    Returns True if this outcome is final — delivered, the user has blocked
+    the bot, or Telegram rejected the payload even after the plain-text
+    retry (retrying the identical payload again would fail the same way).
+    Returns False only for a retryable failure (network/timeout/etc.), so
+    callers know NOT to treat this as delivered.
     """
     try:
         await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
+        return True
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
+        return True
     except TelegramBadRequest as e:
         logger.error("Bad request sending brief to %s: %s — retrying without Markdown.", user_id, e)
         try:
@@ -99,10 +127,13 @@ async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> No
                 parse_mode=None,
                 reply_markup=reply_markup,
             )
+            return True
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
+            return True
     except Exception as e:
         logger.error("Failed to send brief to %s: %s", user_id, e, exc_info=True)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -215,35 +246,47 @@ async def process_daily_briefs() -> None:
                         )
                         if claimed:
                             tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                            delivered = True
                             if tasks:
                                 text = _build_morning_text(tasks, user, l10n)
-                                await _send_safe(bot, user.id, text)
-                                logger.info("Morning brief sent to user %s", user.id)
+                                delivered = await _send_safe(bot, user.id, text)
+                                if delivered:
+                                    logger.info("Morning brief sent to user %s", user.id)
 
-                            try:
-                                fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
-                                if fluid_brief_only:
-                                    lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
-                                    for h in fluid_brief_only:
-                                        lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
-                                    await _send_safe(bot, user.id, "\n".join(lines))
+                            if not delivered:
+                                # Retryable failure — release the claim so a
+                                # later tick today retries instead of the
+                                # brief silently vanishing until tomorrow.
+                                # Skip the best-effort fluid extras below;
+                                # they'll run on the retry that follows.
+                                await _release_brief_claim(
+                                    session, user=user, column=User.last_morning_brief_date, today_str=today_str
+                                )
+                            else:
+                                try:
+                                    fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
+                                    if fluid_brief_only:
+                                        lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
+                                        for h in fluid_brief_only:
+                                            lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
+                                        await _send_safe(bot, user.id, "\n".join(lines))
 
-                                for h in fluid_habits:
-                                    if is_quiet:
-                                        continue
-                                    if (h.fluid_mode or "brief_only") != "ask_time":
-                                        continue
-                                    if h.fluid_planned_date == today_str:
-                                        continue
-                                    await _send_safe(
-                                        bot,
-                                        user.id,
-                                        l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
-                                        reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
-                                    )
-                                    logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
-                            except Exception as e:
-                                logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
+                                    for h in fluid_habits:
+                                        if is_quiet:
+                                            continue
+                                        if (h.fluid_mode or "brief_only") != "ask_time":
+                                            continue
+                                        if h.fluid_planned_date == today_str:
+                                            continue
+                                        await _send_safe(
+                                            bot,
+                                            user.id,
+                                            l10n.get("fluid_pick_time_prompt", "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**").format(habit=escape_markdown(h.reminder_text)),
+                                            reply_markup=get_fluid_pick_time_keyboard(h.id, l10n),
+                                        )
+                                        logger.info("Fluid pick-time prompt sent to user %s for habit %s", user.id, h.id)
+                                except Exception as e:
+                                    logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
 
                     elif evening_due:
                         # Also reset in habit_sweeper.sweep_habit_cycles every minute
@@ -261,34 +304,42 @@ async def process_daily_briefs() -> None:
                         if claimed:
                             completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                             pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                            delivered = True
                             if completed or pending:
                                 text = _build_evening_text(completed, pending, user, l10n)
-                                await _send_safe(
+                                delivered = await _send_safe(
                                     bot,
                                     user.id,
                                     text,
                                     reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
                                 )
-                                logger.info("Evening brief sent to user %s", user.id)
+                                if delivered:
+                                    logger.info("Evening brief sent to user %s", user.id)
 
-                            try:
-                                # "Cycle resolved today" is defined by the presence of a habit
-                                # event, not by fluid_last_completed_date — otherwise a user who
-                                # tapped "Not today" this morning would be asked again tonight.
-                                pending_fluid = [
-                                    h
-                                    for h in fluid_habits
-                                    if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
-                                ]
-                                if pending_fluid and not is_quiet:
-                                    await _send_safe(
-                                        bot,
-                                        user.id,
-                                        l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
-                                        reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
-                                    )
-                            except Exception as e:
-                                logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)
+                            if not delivered:
+                                # Retryable failure — see the morning branch above.
+                                await _release_brief_claim(
+                                    session, user=user, column=User.last_evening_brief_date, today_str=today_str
+                                )
+                            else:
+                                try:
+                                    # "Cycle resolved today" is defined by the presence of a habit
+                                    # event, not by fluid_last_completed_date — otherwise a user who
+                                    # tapped "Not today" this morning would be asked again tonight.
+                                    pending_fluid = [
+                                        h
+                                        for h in fluid_habits
+                                        if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
+                                    ]
+                                    if pending_fluid and not is_quiet:
+                                        await _send_safe(
+                                            bot,
+                                            user.id,
+                                            l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
+                                            reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                                        )
+                                except Exception as e:
+                                    logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)
 
                     await session.commit()
                 except Exception as e:

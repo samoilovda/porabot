@@ -402,12 +402,29 @@ async def handle_task_text(
 
     try:
         result = await parser.parse(message.text, user.timezone)
-        logger.info("Parsed '%s' → clean='%s' dt=%s", message.text, result.clean_text, result.parsed_datetime)
+        # P1-11: reminder text can carry medical/personal/otherwise sensitive
+        # content — never log the raw or cleaned text itself at INFO level.
+        # Length and whether a datetime/how confidently it was found is
+        # enough to debug the parser without exposing what the user wrote.
+        logger.info(
+            "Parsed message for user %s: input_len=%d clean_len=%d dt_found=%s confidence=%.2f",
+            user.id,
+            len(message.text),
+            len(result.clean_text),
+            result.parsed_datetime is not None,
+            result.confidence,
+        )
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
         await message.answer(str(ve))
     except Exception as e:
-        logger.error("Error parsing text '%s': %s", message.text, e, exc_info=True)
+        logger.error(
+            "Error parsing message for user %s (input_len=%d): %s",
+            user.id,
+            len(message.text),
+            e,
+            exc_info=True,
+        )
         await message.answer(l10n["parse_error"])
 
 

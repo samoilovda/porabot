@@ -65,7 +65,7 @@ async def test_new_text_during_confirming_parse_is_not_ignored() -> None:
         chat=SimpleNamespace(id=42),
         answer=AsyncMock(),
     )
-    user = SimpleNamespace(timezone="UTC", show_utc_offset=False)
+    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
     l10n = {"ask_time": "When should I remind you about: {text}?", "parse_error": "error"}
 
     await reminders_module.state_confirming_parse_new_text(

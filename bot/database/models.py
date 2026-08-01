@@ -474,6 +474,20 @@ class Reminder(Base):
     # just waiting on the user" after a restart.
     last_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Consecutive retryable/permanent delivery failures (timeout, network
+    # error, bad request) for the CURRENT cycle — drives the retry job's
+    # backoff schedule. Reset to 0 on a successful send. Capped: once
+    # exhausted, no further retry job is scheduled and this cycle relies on
+    # reconcile_jobs_with_db (last_fired_at stays unset) to catch up on the
+    # next restart instead of retrying forever against a payload that keeps
+    # failing identically.
+    send_retry_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
     # For recurring reminders, stores the execution_time value that user has
     # already completed. Active list hides reminders when this equals current
     # execution_time, and shows them again after recurrence rolls forward.

@@ -127,6 +127,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_completion_note", "VARCHAR"),
             ("forbidden_strikes", "INTEGER NOT NULL DEFAULT 0"),
             ("last_fired_at", "DATETIME"),
+            ("send_retry_count", "INTEGER NOT NULL DEFAULT 0"),
             ("habit_undo_pending", "BOOLEAN NOT NULL DEFAULT 0"),
         ]:
             await _add_column_if_missing(conn, "reminders", col, col_type)

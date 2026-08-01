@@ -29,6 +29,11 @@ NAGGING_INTERVAL_MINUTES = 5
 # the reminder (both recurrence and nagging) instead of retrying forever
 # against a user who blocked the bot.
 FORBIDDEN_STRIKES_LIMIT = 3
+# Backoff schedule (minutes) for retrying a reminder send that failed with a
+# retryable/permanent error (NOT delivered). Capped — once exhausted, no
+# further retry job is scheduled; reconcile_jobs_with_db (last_fired_at
+# stays unset) catches up on the next restart instead.
+SEND_RETRY_BACKOFF_MINUTES = [1, 5, 15, 60]
 
 # Module-level singleton — set by SchedulerService.__init__
 _instance = None
@@ -189,6 +194,38 @@ class SchedulerService:
         except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
 
+    def _schedule_send_retry(self, reminder_id: int, attempt_number: int, is_nagging_execution: bool) -> None:
+        """Schedule a retry for a send that failed with a retryable/permanent error.
+
+        *attempt_number* is 1-based (the count of consecutive failures
+        including this one). Once it exceeds SEND_RETRY_BACKOFF_MINUTES, no
+        further retry job is scheduled — see the module-level docstring on
+        SEND_RETRY_BACKOFF_MINUTES for why that's not a lost notification.
+        """
+        backoff = SEND_RETRY_BACKOFF_MINUTES
+        if attempt_number > len(backoff):
+            logger.warning(
+                "Reminder %s: %s consecutive send failures — exhausted retry backoff, "
+                "leaving it for reconcile_jobs_with_db on next restart.",
+                reminder_id,
+                attempt_number,
+            )
+            return
+        delay_minutes = backoff[attempt_number - 1]
+        run_date = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+        self.scheduler.add_job(
+            execute_reminder_job,
+            "date",
+            run_date=run_date,
+            args=[reminder_id, is_nagging_execution],
+            id=job_id,
+            replace_existing=True,
+        )
+        logger.info(
+            "Reminder %s: send failed (attempt %s), retrying at %s.", reminder_id, attempt_number, run_date
+        )
+
     def resume_nagging_if_stalled(self, reminder: Reminder) -> bool:
         """Recreate the nag job if raising the limit should revive a dead chain.
 
@@ -301,8 +338,6 @@ class SchedulerService:
                     return
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-                if not is_nagging_execution:
-                    reminder.last_fired_at = now_utc_naive
                 cycle_due_ts = None
                 if is_habit_like(reminder):
                     if not is_nagging_execution:
@@ -363,6 +398,27 @@ class SchedulerService:
                     )
                     self.remove_reminder_job(reminder_id)
                     self.remove_nagging_job(reminder_id)
+
+                if send_outcome in ("retryable_error", "permanent_error"):
+                    # NOT delivered — do not advance any state as though it
+                    # had been: last_fired_at stays unset (so a restart's
+                    # reconcile_jobs_with_db still sees this cycle as
+                    # undelivered), recurrence doesn't move to the next
+                    # occurrence, and this doesn't count as a sent nag. Retry
+                    # with backoff instead, unless the strike limit above
+                    # already gave up on this reminder entirely.
+                    reminder.send_retry_count = int(reminder.send_retry_count or 0) + 1
+                    if not gave_up:
+                        self._schedule_send_retry(reminder_id, reminder.send_retry_count, is_nagging_execution)
+                    await session.commit()
+                    return
+
+                # Delivered (or the user has blocked the bot, which the
+                # strike mechanism above already accounts for) — this cycle
+                # is handled, reset the retry counter and advance state.
+                reminder.send_retry_count = 0
+                if not is_nagging_execution:
+                    reminder.last_fired_at = now_utc_naive
 
                 if is_nagging_execution:
                     reminder.nagging_sent_count = max(0, int(reminder.nagging_sent_count or 0)) + 1
@@ -438,11 +494,17 @@ class SchedulerService:
 
         Returns a (message, outcome) tuple: message is the Telegram Message
         object on success (otherwise None); outcome is one of:
-          "ok"        — delivered successfully.
-          "forbidden" — the user has blocked the bot.
-          "error"     — some other failure (bad request, network, etc.) —
-                        NOT the user's fault, so callers must not treat this
-                        the same as "forbidden" (see forbidden_strikes).
+          "ok"               — delivered successfully.
+          "forbidden"        — the user has blocked the bot.
+          "permanent_error"  — Telegram rejected this specific payload (bad
+                                request) even after retrying without the
+                                keyboard — retrying the identical payload
+                                again would fail the same way.
+          "retryable_error"  — some other failure (timeout, network, etc.)
+                                that may well succeed if retried.
+        Neither error outcome is the user's fault, so callers must not treat
+        them the same as "forbidden" (see forbidden_strikes), and must not
+        treat them as delivered (see last_fired_at).
         """
         try:
             message = await self.bot.send_message(
@@ -456,10 +518,20 @@ class SchedulerService:
             logger.warning("User %s has blocked the bot.", user_id)
             return None, "forbidden"
         except TelegramBadRequest as e:
-            logger.error("Bad request sending to %s: %s", user_id, e)
+            logger.error("Bad request sending to %s: %s — retrying without keyboard.", user_id, e)
+            try:
+                message = await self.bot.send_message(
+                    chat_id=user_id,
+                    text=f"{l10n['reminder_prefix']}{text}",
+                    parse_mode=None,
+                )
+                return message, "ok"
+            except Exception as retry_e:
+                logger.error("Retry without keyboard also failed for %s: %s", user_id, retry_e, exc_info=True)
+                return None, "permanent_error"
         except Exception as e:
             logger.error("Failed to send message to %s: %s", user_id, e, exc_info=True)
-        return None, "error"
+            return None, "retryable_error"
 
     async def _delete_telegram_message(self, chat_id: int, message_id: int) -> None:
         """Best-effort Telegram message deletion helper."""
@@ -493,8 +565,7 @@ class SchedulerService:
     ) -> str:
         """For nagging reminders, keep only one active reminder message visible.
 
-        Returns the send outcome — "ok" / "forbidden" / "error" — see
-        _send_telegram_message.
+        Returns the send outcome — see _send_telegram_message.
         """
         if (
             is_nagging_execution

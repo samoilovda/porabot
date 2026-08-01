@@ -54,6 +54,7 @@ def _make_reminder(**overrides):
         last_nag_message_id=None,
         forbidden_strikes=0,
         last_fired_at=None,
+        send_retry_count=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

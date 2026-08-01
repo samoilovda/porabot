@@ -142,3 +142,24 @@ async def test_reconcile_skips_reminder_that_gave_up_after_forbidden_strikes() -
     await service.reconcile_jobs_with_db()
 
     assert scheduler.get_job("4") is None
+
+
+async def test_reconcile_restores_delivery_after_send_retries_were_exhausted() -> None:
+    """P0-1: a one-off whose send kept failing with a retryable error never
+    got last_fired_at set (see test_send_retry_on_transient_error.py), and
+    its retry backoff eventually gives up scheduling further attempts. If
+    the process restarts after that point, reconcile must still pick it up
+    as undelivered instead of leaving it stuck forever."""
+    scheduler = AsyncIOScheduler()
+    execution_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
+    reminder = _make_reminder(
+        id=5,
+        execution_time=execution_time,
+        last_fired_at=None,
+        send_retry_count=5,
+    )
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory([reminder]))
+
+    await service.reconcile_jobs_with_db()
+
+    assert scheduler.get_job("5") is not None

@@ -626,10 +626,10 @@ async def cb_not_today(
         except ValueError:
             cycle_due_at_utc_naive = None
 
-    reminder = await reminder_dao.get_by_id(reminder_id)
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
     is_fluid = bool(reminder and getattr(reminder, "is_fluid_habit", False))
     if not reminder or not (_is_habit_like(reminder) or is_fluid):
-        await callback.answer(l10n["invalid_action"], show_alert=True)
+        await callback.answer(l10n["item_not_found"], show_alert=True)
         return
 
     record_kwargs: dict[str, Any] = {}

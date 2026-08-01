@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install "setuptools<81" wheel
-          pip install -r requirements.txt
+          pip install -r requirements.lock
           pip install pytest pytest-asyncio
       - name: Run tests
         env:

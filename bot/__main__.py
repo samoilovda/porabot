@@ -31,6 +31,7 @@ validate_config()
 from bot.database.engine import create_engine, create_session_maker, init_db, dispose_engine
 from bot.middlewares.database import DatabaseMiddleware
 from bot.middlewares.whitelist import WhitelistMiddleware
+from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.handlers import all_routers
 from bot.services.scheduler import SchedulerService
 from bot.services.daily_briefs import setup_daily_briefs
@@ -127,9 +128,15 @@ async def main() -> None:
     )
     logger.info("Scheduler configured.")
 
-    # Middleware — whitelist intentionally disabled (open access).
-    # To re-enable, restore WhitelistMiddleware registration before DatabaseMiddleware.
+    # Middleware — whitelist intentionally disabled (open access is a
+    # deliberate product choice), but P1-10: open access with literally no
+    # cap meant one user could flood the DB and the CPU-heavy, globally
+    # locked NLP parser. RateLimitMiddleware goes first so a throttled
+    # update never reaches the DB or the parser.
+    # To re-enable the whitelist, restore WhitelistMiddleware registration
+    # before DatabaseMiddleware too.
     # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
+    dp.update.middleware(RateLimitMiddleware())
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
 
     # Routers

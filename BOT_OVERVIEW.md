@@ -355,7 +355,7 @@ misconfigured evening-brief time»).
 ## 8. Развёртывание
 
 - **Docker Compose** — основной способ (`Dockerfile` + `docker-compose.yml`),
-  документирован в `DEPLOYMENT.md` под Ubuntu Server. Образ — `python:3.10-
+  документирован в `DEPLOYMENT.md` под Ubuntu Server. Образ — `python:3.11-
   slim`, запуск от непривилегированного пользователя (uid/gid 1000), сборочные
   зависимости (`build-essential`, `libffi-dev`) ставятся отдельным слоем,
   `setuptools<81` фиксируется до `requirements.txt` (та же причина, что и в

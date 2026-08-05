@@ -71,3 +71,18 @@ async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict
     await callback.message.delete()
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
+
+
+@router.message(F.pinned_message)
+async def cleanup_pin_service_message(message: Message) -> None:
+    """Delete Telegram's auto-posted "message pinned" service notice.
+
+    Pinning the morning brief (bot/services/daily_briefs.py) makes Telegram
+    drop this notice into the chat. It's pure noise — the pinned content is
+    already visible at the top of the chat — so remove it as soon as it
+    arrives.
+    """
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.debug("Could not delete pin service message %s: %s", message.message_id, e)

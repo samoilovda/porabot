@@ -184,6 +184,11 @@ class User(Base):
     last_morning_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_evening_brief_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # Message id of the morning brief currently pinned in the user's chat —
+    # set when the brief is sent, cleared once the evening summary unpins it.
+    # None means nothing of ours is currently pinned.
+    pinned_brief_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # Custom Daily Briefs Settings
     briefs_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     morning_brief_time: Mapped[str] = mapped_column(String, default="09:00", server_default="09:00")

@@ -111,6 +111,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("last_missed_recovery_date", "VARCHAR"),
             ("last_morning_brief_date", "VARCHAR"),
             ("last_evening_brief_date", "VARCHAR"),
+            ("pinned_brief_message_id", "INTEGER"),
             ("habit_reports_enabled", "BOOLEAN DEFAULT 1"),
             ("habit_report_weekday", "INTEGER DEFAULT 6"),
             ("habit_report_time", "VARCHAR DEFAULT '23:50'"),

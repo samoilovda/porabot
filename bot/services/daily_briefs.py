@@ -12,6 +12,7 @@ from datetime import datetime
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.types import Message
 from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
@@ -100,40 +101,78 @@ async def _release_brief_claim(session, *, user, column, today_str: str) -> None
     setattr(user, column.key, None)
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None) -> bool:
+async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None):
     """Send a message, suppressing bot-blocked and bad-request errors.
 
     Falls back to plain text if Markdown entities fail to parse, so a stray
     unescaped character never causes the whole brief to be silently dropped.
 
-    Returns True if this outcome is final — delivered, the user has blocked
-    the bot, or Telegram rejected the payload even after the plain-text
-    retry (retrying the identical payload again would fail the same way).
-    Returns False only for a retryable failure (network/timeout/etc.), so
-    callers know NOT to treat this as delivered.
+    Returns the sent Message (truthy) on success — callers that need the
+    message_id, e.g. to pin it, can use it directly. Returns True if the
+    outcome is final but there's no message to reference — the user has
+    blocked the bot. Returns False only for a retryable failure
+    (network/timeout/etc.), so callers know NOT to treat this as delivered.
     """
     try:
-        await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
-        return True
+        return await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
         return True
     except TelegramBadRequest as e:
         logger.error("Bad request sending brief to %s: %s — retrying without Markdown.", user_id, e)
         try:
-            await bot.send_message(
+            return await bot.send_message(
                 chat_id=user_id,
                 text=strip_markdown_escapes(text),
                 parse_mode=None,
                 reply_markup=reply_markup,
             )
-            return True
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
             return True
     except Exception as e:
         logger.error("Failed to send brief to %s: %s", user_id, e, exc_info=True)
         return False
+
+
+async def _pin_brief_message(bot: Bot, session, user, message_id: int) -> None:
+    """Pin the just-sent morning brief so it stays visible atop the chat all day.
+
+    Best-effort: a pin failure (e.g. Telegram hiccup) shouldn't stop the
+    fluid-habit extras that follow it, so errors are logged and swallowed.
+    disable_notification=True because this is a pin of our own just-delivered
+    message, not new information — a second notification would be noise.
+    """
+    try:
+        await bot.pin_chat_message(chat_id=user.id, message_id=message_id, disable_notification=True)
+    except Exception as e:
+        logger.warning("Failed to pin morning brief message %s for user %s: %s", message_id, user.id, e)
+        return
+    user.pinned_brief_message_id = message_id
+    await session.execute(
+        update(User).where(User.id == user.id).values(pinned_brief_message_id=message_id)
+    )
+    await session.commit()
+
+
+async def _unpin_brief_message(bot: Bot, session, user) -> None:
+    """Unpin the morning brief once the evening summary has gone out.
+
+    Clears the stored id regardless of whether the Telegram call succeeds —
+    if it's already unpinned or the message is gone, there's nothing left to
+    track, and leaving the stale id around would only make every future
+    unpin attempt fail the same way forever.
+    """
+    message_id = user.pinned_brief_message_id
+    try:
+        await bot.unpin_chat_message(chat_id=user.id, message_id=message_id)
+    except Exception as e:
+        logger.warning("Failed to unpin brief message %s for user %s: %s", message_id, user.id, e)
+    user.pinned_brief_message_id = None
+    await session.execute(
+        update(User).where(User.id == user.id).values(pinned_brief_message_id=None)
+    )
+    await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -246,10 +285,25 @@ async def process_daily_briefs() -> None:
                         )
                         if claimed:
                             tasks = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
-                            delivered = True
+                            # Merged into a single message (was two separate sends)
+                            # so there's exactly one brief to pin for the day.
+                            fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
+                            text_sections = []
                             if tasks:
-                                text = _build_morning_text(tasks, user, l10n)
-                                delivered = await _send_safe(bot, user.id, text)
+                                text_sections.append(_build_morning_text(tasks, user, l10n))
+                            if fluid_brief_only:
+                                lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
+                                for h in fluid_brief_only:
+                                    lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
+                                text_sections.append("\n".join(lines))
+
+                            delivered = True
+                            sent_message = None
+                            if text_sections:
+                                result = await _send_safe(bot, user.id, "\n\n".join(text_sections))
+                                delivered = bool(result)
+                                if isinstance(result, Message):
+                                    sent_message = result
                                 if delivered:
                                     logger.info("Morning brief sent to user %s", user.id)
 
@@ -263,14 +317,9 @@ async def process_daily_briefs() -> None:
                                     session, user=user, column=User.last_morning_brief_date, today_str=today_str
                                 )
                             else:
+                                if sent_message is not None:
+                                    await _pin_brief_message(bot, session, user, sent_message.message_id)
                                 try:
-                                    fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
-                                    if fluid_brief_only:
-                                        lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
-                                        for h in fluid_brief_only:
-                                            lines.append(f"▫️ {escape_markdown(h.reminder_text)}")
-                                        await _send_safe(bot, user.id, "\n".join(lines))
-
                                     for h in fluid_habits:
                                         if is_quiet:
                                             continue
@@ -315,6 +364,8 @@ async def process_daily_briefs() -> None:
                                 )
                                 if delivered:
                                     logger.info("Evening brief sent to user %s", user.id)
+                                    if getattr(user, 'pinned_brief_message_id', None) is not None:
+                                        await _unpin_brief_message(bot, session, user)
 
                             if not delivered:
                                 # Retryable failure — see the morning branch above.

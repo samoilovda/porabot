@@ -226,15 +226,22 @@ async def process_habit_reports() -> None:
                     # report time (23:50) falls inside the default quiet window
                     # (23:00-07:00), so honoring it would mean a user who enabled
                     # quiet hours never receives the report they explicitly set up.
-                    if now_local.strftime("%H:%M") != getattr(user, "habit_report_time", "23:50"):
+                    #
+                    # 1.5: "time has passed" (<), not "time matches exactly" (!=)
+                    # — an exact-minute match means any downtime spanning that one
+                    # minute (deploy, restart, a slow prior iteration of this same
+                    # loop over many users) loses the report for a full week/month,
+                    # same class of bug daily_briefs's morning/evening window fixed.
+                    # The persisted last_habit_report_date claim below is what
+                    # actually prevents a resend, same as daily_briefs — the time
+                    # check only decides whether it's time to look at all.
+                    if now_local.strftime("%H:%M") < getattr(user, "habit_report_time", "23:50"):
                         continue
                     if now_local.weekday() != int(getattr(user, "habit_report_weekday", 6)):
                         continue
 
                     # Atomic claim before sending — mirrors daily_briefs's
-                    # _claim_brief_slot. Without a persisted dedup flag, an
-                    # exact-minute string match has no protection at all
-                    # against the job somehow firing twice during that minute.
+                    # _claim_brief_slot.
                     today_key = now_local.date().isoformat()
                     if getattr(user, "last_habit_report_date", None) == today_key:
                         continue
@@ -253,12 +260,11 @@ async def process_habit_reports() -> None:
                     delivered = await _process_user_reports(session, bot, user, now_local)
                     if not delivered:
                         # Retryable failure — release the claim (mirrors
-                        # daily_briefs._release_brief_claim). Note the exact-
-                        # minute match above means this can only actually be
-                        # retried if the job happens to fire again for the
-                        # same minute (e.g. a misfire catch-up); otherwise
-                        # this occurrence is picked up next week instead of
-                        # being wrongly recorded as delivered.
+                        # daily_briefs._release_brief_claim). With the window
+                        # check above (1.5), the very next minute's tick sees
+                        # "time has passed, not yet claimed today" and retries
+                        # for real, instead of only an exact-minute misfire
+                        # catch-up being able to.
                         await session.execute(
                             update(User)
                             .where(User.id == user.id, User.last_habit_report_date == today_key)

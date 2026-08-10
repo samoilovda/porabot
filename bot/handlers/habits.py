@@ -1,5 +1,6 @@
 """Habits handler — true daily custom habits builder."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -15,7 +16,13 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.database.models import User
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
-from bot.keyboards.inline import get_fluid_pick_time_keyboard
+from bot.handlers.reminders import (
+    _UNDO_DELETE_WINDOW,
+    _message_task_key,
+    _remove_keyboard_after_delay,
+    active_auto_delete_tasks,
+)
+from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
@@ -678,26 +685,44 @@ async def cb_not_today(
 async def cb_del_habit(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
-    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
+    """Soft-delete a habit with an undo window (REWORK_PLAN_3 2.4).
+
+    Used to hard-delete the reminder AND its whole habit_events history
+    (streaks, weekly/monthly report data) immediately, with no confirmation
+    and no way back — a mistap on the delete button, which sits right next
+    to the settings gear in the habits list, was permanent. Reuses the same
+    pending_delete_at + undo-window mechanism reminders.py's del_task_
+    already uses for plain tasks (and, incidentally, for fixed habits
+    reachable via "My Tasks" — get_user_reminders doesn't exclude
+    is_habit=True rows, only is_fluid_habit ones). delete_cleanup.py's
+    sweep hard-deletes both the reminder and its habit_events once the
+    undo window elapses, restart-safe by construction.
+    """
     task_id = int(callback.data.split("_")[-1])
-    if not await reminder_dao.get_owned(task_id, user.id):
+    reminder = await reminder_dao.get_owned(task_id, user.id)
+    if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
     try:
-        await habit_event_dao.delete_for_reminder(task_id)
-        await reminder_dao.delete_by_id(task_id)
         scheduler_service.remove_reminder_job(task_id)
-            
-        await callback.answer(l10n["habit_deleted_alert"], show_alert=True)
-        await callback.message.delete()
-        await callback.message.answer(
-            l10n["habit_deleted_followup"],
-            parse_mode="Markdown"
+        scheduler_service.remove_nagging_job(task_id)
+        reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            seconds=_UNDO_DELETE_WINDOW
         )
+        await reminder_dao.session.commit()
+
+        await callback.answer(l10n["habit_deleted_alert"], show_alert=True)
+        await callback.message.edit_text(
+            l10n["habit_deleted_followup"],
+            reply_markup=get_undo_delete_keyboard(task_id, l10n),
+            parse_mode="Markdown",
+        )
+        task = asyncio.create_task(_remove_keyboard_after_delay(callback.message, _UNDO_DELETE_WINDOW))
+        active_auto_delete_tasks[_message_task_key(callback.message)] = task
     except Exception as e:
         logger.error("Error deleting habit %s: %s", task_id, e)
         await callback.answer(l10n["habit_delete_error_alert"], show_alert=True)

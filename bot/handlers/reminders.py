@@ -1326,6 +1326,7 @@ async def callback_task_done(
         await callback.answer(l10n["btn_done"])
         return
 
+    credited_due_at_utc_naive = None
     if _is_habit_like(reminder):
         due_at = cycle_due_at_utc_naive or reminder.habit_active_due_at
         if due_at is not None:
@@ -1345,6 +1346,7 @@ async def callback_task_done(
                 source="button",
                 due_at_utc_naive=due_at,
             )
+            credited_due_at_utc_naive = due_at
 
     await reminder_dao.mark_done(reminder_id)
     if not reminder.is_recurring:
@@ -1359,6 +1361,11 @@ async def callback_task_done(
                 reminder_id=reminder.id,
                 l10n=l10n,
                 is_recurring=bool(reminder.is_recurring),
+                cycle_due_ts=(
+                    int(credited_due_at_utc_naive.replace(tzinfo=timezone.utc).timestamp())
+                    if credited_due_at_utc_naive is not None
+                    else None
+                ),
             ),
             parse_mode="MarkdownV2",
         )
@@ -1470,7 +1477,26 @@ async def callback_done_undo(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_undo_")[1])
+    payload = callback.data[len("done_undo_"):]
+    parts = payload.split("_")
+    try:
+        reminder_id = int(parts[0])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    # 3.4: the cycle Done actually credited, embedded by
+    # get_done_followup_keyboard — same pattern done_task_/not_today_ already
+    # use. Falls back to habit_active_due_at for a followup keyboard sent
+    # before this fix (no suffix), same as before.
+    cycle_due_at_utc_naive = None
+    if len(parts) >= 2:
+        try:
+            cycle_due_ts = int(parts[1])
+            cycle_due_at_utc_naive = datetime.fromtimestamp(cycle_due_ts, tz=timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            cycle_due_at_utc_naive = None
+
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -1478,7 +1504,7 @@ async def callback_done_undo(
     # Undo must remove the recorded "done" event, or habit reports will keep
     # showing a completion the user just took back.
     if _is_habit_like(reminder):
-        due_at = reminder.habit_active_due_at or reminder.execution_time
+        due_at = cycle_due_at_utc_naive or reminder.habit_active_due_at or reminder.execution_time
         if due_at is not None:
             await habit_event_dao.delete_for_cycle(reminder.id, cycle_key_for_fixed(due_at))
             await reminder_dao.revert_habit_streak_completion(reminder.id, due_at_utc_naive=due_at)

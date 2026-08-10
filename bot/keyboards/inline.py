@@ -382,12 +382,24 @@ def get_done_followup_keyboard(
     l10n: dict[str, Any],
     *,
     is_recurring: bool = False,
+    cycle_due_ts: Optional[int] = None,
 ) -> InlineKeyboardMarkup:
-    """Keyboard shown after marking a task as done."""
+    """Keyboard shown after marking a task as done.
+
+    cycle_due_ts (3.4): the habit cycle Done credited, embedded in Undo's
+    callback_data the same way get_task_done_keyboard already embeds it for
+    Done/Not-today — without it, Undo fell back to reminder.habit_active_due_at,
+    which can have moved on to the NEXT cycle by the time Undo is tapped
+    (e.g. Done was tapped on an old/snoozed notification), reverting the
+    wrong cycle's streak and event.
+    """
     builder = InlineKeyboardBuilder()
+    undo_callback = f"done_undo_{reminder_id}"
+    if cycle_due_ts is not None:
+        undo_callback = f"{undo_callback}_{int(cycle_due_ts)}"
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_done_add_note", "📝 Add note"), callback_data=f"done_note_{reminder_id}"),
-        InlineKeyboardButton(text=l10n.get("btn_done_undo", "↩ Undo"), callback_data=f"done_undo_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_done_undo", "↩ Undo"), callback_data=undo_callback),
     )
     if is_recurring:
         builder.row(

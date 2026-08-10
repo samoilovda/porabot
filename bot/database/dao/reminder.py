@@ -643,7 +643,6 @@ class ReminderDAO(BaseDAO[Reminder]):
             tz = pytz.UTC
 
         now_local = datetime.now(tz)
-        start_utc = (now_local - timedelta(days=days)).astimezone(pytz.UTC).replace(tzinfo=None)
 
         active_result = await self.session.execute(
             select(Reminder)
@@ -662,23 +661,21 @@ class ReminderDAO(BaseDAO[Reminder]):
         )
         active_habits = active_result.scalars().all()
 
-        completed_result = await self.session.execute(
-            select(Reminder)
-            .where(
-                Reminder.user_id == user_id,
-                Reminder.is_recurring.is_(True),
-                or_(
-                    Reminder.is_habit.is_(True),
-                    Reminder.habit_active_due_at.is_not(None),
-                    Reminder.habit_last_completed_due_at.is_not(None),
-                    Reminder.habit_streak_current > 0,
-                    Reminder.habit_streak_best > 0,
-                ),
-                Reminder.completed_at.is_not(None),
-                Reminder.completed_at >= start_utc,
-            )
+        # 2.5: weekly_done used to count DISTINCT REMINDERS with a
+        # completed_at in the window — but completed_at is a single field
+        # overwritten on every completion (see mark_done), so a habit
+        # completed every day for a week counted as 1, and three different
+        # habits completed once each counted as 3. habit_events is the
+        # actual per-completion log this dashboard is trying to summarize;
+        # count "done" events instead, same source habit_reports.py uses.
+        today_local = now_local.date()
+        start_local = today_local - timedelta(days=days - 1)
+        from bot.database.dao.habit_event import HabitEventDAO
+
+        events = await HabitEventDAO(self.session).get_events_in_range(
+            user_id, start_local.isoformat(), today_local.isoformat()
         )
-        completed_habits = completed_result.scalars().all()
+        weekly_done = sum(1 for e in events if e.outcome == "done")
 
         def _current_streak(h) -> int:
             if getattr(h, "is_fluid_habit", False):
@@ -692,7 +689,7 @@ class ReminderDAO(BaseDAO[Reminder]):
 
         return {
             "active_count": len(active_habits),
-            "weekly_done": len(completed_habits),
+            "weekly_done": weekly_done,
             "best_current_streak": max((_current_streak(h) for h in active_habits), default=0),
             "best_ever_streak": max((_best_streak(h) for h in active_habits), default=0),
         }

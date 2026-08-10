@@ -181,7 +181,44 @@ sudo systemctl status porabot
 1. **Never commit `.env` to Git** - Add it to `.gitignore`
 2. **Use strong BOT_TOKEN** from @BotFather
 3. **Restrict ALLOWED_USERS** to trusted users only
-4. **Regular backups** of `/opt/porabot/data/` directory
+4. **Regular backups** of `/opt/porabot/data/` directory (see below)
+
+---
+
+## Backups
+
+`data/` holds two SQLite databases with WAL mode enabled — a plain `cp`/`rsync`
+of the live file can capture it mid-write and produce a torn, unrecoverable
+copy. `scripts/backup.sh` uses SQLite's own online backup API instead
+(`sqlite3 <file> ".backup <dest>"`), safe to run against a database the bot
+is actively writing to:
+
+```bash
+cd /opt/porabot
+./scripts/backup.sh              # data/ -> backups/, 7-day retention
+./scripts/backup.sh data backups 30   # explicit paths + 30-day retention
+```
+
+Requires the `sqlite3` CLI on the host (`apt install sqlite3`). For daily
+automated backups, add a cron entry:
+
+```bash
+0 3 * * * cd /opt/porabot && ./scripts/backup.sh >> /var/log/porabot-backup.log 2>&1
+```
+
+---
+
+## Health Monitoring
+
+`docker-compose.yml` defines a `healthcheck` that fails if `bot/__main__.py`
+hasn't updated its heartbeat file in the last 150 seconds — this catches a
+polling loop that's hung (deadlocked, stuck on a call that never times out),
+which `restart: always` alone can't: it only reacts to the process exiting,
+and a hung-but-alive process never does. Check current health with:
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' porabot
+```
 
 ---
 

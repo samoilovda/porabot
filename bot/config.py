@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # --- Locale ---
     TZ: str = "UTC"
 
+    # --- Health ---
+    # Touched every minute by a periodic job (see bot/__main__.py) so
+    # docker-compose's healthcheck can tell "process alive" apart from
+    # "process alive but polling died/hung" — restart: always only reacts
+    # to the former. Relative by default for local (non-Docker) runs;
+    # docker-compose.yml points it at the same mounted volume as the DB
+    # files so the directory is guaranteed to already exist and be writable.
+    HEARTBEAT_FILE: str = "heartbeat"
+
 
 # Module-level singleton
 config = Settings()

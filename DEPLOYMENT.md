@@ -36,11 +36,22 @@ BOT_TOKEN=your_telegram_bot_token_here
 ADMIN_ID=your_admin_user_id_here
 ALLOWED_USERS=[admin_id]
 TZ=Europe/Moscow  # or your server timezone
-DATABASE_URL=sqlite+aiosqlite:///data/porabot.db
-SCHEDULER_DB_URL=sqlite:///data/jobs.sqlite
+DATABASE_URL=sqlite+aiosqlite:////app/data/porabot.db
+SCHEDULER_DB_URL=sqlite:////app/data/jobs.sqlite
 ```
 
 **Important:** Replace `your_telegram_bot_token_here` and `your_admin_user_id_here` with actual values!
+
+**Important:** `DATABASE_URL`/`SCHEDULER_DB_URL` use **four** slashes after the
+scheme (`sqlite+aiosqlite:////app/...`), not three — the extra slash is what
+makes the path absolute inside the container (`/app/data/...`), matching
+where `docker-compose.yml`'s `./data:/app/data` volume is mounted. This is
+also what `docker-compose.yml` itself sets via its own `environment:` block,
+which overrides `.env` when you run through `docker compose up`. But if you
+ever run the image directly (`docker run --env-file .env ...`, no compose)
+instead, `.env` is all that's read — a three-slash relative path there would
+put the database outside the mounted volume, invisible to
+`docker compose up -d --build` and lost on the next container recreate.
 
 ---
 

@@ -359,6 +359,9 @@ async def handle_forwarded_task(
     """Extract text from a forwarded message and route it through the wizard."""
     text = message.text or message.caption
     if not text:
+        # REWORK_PLAN_3 2.7: a forwarded photo/video/voice with no caption
+        # used to get silently dropped here — no error, no hint, nothing.
+        await message.answer(l10n.get("text_only_hint", "📝 I can only understand text right now. Send your reminder as a text message."))
         return
 
     await state.clear()
@@ -1600,3 +1603,18 @@ async def callback_snooze_act(
         parse_mode="MarkdownV2",
     )
     await callback.answer(l10n["snoozed_toast"])
+
+
+# ---------------------------------------------------------------------------
+# Catch-all: non-text messages outside any FSM flow
+# ---------------------------------------------------------------------------
+# REWORK_PLAN_3 2.7: nothing responded to a photo/voice/video/sticker/etc.
+# sent with StateFilter(None) — the bot looked broken, silently swallowing
+# the update. Registered last so every more specific handler (forwarded
+# messages, FSM-state text handlers, callbacks) gets first refusal; ~F.text
+# means an ordinary text message never reaches this either way, since
+# handle_task_text above already claims those.
+
+@router.message(StateFilter(None), ~F.text)
+async def handle_non_text_message(message: Message, l10n: dict[str, Any]) -> None:
+    await message.answer(l10n.get("text_only_hint", "📝 I can only understand text right now. Send your reminder as a text message."))

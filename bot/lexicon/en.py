@@ -96,6 +96,7 @@ EN: dict[str, Any] = {
     "time_in_past": "⏰ This time has already passed. Please choose a future time.",
     "choosing_time_retry": "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`.",
     "forwarded_from": "Forwarded from",
+    "text_only_hint": "📝 I can only understand text right now. Send your reminder as a text message.",
 
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",

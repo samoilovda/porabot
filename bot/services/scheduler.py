@@ -301,16 +301,27 @@ class SchedulerService:
         return is_quiet_hours(user, now_local)
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
+        """Next local time quiet hours end, as UTC.
+
+        3.3: computed via naive local wall-clock time + tz.localize(), not
+        now_local.replace(...) + timedelta on a pytz-aware datetime.
+        replace() keeps now_local's ORIGINAL tzinfo (a fixed UTC offset
+        snapshot pytz bakes in at astimezone() time) instead of resolving
+        the correct offset for the candidate's own date — a `+= timedelta`
+        that crosses a DST transition then carries the stale offset,
+        landing an hour off. Same pitfall next_occurrence_utc
+        (bot/utils/time_ext.py) already avoids the same way.
+        """
         try:
             user_tz = pytz.timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
-        now_local = now_utc.astimezone(user_tz)
+        now_local_naive = now_utc.astimezone(user_tz).replace(tzinfo=None)
         end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-        candidate = now_local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
-        if candidate <= now_local:
-            candidate += timedelta(days=1)
-        return candidate.astimezone(timezone.utc)
+        candidate_naive = now_local_naive.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+        if candidate_naive <= now_local_naive:
+            candidate_naive += timedelta(days=1)
+        return user_tz.localize(candidate_naive).astimezone(timezone.utc)
 
     async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
         """Fetch reminder from DB, send notification, handle recurrence and nagging."""

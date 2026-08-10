@@ -25,12 +25,21 @@ def _make_state() -> FSMContext:
     return FSMContext(storage=storage, key=key)
 
 
-async def test_manual_time_entry_clears_state_so_next_text_is_not_ignored() -> None:
+async def test_manual_time_entry_stays_in_choosing_time_and_keeps_task_text() -> None:
+    """Regression (REWORK_PLAN_3 2.2): tapping "⌨️ Enter manually" used to
+    state.clear() — discarding the task text (and edit_reminder_id, for an
+    edit/snooze) — and prompt the user to retype the whole task, even though
+    nothing in the FSM at the time could actually accept that input
+    (state_choosing_time_text_input didn't exist yet: 2.1). Now it stays in
+    choosing_time with the state data intact, so state_choosing_time_text_input
+    picks up whatever the user types next as the time for the SAME task.
+    """
     reminders_module = _load_module("bot/handlers/reminders.py")
     ReminderWizard = reminders_module.ReminderWizard
 
     state = _make_state()
     await state.set_state(ReminderWizard.choosing_time)
+    await state.update_data(text="call mom", edit_reminder_id=42)
 
     callback = SimpleNamespace(
         data="time_manual",
@@ -38,14 +47,17 @@ async def test_manual_time_entry_clears_state_so_next_text_is_not_ignored() -> N
         message=SimpleNamespace(edit_text=AsyncMock()),
     )
     user = SimpleNamespace(timezone="UTC")
-    l10n = {"try_again_manual": "Type the whole task again."}
+    l10n = {"try_again_manual": "Type the time, e.g. 18:30 or tomorrow at 9."}
 
     await reminders_module.callback_time_selected(
         callback, state, user, l10n, reminder_dao=None, scheduler_service=None
     )
 
-    assert await state.get_state() is None
-    callback.message.edit_text.assert_awaited_once_with(l10n["try_again_manual"])
+    assert await state.get_state() == ReminderWizard.choosing_time.state
+    data = await state.get_data()
+    assert data["text"] == "call mom"
+    assert data["edit_reminder_id"] == 42
+    callback.message.edit_text.assert_awaited_once_with(l10n["try_again_manual"], reply_markup=None)
 
 
 async def test_new_text_during_confirming_parse_is_not_ignored() -> None:

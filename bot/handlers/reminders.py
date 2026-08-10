@@ -442,6 +442,46 @@ async def handle_task_text(
 # FSM: time selection
 # ---------------------------------------------------------------------------
 
+@router.message(ReminderWizard.choosing_time, F.text)
+async def state_choosing_time_text_input(
+    message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
+    reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+) -> None:
+    """Accept a typed time expression while the time-selection keyboard is
+    showing (REWORK_PLAN_3 2.1). Without this, a user who types instead of
+    tapping a button — including after tapping "⌨️ Enter manually", whose
+    only purpose is to invite exactly that — got no response at all: no
+    error, no retry prompt, nothing.
+
+    The task description is already fixed in `state` from the step that led
+    here (_handle_parsed_result or callback_edit_edit / callback_snooze_act);
+    this only extracts a datetime from the typed text, discarding whatever
+    `parser.parse` produced as clean_text.
+    """
+    if message.text in _MENU_TEXTS:
+        return
+    if len(message.text) > _MAX_INPUT:
+        await message.answer(l10n.get("text_too_long", "❌ Text too long.").format(length=len(message.text), max_length=_MAX_INPUT))
+        return
+
+    try:
+        result = await parser.parse(message.text, user.timezone)
+    except Exception as e:
+        logger.error("Error parsing time input for user %s: %s", user.id, e, exc_info=True)
+        await message.answer(l10n["parse_error"])
+        return
+
+    if not result.parsed_datetime:
+        await message.answer(
+            l10n.get("choosing_time_retry", "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`."),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        )
+        return
+
+    await state.update_data(execution_time=result.parsed_datetime.isoformat())
+    await _save_and_show_edit(message, state, l10n, user, reminder_dao, scheduler_service)
+
+
 @router.callback_query(ReminderWizard.choosing_time, F.data.startswith("time_"))
 async def callback_time_selected(
     callback: CallbackQuery, state: FSMContext, user: User, l10n: dict[str, Any],
@@ -464,9 +504,14 @@ async def callback_time_selected(
     elif "tomorrow" in data_str:
         execution_time = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
     elif "manual" in data_str:
-        await state.clear()
+        # REWORK_PLAN_3 2.2: used to state.clear() here, discarding the task
+        # text and (for an edit/snooze) edit_reminder_id, and prompting the
+        # user to "try again" with no working way to actually enter a time —
+        # state_choosing_time_text_input didn't exist yet. Now that it does,
+        # stay in choosing_time: the state data survives, and the next thing
+        # the user types is picked up as a time expression by that handler.
         await callback.answer()
-        await callback.message.edit_text(l10n["try_again_manual"])
+        await callback.message.edit_text(l10n["try_again_manual"], reply_markup=None)
         return
 
     if execution_time:

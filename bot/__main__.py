@@ -136,8 +136,19 @@ async def main() -> None:
     # To re-enable the whitelist, restore WhitelistMiddleware registration
     # before DatabaseMiddleware too.
     # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
-    dp.update.middleware(RateLimitMiddleware())
+    rate_limit_middleware = RateLimitMiddleware()
+    dp.update.middleware(rate_limit_middleware)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
+    # 3.1: RateLimitMiddleware's per-user hit dict never dropped an entry on
+    # its own — a user who sent a handful of messages and never returned
+    # left a permanent entry behind. Same cadence as cleanup_stale_timers.
+    scheduler.add_job(
+        rate_limit_middleware.cleanup_expired,
+        "interval",
+        minutes=10,
+        id="cleanup_rate_limit_hits",
+        replace_existing=True,
+    )
 
     # Routers
     for router in all_routers:

@@ -7,6 +7,13 @@
 # Regenerate after bumping requirements.txt with:
 #   python3 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install "setuptools<81" wheel \
 #     && /tmp/lockenv/bin/pip install -r requirements.txt && /tmp/lockenv/bin/pip freeze
+#
+# docopt==0.6.2 below (a transitive natasha dependency) fails to build with
+# "AttributeError: install_layout" on a Debian/Ubuntu apt-packaged system
+# Python — its patched distutils drops compatibility docopt's legacy
+# setup.py needs. Unaffected: the Dockerfile (python:3.11-slim, an upstream
+# build) and CI. For local dev on Debian/Ubuntu system Python, see
+# running_guide.md's docopt-ng workaround.
 setuptools==80.10.2
 wheel==0.47.0
 

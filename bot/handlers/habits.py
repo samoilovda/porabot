@@ -46,14 +46,19 @@ def _habit_motivation_text(l10n: dict[str, Any], stats: dict[str, int]) -> str:
     )
 
 def _is_habit_entry(reminder) -> bool:
+    """Whether *reminder* belongs in "My Habits".
+
+    Deliberately does NOT match on "daily recurring + nagging" alone — those
+    are ordinary edit-keyboard toggles any plain task can have turned on,
+    and matching on them showed such a task in the habits list (REWORK_PLAN_3
+    1.2). `is_habit` (set only by the Habits creation flow, or by the
+    one-time legacy backfill in bot/database/engine.py) is the source of
+    truth; the remaining checks catch rows that lived as a habit before
+    is_habit existed.
+    """
     return bool(
         getattr(reminder, "is_habit", False)
         or getattr(reminder, "is_fluid_habit", False)
-        or (
-            bool(getattr(reminder, "is_recurring", False))
-            and bool(getattr(reminder, "is_nagging", False))
-            and str(getattr(reminder, "rrule_string", "") or "").upper().startswith("FREQ=DAILY")
-        )
         or getattr(reminder, "habit_active_due_at", None) is not None
         or getattr(reminder, "habit_last_completed_due_at", None) is not None
         or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0

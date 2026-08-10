@@ -37,7 +37,7 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Plantillas** — plantillas de hábitos habituales seleccionables al crearlos
 - **Rachas** — `habit_streak_current` / `habit_streak_best` por hábito fijo; `fluid_streak_current` / `fluid_streak_best` para hábitos fluidos
 - **Deshacer** — revierte la última compleción y restaura la racha al valor anterior (flag `habit_undo_pending`)
-- **«Hoy no»** — registra el ciclo como `not_today` sin romper la racha
+- **«Hoy no»** — registra el ciclo como `not_today` (distinto de un `missed` automático); igual que un ciclo perdido, reinicia la racha actual
 - **Sweeper de hábitos** — tarea en segundo plano que cada minuto detecta ciclos perdidos desde el estado de la BD, independientemente de si se envió alguna notificación
 - **Informes semanales y mensuales** — tasas agregadas de completado / hoy-no / perdido por hábito, enviadas en el día y hora configurados por el usuario
 

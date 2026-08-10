@@ -37,7 +37,7 @@ Type a phrase; the bot parses time and extracts the task description:
 - **Presets** — common habit templates selectable at creation
 - **Streaks** — `habit_streak_current` / `habit_streak_best` maintained per habit; fluid habits track `fluid_streak_current` / `fluid_streak_best` separately
 - **Undo** — reverts the last completion and restores the streak to the value it had before (via `habit_undo_pending` flag)
-- **"Not today"** — logs the cycle as `not_today` without breaking the streak
+- **"Not today"** — logs the cycle as `not_today` (distinct from an auto-detected `missed`); like a missed cycle, it resets the current streak
 - **Habit sweeper** — background minutely job detects cycles missed while the bot was down or the user had notifications off; writes `missed` events from live DB state, independent of whether any notification was ever sent
 - **Weekly and monthly reports** — aggregated done / not-today / missed rates per habit, sent at a user-configured weekday and time
 

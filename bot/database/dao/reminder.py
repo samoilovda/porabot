@@ -1,49 +1,14 @@
-"""
-ReminderDAO — Data Access for Reminder Model
-=============================================
+"""ReminderDAO — data access for Reminder rows: plain tasks, recurring
+tasks, and (is_habit/is_fluid_habit) habits share this one model and DAO.
 
-PURPOSE:
-  This DAO provides specialized data access methods for the Reminder model.
-  It extends BaseDAO with reminder-specific operations like recurring task
-  management, daily briefs queries, and soft-delete functionality.
-
-ARCHITECTURE OVERVIEW:
-  
-  ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-  │   BaseDAO    │────▶│ ReminderDAO  │────▶│ Specialized CRUD │
-  │ (generic)    │     │ (concrete)   │     │ + domain logic   │
-  └─────────────┘     └──────────────┘     └─────────────────┘
-
-SPECIALIZED OPERATIONS:
-  
-  - create_reminder(): Create new reminder with all fields
-  - get_user_reminders(): Get user's pending tasks (for task list)
-  - mark_done(): Soft delete by marking status='completed'
-  - get_today_tasks_by_status(): Fetch today's tasks for daily briefs
-  - update_execution_time(): Update time (used by recurring reschedule)
-
-BUG FIXES APPLIED (Phase 1):
-  ✅ Added comprehensive documentation for each method
-  ✅ Fixed timezone handling in mark_done() and get_today_tasks_by_status()
-  ✅ Documented soft-delete pattern vs hard delete
-  ✅ Explained why we use status field instead of DELETE
-
-USAGE:
-  
-    # Create new reminder
-    >>> dao = ReminderDAO(session)
-    >>> reminder = await dao.create_reminder(
-    ...     user_id=123,
-    ...     text="Take medication",
-    ...     execution_time=datetime.now() + timedelta(hours=1),
-    ... )
-    
-    # Get user's pending tasks (for task list view)
-    >>> tasks = await dao.get_user_reminders(123)
-    
-    # Mark as done (soft delete for recurring tasks)
-    >>> await dao.mark_done(456)
-
+Soft-delete, not hard-delete, for both tasks and completions: a one-off
+task's row becomes status='completed'; a recurring one stays 'pending' but
+hides the just-finished cycle via completed_for_execution_time until the
+next occurrence rolls around (see mark_done). A tap on Delete instead sets
+pending_delete_at and leaves the row alone for the undo window — every
+query here that lists/schedules/reconciles active reminders excludes rows
+where it's set; bot/services/delete_cleanup.py hard-deletes them once the
+window elapses.
 """
 
 from datetime import datetime, timedelta
@@ -60,42 +25,9 @@ from bot.database.models import Reminder, is_habit_like
 
 
 class ReminderDAO(BaseDAO[Reminder]):
-    """
-    Data access object specialized for Reminder model.
-    
-    This DAO extends the generic BaseDAO with reminder-specific operations:
-      - create_reminder(): Create new reminder with all fields
-      - get_user_reminders(): Get user's pending tasks (for task list)
-      - mark_done(): Soft delete by marking status='completed'
-      - get_today_tasks_by_status(): Fetch today's tasks for daily briefs
-    
-    Architecture:
-      ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-      │   BaseDAO    │────▶│ ReminderDAO  │────▶│ Specialized CRUD │
-      │ (generic)    │     │ (concrete)   │     │ + domain logic   │
-      └─────────────┘     └──────────────┘     └─────────────────┘
-    
-    Soft-Delete Pattern:
-      Instead of hard deleting records, we use a status field:
-        - 'pending': Task is waiting to be executed
-        - 'completed': Task was done (or expired)
-      
-      Why soft-delete?
-        1. Recurring tasks need history for daily briefs
-        2. Analytics/debugging benefits from seeing all tasks
-        3. Can restore accidentally deleted tasks if needed
-    
-    Args:
-        session: Async SQLAlchemy session for database operations
-        
-    Example:
-        >>> dao = ReminderDAO(session)
-        >>> reminder = await dao.create_reminder(
-        ...     user_id=123,
-        ...     text="Take medication",
-        ...     execution_time=datetime.now() + timedelta(hours=1),
-        ... )
-    """
+    """CRUD plus habit-streak, fluid-habit, and daily-brief queries for
+    Reminder rows — see the module docstring above for the soft-delete
+    conventions every method here follows."""
 
     model = Reminder  # Class attribute - set by concrete DAO subclass
 
@@ -124,47 +56,12 @@ class ReminderDAO(BaseDAO[Reminder]):
         is_nagging: bool = False,
         nagging_max_repeats: int = 3,
     ) -> Reminder:
-        """
-        Insert a new reminder and return it with populated `id`.
-        
-        This method creates a complete Reminder object with all fields.
-        The session.flush() call populates the auto-generated id field.
-        
-        SECURITY FIX APPLIED:
-          Added input validation for text length to prevent Telegram API errors.
-          Maximum length: 3000 characters (leaves room for formatting/prefix).
-        
-        Args:
-            user_id: Telegram user ID (foreign key to users table)
-            text: What the user needs to remember (e.g., "Take medication")
-            execution_time: When task should fire - MUST be timezone-aware!
-                          IMPORTANT: Convert to UTC before passing this value.
-            media_file_id: Optional file attachment (photo/video) for context
-            media_type: File type: 'photo', 'video', etc.
-            is_recurring: Is this a repeating task? Default: False
-            rrule_string: iCalendar recurrence rule string for recurring tasks
-                         Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
-            is_habit: Whether this reminder was created from Habits flow
-            is_fluid_habit: Whether this is a fluid (day-based) habit
-            fluid_mode: Fluid mode - "brief_only" or "ask_time"
-            is_nagging: Should bot send follow-ups every 5 min until done? Default: False
-            nagging_max_repeats: Maximum number of follow-up nags. Default: 3
-            
-        Returns:
-            Reminder: The created reminder with all fields populated including id
-            
-        Side Effects:
-          Adds record to session and flushes to populate auto-generated ID
-        
-        Raises:
-            ValueError: If text exceeds maximum length (3000 chars)
-        
-        Example:
-            >>> reminder = await dao.create_reminder(
-            ...     user_id=123,
-            ...     text="Take medication",
-            ...     execution_time=datetime(2024, 3, 27, 9, 0),  # UTC time!
-            ... )
+        """Insert a new reminder, flush, and return it with `id` populated.
+
+        *execution_time* must already be naive UTC (callers convert before
+        calling this). Raises ValueError if *text* exceeds 3000 chars, if
+        *nagging_max_repeats* is negative, or if the user is already at
+        MAX_ACTIVE_REMINDERS / MAX_ACTIVE_HABITS (whichever pool applies).
         """
         # SECURITY FIX: Validate text length to prevent Telegram API errors
         # Telegram message limit is 4096 chars, but we need room for prefix/formatting

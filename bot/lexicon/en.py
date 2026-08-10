@@ -140,6 +140,7 @@ EN: dict[str, Any] = {
     "brief_evening_title": "🌙 **Day summary:**",
     "brief_evening_done": "✅ Done: {count}",
     "brief_evening_pending": "⏳ Remaining/Missed: {count}\n",
+    "brief_evening_upcoming_title": "⏰ **Still today:**",
     "brief_items_more": "…and {count} more",
     "btn_done": "✅ Done",
     "btn_not_today": "🚫 Not today",

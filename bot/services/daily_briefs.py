@@ -88,26 +88,51 @@ def _build_morning_text(shown_tasks, hidden_count: int, user, l10n: dict) -> str
 
 
 def _build_evening_text(
-    shown_completed, hidden_completed: int, shown_pending, hidden_pending: int, total_completed: int, total_pending: int, user, l10n: dict
+    shown_completed,
+    hidden_completed: int,
+    shown_overdue,
+    hidden_overdue: int,
+    shown_upcoming,
+    hidden_upcoming: int,
+    total_completed: int,
+    total_overdue: int,
+    user,
+    l10n: dict,
 ) -> str:
-    """*shown_completed*/*shown_pending* must already be truncated by the
-    caller via _limit_items — get_evening_wrapup_keyboard is built from the
-    same *shown_pending* list so the message and its buttons stay in sync."""
+    """*shown_completed*/*shown_overdue*/*shown_upcoming* must already be
+    truncated by the caller via _limit_items — get_evening_wrapup_keyboard
+    is built from the same *shown_overdue* list so the message and its
+    buttons stay in sync.
+
+    *shown_overdue* is pending tasks whose execution_time has already
+    passed — genuinely missed. *shown_upcoming* is pending tasks still
+    ahead of "now" today (2.3): rendering these as ❌ "missed" and offering
+    a wrap-up Done/Not-done choice for them was wrong — they hadn't fired
+    yet, there was nothing to report on.
+    """
     lines = [
         l10n.get("brief_evening_title", "🌙 **Итоги дня:**"),
         l10n.get("brief_evening_done", "✅ Выполнено: {count}").format(count=total_completed),
-        l10n.get("brief_evening_pending", "⏳ Осталось/Пропущено: {count}\n").format(count=total_pending),
+        l10n.get("brief_evening_pending", "⏳ Осталось/Пропущено: {count}\n").format(count=total_overdue),
     ]
     for t in shown_completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         lines.append(f"✅ ~{escape_markdown(_preview_line(t.reminder_text))}~ ({time_str})")
     if hidden_completed:
         lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_completed))
-    for t in shown_pending:
+    for t in shown_overdue:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
         lines.append(f"❌ {escape_markdown(_preview_line(t.reminder_text))} ({time_str})")  # BUG-4 fixed: closing paren added
-    if hidden_pending:
-        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_pending))
+    if hidden_overdue:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_overdue))
+    if shown_upcoming:
+        lines.append("")
+        lines.append(l10n.get("brief_evening_upcoming_title", "⏰ **Still today:**"))
+        for t in shown_upcoming:
+            time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
+            lines.append(f"▫️ {escape_markdown(_preview_line(t.reminder_text))} ({time_str})")
+        if hidden_upcoming:
+            lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_upcoming))
     return "\n".join(lines)
 
 
@@ -426,17 +451,30 @@ async def process_daily_briefs() -> None:
                         if claimed:
                             completed = await reminder_dao.get_today_completed_tasks(user.id, user.timezone)
                             pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
+                            # 2.3: get_today_pending_tasks returns every pending
+                            # task for the local day, including ones whose time
+                            # hasn't arrived yet (e.g. a 23:30 task checked by a
+                            # 23:00 evening brief). Rendering those as ❌ "missed"
+                            # and offering a wrap-up Done/Not-done choice for a
+                            # task that hasn't fired is wrong on both counts —
+                            # split by whether execution_time has actually passed.
+                            now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                            overdue = [t for t in pending if t.execution_time <= now_utc_naive]
+                            upcoming = [t for t in pending if t.execution_time > now_utc_naive]
                             delivered = True
                             if completed or pending:
                                 shown_completed, hidden_completed = _limit_items(completed)
-                                shown_pending, hidden_pending = _limit_items(pending)
+                                shown_overdue, hidden_overdue = _limit_items(overdue)
+                                shown_upcoming, hidden_upcoming = _limit_items(upcoming)
                                 text = _build_evening_text(
                                     shown_completed,
                                     hidden_completed,
-                                    shown_pending,
-                                    hidden_pending,
+                                    shown_overdue,
+                                    hidden_overdue,
+                                    shown_upcoming,
+                                    hidden_upcoming,
                                     len(completed),
-                                    len(pending),
+                                    len(overdue),
                                     user,
                                     l10n,
                                 )
@@ -444,7 +482,7 @@ async def process_daily_briefs() -> None:
                                     bot,
                                     user.id,
                                     text,
-                                    reply_markup=get_evening_wrapup_keyboard(shown_pending, l10n) if shown_pending else None,
+                                    reply_markup=get_evening_wrapup_keyboard(shown_overdue, l10n) if shown_overdue else None,
                                 )
                                 if delivered:
                                     logger.info("Evening brief sent to user %s", user.id)

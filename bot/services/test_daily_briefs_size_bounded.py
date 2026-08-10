@@ -51,26 +51,51 @@ def test_morning_text_shows_capped_tasks_plus_more_line() -> None:
     assert "and 40 more" in text
 
 
-def test_evening_text_caps_pending_and_completed_independently() -> None:
+def test_evening_text_caps_completed_and_overdue_and_upcoming_independently() -> None:
     completed = [_FakeTask(i) for i in range(3)]
-    pending = [_FakeTask(i) for i in range(60)]
+    overdue = [_FakeTask(i) for i in range(60)]
+    upcoming = [_FakeTask(i) for i in range(30)]
     shown_completed, hidden_completed = _limit_items(completed)
-    shown_pending, hidden_pending = _limit_items(pending)
+    shown_overdue, hidden_overdue = _limit_items(overdue)
+    shown_upcoming, hidden_upcoming = _limit_items(upcoming)
     user = type("U", (), {"timezone": "UTC", "show_utc_offset": False})()
     l10n = get_l10n("en")
 
     text = _build_evening_text(
-        shown_completed, hidden_completed, shown_pending, hidden_pending, len(completed), len(pending), user, l10n
+        shown_completed,
+        hidden_completed,
+        shown_overdue,
+        hidden_overdue,
+        shown_upcoming,
+        hidden_upcoming,
+        len(completed),
+        len(overdue),
+        user,
+        l10n,
     )
 
     # Completed: all 3 shown, no "more" line for it.
     assert text.count("~task ") == 3
-    # Pending: capped at 20, "and 40 more" appears.
+    # Overdue/missed: capped at 20, "and 40 more" appears.
     assert text.count("❌ task ") == 20
     assert "and 40 more" in text
+    # Upcoming: capped at 20 too, "and 10 more" appears, rendered without ❌.
+    assert text.count("▫️ task ") == 20
+    assert "and 10 more" in text
     # Header counts reflect the TRUE totals, not the truncated shown counts.
     assert "Remaining/Missed: 60" in text
     assert "Done: 3" in text
+
+
+def test_evening_text_omits_upcoming_section_when_nothing_upcoming() -> None:
+    completed = []
+    overdue = [_FakeTask(1)]
+    user = type("U", (), {"timezone": "UTC", "show_utc_offset": False})()
+    l10n = get_l10n("en")
+
+    text = _build_evening_text([], 0, overdue, 0, [], 0, 0, len(overdue), user, l10n)
+
+    assert "Still today" not in text
 
 
 def test_preview_line_truncates_long_reminder_text() -> None:

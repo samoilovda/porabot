@@ -133,6 +133,7 @@ ES.update(
         "brief_evening_title": "🌙 **Resumen del día:**",
         "brief_evening_done": "✅ Hechas: {count}",
         "brief_evening_pending": "⏳ Pendientes/Perdidas: {count}\n",
+        "brief_evening_upcoming_title": "⏰ **Todavía hoy:**",
         "brief_items_more": "…y {count} más",
         "btn_done": "✅ Hecho",
         "btn_not_today": "🚫 Hoy no",

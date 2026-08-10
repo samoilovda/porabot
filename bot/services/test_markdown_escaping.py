@@ -23,7 +23,7 @@ def test_morning_brief_survives_task_text_with_unbalanced_markdown_chars() -> No
     ]
     user = SimpleNamespace(timezone="UTC", show_utc_offset=False)
 
-    text = _build_morning_text(tasks, user, {})
+    text = _build_morning_text(tasks, 0, user, {})
 
     assert "\\*деньги\\_" in text
     assert "\\[срочно" in text

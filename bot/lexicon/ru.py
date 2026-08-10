@@ -139,6 +139,7 @@ RU: dict[str, Any] = {
     "brief_evening_title": "🌙 **Итоги дня:**",
     "brief_evening_done": "✅ Выполнено: {count}",
     "brief_evening_pending": "⏳ Осталось/Пропущено: {count}\n",
+    "brief_items_more": "…и ещё {count}",
     "btn_done": "✅ Сделано",
     "btn_not_today": "🚫 Не сегодня",
     "btn_done_short": "✅ Да",

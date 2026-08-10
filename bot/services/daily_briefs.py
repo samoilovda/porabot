@@ -39,31 +39,75 @@ logger = logging.getLogger(__name__)
 # every-past-user scan on every tick).
 _RECENT_COMPLETION_WINDOW = timedelta(days=2)
 
+# Telegram caps messages at 4096 chars and inline keyboards at well under 100
+# buttons; get_evening_wrapup_keyboard adds 3 buttons per pending task. An
+# unbounded brief on a large task list used to exceed both, and _send_safe's
+# TelegramBadRequest retry (plain text, same length) fails identically — the
+# brief was silently dropped for the rest of the day (1.4). Cap what's
+# rendered/buttoned to the first N (by the DAOs' existing execution_time
+# ordering) plus a "…and N more" line, mirroring _TASKS_PAGE_SIZE's role for
+# the "My Tasks" list.
+_BRIEF_ITEMS_LIMIT = 20
+
+# Even with _BRIEF_ITEMS_LIMIT capping item COUNT, a handful of individually
+# long reminder texts (up to 3000 chars each — see ReminderDAO.MAX_TEXT_LENGTH)
+# can still blow the 4096-char message limit on their own. Preview each line
+# instead of rendering the full text, so _BRIEF_ITEMS_LIMIT's arithmetic
+# (worst case ~20 lines) is a real bound on message length, not just an
+# item-count bound.
+_LINE_PREVIEW_CHARS = 100
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_morning_text(tasks, user, l10n: dict) -> str:
+def _limit_items(items: list, limit: int = _BRIEF_ITEMS_LIMIT) -> tuple[list, int]:
+    """Return (shown, hidden_count) — first *limit* items and how many were cut."""
+    if len(items) <= limit:
+        return list(items), 0
+    return list(items[:limit]), len(items) - limit
+
+
+def _preview_line(text: str, limit: int = _LINE_PREVIEW_CHARS) -> str:
+    """Truncate *text* to *limit* chars with an ellipsis, if needed."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _build_morning_text(shown_tasks, hidden_count: int, user, l10n: dict) -> str:
+    """*shown_tasks* must already be truncated by the caller via _limit_items
+    — callers that also render a keyboard from the same list (none currently
+    do for the morning brief) need it truncated identically."""
     lines = [l10n.get("brief_morning", "🌅 **Доброе утро! План на сегодня:**\n")]
-    for t in tasks:
+    for t in shown_tasks:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"▫️ `{time_str}`: {escape_markdown(t.reminder_text)}")
+        lines.append(f"▫️ `{time_str}`: {escape_markdown(_preview_line(t.reminder_text))}")
+    if hidden_count:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_count))
     return "\n".join(lines)
 
 
-def _build_evening_text(completed, pending, user, l10n: dict) -> str:
+def _build_evening_text(
+    shown_completed, hidden_completed: int, shown_pending, hidden_pending: int, total_completed: int, total_pending: int, user, l10n: dict
+) -> str:
+    """*shown_completed*/*shown_pending* must already be truncated by the
+    caller via _limit_items — get_evening_wrapup_keyboard is built from the
+    same *shown_pending* list so the message and its buttons stay in sync."""
     lines = [
         l10n.get("brief_evening_title", "🌙 **Итоги дня:**"),
-        l10n.get("brief_evening_done", "✅ Выполнено: {count}").format(count=len(completed)),
-        l10n.get("brief_evening_pending", "⏳ Осталось/Пропущено: {count}\n").format(count=len(pending)),
+        l10n.get("brief_evening_done", "✅ Выполнено: {count}").format(count=total_completed),
+        l10n.get("brief_evening_pending", "⏳ Осталось/Пропущено: {count}\n").format(count=total_pending),
     ]
-    for t in completed:
+    for t in shown_completed:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"✅ ~{escape_markdown(t.reminder_text)}~ ({time_str})")
-    for t in pending:
+        lines.append(f"✅ ~{escape_markdown(_preview_line(t.reminder_text))}~ ({time_str})")
+    if hidden_completed:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_completed))
+    for t in shown_pending:
         time_str = format_time(t.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        lines.append(f"❌ {escape_markdown(t.reminder_text)} ({time_str})")  # BUG-4 fixed: closing paren added
+        lines.append(f"❌ {escape_markdown(_preview_line(t.reminder_text))} ({time_str})")  # BUG-4 fixed: closing paren added
+    if hidden_pending:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_pending))
     return "\n".join(lines)
 
 
@@ -318,7 +362,8 @@ async def process_daily_briefs() -> None:
                             fluid_brief_only = [h for h in fluid_habits if (h.fluid_mode or "brief_only") == "brief_only"]
                             text_sections = []
                             if tasks:
-                                text_sections.append(_build_morning_text(tasks, user, l10n))
+                                shown_tasks, hidden_tasks = _limit_items(tasks)
+                                text_sections.append(_build_morning_text(shown_tasks, hidden_tasks, user, l10n))
                             if fluid_brief_only:
                                 lines = [l10n.get("fluid_morning_title", "🌊 **Fluid habits for today:**")]
                                 for h in fluid_brief_only:
@@ -383,12 +428,23 @@ async def process_daily_briefs() -> None:
                             pending = await reminder_dao.get_today_pending_tasks(user.id, user.timezone)
                             delivered = True
                             if completed or pending:
-                                text = _build_evening_text(completed, pending, user, l10n)
+                                shown_completed, hidden_completed = _limit_items(completed)
+                                shown_pending, hidden_pending = _limit_items(pending)
+                                text = _build_evening_text(
+                                    shown_completed,
+                                    hidden_completed,
+                                    shown_pending,
+                                    hidden_pending,
+                                    len(completed),
+                                    len(pending),
+                                    user,
+                                    l10n,
+                                )
                                 delivered = await _send_safe(
                                     bot,
                                     user.id,
                                     text,
-                                    reply_markup=get_evening_wrapup_keyboard(pending, l10n) if pending else None,
+                                    reply_markup=get_evening_wrapup_keyboard(shown_pending, l10n) if shown_pending else None,
                                 )
                                 if delivered:
                                     logger.info("Evening brief sent to user %s", user.id)
@@ -411,11 +467,19 @@ async def process_daily_briefs() -> None:
                                         if not await habit_event_dao.has_event_for_cycle(h.id, cycle_key_for_fluid(today_str))
                                     ]
                                     if pending_fluid and not is_quiet:
+                                        shown_fluid, hidden_fluid = _limit_items(pending_fluid)
+                                        fluid_check_text = l10n.get(
+                                            "fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"
+                                        )
+                                        if hidden_fluid:
+                                            fluid_check_text += "\n" + l10n.get(
+                                                "brief_items_more", "…and {count} more"
+                                            ).format(count=hidden_fluid)
                                         await _send_safe(
                                             bot,
                                             user.id,
-                                            l10n.get("fluid_evening_check", "🌙 **Before evening wrap-up:**\nMark completed fluid habits:"),
-                                            reply_markup=get_fluid_completion_keyboard(pending_fluid, l10n),
+                                            fluid_check_text,
+                                            reply_markup=get_fluid_completion_keyboard(shown_fluid, l10n),
                                         )
                                 except Exception as e:
                                     logger.error("Error sending fluid-completion prompt for user %s: %s", user.id, e, exc_info=True)

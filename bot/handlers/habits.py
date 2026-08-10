@@ -256,8 +256,12 @@ async def cb_fluid_habit_mode(
         )
         await reminder_dao.session.flush()
     except ValueError as ve:
+        # 3.2: create_reminder can now also reject on quota (too many active
+        # habits), not just text length — the old fixed "too long" wording
+        # was misleading for that case. Match reminders.py's existing
+        # pattern (str(ve) shown as-is) instead of guessing which one fired.
         logger.error("Validation error: %s", ve)
-        await callback.message.answer(l10n["habit_create_failed_long"])
+        await callback.message.answer(str(ve))
         await callback.answer()
         return
     except Exception as e:
@@ -345,8 +349,10 @@ async def state_habit_time(
         await state.clear()
         
     except ValueError as ve:
+        # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
+        # instead of the fixed "text too long" wording.
         logger.error("Validation error: %s", ve)
-        await message.answer(l10n["habit_create_failed_long"])
+        await message.answer(str(ve))
     except Exception as e:
         logger.error("Error creating habit: %s", e, exc_info=True)
         # Keep DB and scheduler state consistent if scheduling fails mid-flow.

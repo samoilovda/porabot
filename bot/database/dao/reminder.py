@@ -51,7 +51,7 @@ from typing import Optional, Sequence
 
 import pytz
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
@@ -98,6 +98,15 @@ class ReminderDAO(BaseDAO[Reminder]):
     """
 
     model = Reminder  # Class attribute - set by concrete DAO subclass
+
+    # 3.2: access is intentionally open (WhitelistMiddleware disabled) with
+    # only a per-user request-RATE cap (RateLimitMiddleware), no cap on
+    # total VOLUME — one user could create an unbounded number of reminders,
+    # each a DB row plus (for habits) work for five different minutely cron
+    # jobs. Separate pools so a heavy task list doesn't block a new habit
+    # and vice versa.
+    MAX_ACTIVE_REMINDERS = 200
+    MAX_ACTIVE_HABITS = 50
 
     async def create_reminder(
         self,
@@ -168,7 +177,26 @@ class ReminderDAO(BaseDAO[Reminder]):
             )
         if nagging_max_repeats < 0:
             raise ValueError("nagging_max_repeats cannot be negative.")
-        
+
+        is_any_habit = is_habit or is_fluid_habit
+        active_count_result = await self.session.execute(
+            select(func.count())
+            .select_from(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.pending_delete_at.is_(None),
+                Reminder.is_habit.is_(is_any_habit),
+            )
+        )
+        active_count = active_count_result.scalar_one()
+        limit = self.MAX_ACTIVE_HABITS if is_any_habit else self.MAX_ACTIVE_REMINDERS
+        if active_count >= limit:
+            raise ValueError(
+                f"You already have {active_count} active {'habits' if is_any_habit else 'reminders'}. "
+                f"Maximum allowed: {limit}. Delete some before adding more."
+            )
+
         reminder = Reminder(
             user_id=user_id,
             reminder_text=text,

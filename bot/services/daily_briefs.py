@@ -7,13 +7,13 @@ and sends the appropriate summary.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytz
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from aiogram.types import Message
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
@@ -28,6 +28,16 @@ from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
 
 logger = logging.getLogger(__name__)
+
+# A one-off reminder flips to status='completed' the moment it's marked done
+# (recurring ones stay 'pending' via completed_for_execution_time instead —
+# see Reminder.mark_done). Without also picking up recently-completed rows
+# here, a user whose only tasks today were one-offs they finished drops out
+# of the candidate list entirely and never gets an evening brief showing
+# what they accomplished (1.3). Bounded to a short recent window rather than
+# "ever completed" — that's what BUG-C1 originally fixed (an unbounded
+# every-past-user scan on every tick).
+_RECENT_COMPLETION_WINDOW = timedelta(days=2)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +189,37 @@ async def _unpin_brief_message(bot: Bot, session, user) -> None:
 # Main job function (canonical — registered by setup_daily_briefs)
 # ---------------------------------------------------------------------------
 
+async def get_users_needing_brief_check(session) -> list[int]:
+    """User ids with briefs enabled that are worth checking this tick.
+
+    BUG-C1 FIX: only users who have briefs enabled AND either an active
+    pending reminder or something completed recently — previously this
+    only looked at 'pending', so a user who finished every task today
+    (their only reminders being one-offs, which flip to status='completed'
+    on mark_done — recurring ones stay 'pending') dropped out entirely and
+    never got tonight's "here's what you got done" evening brief (1.3).
+    Bounded to _RECENT_COMPLETION_WINDOW, not "ever completed" — unbounded
+    was BUG-C1's original bug (every past user scanned every tick).
+    """
+    recent_completed_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - _RECENT_COMPLETION_WINDOW
+    result = await session.execute(
+        select(User.id)
+        .distinct()
+        .join(Reminder)
+        .where(
+            User.briefs_enabled.is_(True),
+            or_(
+                and_(Reminder.status == "pending", Reminder.pending_delete_at.is_(None)),
+                and_(
+                    Reminder.completed_at.is_not(None),
+                    Reminder.completed_at >= recent_completed_cutoff,
+                ),
+            ),
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def process_daily_briefs() -> None:
     """Process morning/evening briefs for all users with active tasks."""
     from bot.services.scheduler import _instance
@@ -192,20 +233,7 @@ async def process_daily_briefs() -> None:
 
     try:
         async with session_pool_factory() as session:
-
-            # BUG-C1 FIX: Only fetch users who have PENDING (active) reminders
-            # AND have briefs enabled. Previously also included "completed" which
-            # caused every past user to be processed every minute indefinitely.
-            result = await session.execute(
-                select(User.id)
-                .distinct()
-                .join(Reminder)
-                .where(
-                    Reminder.status == "pending",
-                    User.briefs_enabled.is_(True),
-                )
-            )
-            user_ids = result.scalars().all()
+            user_ids = await get_users_needing_brief_check(session)
 
         for uid in user_ids:
             async with session_pool_factory() as session:

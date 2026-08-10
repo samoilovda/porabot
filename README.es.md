@@ -27,7 +27,6 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Únicos y recurrentes** — diario, semanal o cualquier patrón expresable con `RRULE`
 - **Modo nagging** — recordatorio cada 5 minutos, limitado por un máximo configurable por tarea (por defecto 3)
 - **Posponer** — +15 min / +1 hora / mañana
-- **Adjuntos multimedia** — foto o vídeo enviados junto al texto del recordatorio
 - **Horas silenciosas** — ventana configurable en la que se suprimen todas las notificaciones
 - **Recuperación de tareas perdidas** — tras reiniciar el bot, un resumen de tareas perdidas con botones «completar todo» o «posponer todo»
 

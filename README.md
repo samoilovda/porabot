@@ -27,7 +27,6 @@ Type a phrase; the bot parses time and extracts the task description:
 - **One-time and recurring** — daily, weekly, or any `RRULE`-expressible pattern
 - **Nagging mode** — follow-up every 5 minutes, capped at a per-task repeat limit (default 3)
 - **Snooze** — 15 min / 1 hour / tomorrow
-- **Media attachments** — photo or video forwarded together with the reminder text
 - **Quiet hours** — configurable sleep window that suppresses all notifications
 - **Missed-task recovery** — after a bot restart a catch-up digest surfaces missed reminders with one-tap "done all" or "snooze all"
 

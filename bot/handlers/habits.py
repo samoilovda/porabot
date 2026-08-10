@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.models import User
+from bot.database.models import is_habit_like as _is_habit_like
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.handlers.reminders import (
@@ -71,19 +72,6 @@ def _is_habit_entry(reminder) -> bool:
         or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
         or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
     )
-
-def _is_habit_like(reminder) -> bool:
-    """Fixed-cycle habit detection (mirrors SchedulerService._is_habit_like)."""
-    if getattr(reminder, "is_fluid_habit", False):
-        return False
-    return bool(
-        getattr(reminder, "is_habit", False)
-        or getattr(reminder, "habit_active_due_at", None) is not None
-        or getattr(reminder, "habit_last_completed_due_at", None) is not None
-        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-    )
-
 
 def _habit_streak_labels(reminder) -> tuple[int, int]:
     if getattr(reminder, "is_fluid_habit", False):

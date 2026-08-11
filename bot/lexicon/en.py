@@ -119,6 +119,12 @@ EN: dict[str, Any] = {
     "no_tags_yet": "No tags yet. Add #tag to a task's text.",
     "filter_header_tag": "🏷 *#{tag}:*\n",
 
+    # Calendar feed (ICS) — 4.4
+    "btn_ics_feed": "📅 Calendar feed",
+    "btn_ics_regenerate": "🔄 Generate new link",
+    "ics_feed_text": "📅 *Calendar feed*\n\nSubscribe to this link in Google/Apple Calendar to see your Porabot tasks there (read-only):\n\n`{url}`\n\nAnyone with this link can read your tasks — keep it private. The button below issues a new link and revokes this one.",
+    "ics_feed_regenerated": "🔄 New link generated — the old one no longer works.",
+
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",
     "parse_error": "Error parsing text. Check the format.",

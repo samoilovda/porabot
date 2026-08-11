@@ -52,6 +52,27 @@ class Settings(BaseSettings):
     # files so the directory is guaranteed to already exist and be writable.
     HEARTBEAT_FILE: str = "heartbeat"
 
+    # --- Web server (4.4/4.6) ---
+    # aiohttp server run as an asyncio task alongside the long-polling loop
+    # (see bot/services/webserver.py, wired up in bot/__main__.py). Serves
+    # the per-user .ics calendar feed (4.4) and the Mini App's static
+    # frontend + JSON API (4.6) from one aiohttp.web.Application.
+    WEB_SERVER_HOST: str = "0.0.0.0"
+    WEB_SERVER_PORT: int = 8080
+    # Publicly reachable origin for links the bot sends to the user (the
+    # .ics feed URL, the Mini App web_app button). Deliberately empty by
+    # default: there is no public domain/TLS cert for this out of the box.
+    # A human must set this (and actually put something with a real
+    # certificate in front of WEB_SERVER_HOST:WEB_SERVER_PORT — a reverse
+    # proxy, a tunnel, whatever) before these links work outside localhost.
+    # Example: "https://porabot.example.com".
+    PUBLIC_BASE_URL: str = ""
+    # web_app buttons require an https:// URL Telegram clients can load in
+    # their in-app WebView. Left empty by default (see PUBLIC_BASE_URL
+    # above) — until it's set, the "Open Mini App" button is not shown at
+    # all rather than shipping a button that can never work.
+    MINI_APP_URL: str = ""
+
 
 # Module-level singleton
 config = Settings()

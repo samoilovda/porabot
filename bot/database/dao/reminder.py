@@ -563,6 +563,24 @@ class ReminderDAO(BaseDAO[Reminder]):
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_active_for_ics(self, user_id: int) -> Sequence[Reminder]:
+        """4.4: reminders exported into the user's read-only .ics feed —
+        active (pending, not soft-deleted) one-off, recurring, and fixed-
+        time habit tasks. Fluid habits are excluded: they have no
+        meaningful fixed execution_time (same convention as
+        get_user_reminders et al.)."""
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+            )
+            .order_by(Reminder.execution_time, Reminder.id)
+        )
+        return result.scalars().all()
+
     async def get_distinct_tags(self, user_id: int) -> Sequence[str]:
         """4.3: distinct tags across the user's active tasks, for the tag
         filter menu. Sorted alphabetically."""

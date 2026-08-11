@@ -118,6 +118,16 @@ class User(Base):
     # report if the job ever fired more than once during that minute.
     last_habit_report_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # 4.4: secret, revocable token for this user's read-only .ics calendar
+    # feed (GET /ics/<token>.ics). NULL until the user first opens the
+    # feed-link screen in Settings — UserDAO.ensure_ics_feed_token() lazily
+    # creates it (secrets.token_urlsafe, effectively collision-free, so no
+    # DB-level UNIQUE is enforced here — this is a soft-migrated column,
+    # see engine.py, and SQLite's ALTER TABLE can't add one after the fact
+    # anyway). Regenerating it (also in Settings) invalidates the previous
+    # URL immediately, since the lookup is by exact token match.
+    ics_feed_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # When user was added to database (for analytics/debugging)
     # Python-side default wins on ORM inserts (SQLAlchemy always applies it),
     # so this is UTC regardless of dialect — server_default=func.now() is a

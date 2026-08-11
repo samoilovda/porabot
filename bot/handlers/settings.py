@@ -12,6 +12,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from bot.config import config
 from bot.database.dao.user import UserDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
@@ -21,6 +22,7 @@ from bot.keyboards.inline import (
     get_settings_keyboard,
     get_language_selection_keyboard,
     get_clear_all_confirm_keyboard,
+    get_ics_feed_keyboard,
 )
 from bot.keyboards.reply import get_main_menu_keyboard
 from bot.services.scheduler import SchedulerService
@@ -255,6 +257,41 @@ async def callback_export_data(
         await callback.answer(l10n.get("export_data_error", "❌ Failed to export data."), show_alert=True)
         return
     await callback.answer()
+
+
+def _ics_feed_url(token: str) -> str:
+    """4.4: build the shareable feed URL. Falls back to a localhost URL
+    (not actually reachable outside the host) when PUBLIC_BASE_URL hasn't
+    been configured yet — see bot/config.py's docstring on that setting."""
+    base = config.PUBLIC_BASE_URL.rstrip("/") if config.PUBLIC_BASE_URL else f"http://localhost:{config.WEB_SERVER_PORT}"
+    return f"{base}/ics/{token}.ics"
+
+
+async def _render_ics_feed_screen(callback: CallbackQuery, token: str, l10n: dict[str, Any]) -> None:
+    url = _ics_feed_url(token)
+    text = l10n.get(
+        "ics_feed_text",
+        "📅 *Calendar feed*\n\nSubscribe to this link in Google/Apple Calendar to see your Porabot tasks there (read-only):\n\n`{url}`\n\nAnyone with this link can read your tasks — keep it private. You can generate a new one below, which invalidates this one.",
+    ).format(url=url)
+    await callback.message.edit_text(text, reply_markup=get_ics_feed_keyboard(l10n), parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "settings_ics_feed")
+async def callback_ics_feed(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    token = await user_dao.ensure_ics_feed_token(user.id)
+    await _render_ics_feed_screen(callback, token, l10n)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings_ics_feed_regenerate")
+async def callback_ics_feed_regenerate(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any]
+) -> None:
+    token = await user_dao.regenerate_ics_feed_token(user.id)
+    await _render_ics_feed_screen(callback, token, l10n)
+    await callback.answer(l10n.get("ics_feed_regenerated", "🔄 New link generated — the old one no longer works."))
 
 
 @router.callback_query(F.data == "settings_clear_all")

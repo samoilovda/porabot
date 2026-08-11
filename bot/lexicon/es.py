@@ -121,6 +121,12 @@ ES.update(
         "tags_menu_title": "🏷 Elige una etiqueta:",
         "no_tags_yet": "Aún no hay etiquetas. Añade #etiqueta al texto de una tarea.",
         "filter_header_tag": "🏷 *Etiqueta #{tag}:*\n",
+
+        # Feed de calendario (ICS) — 4.4
+        "btn_ics_feed": "📅 Feed de calendario",
+        "btn_ics_regenerate": "🔄 Generar nuevo enlace",
+        "ics_feed_text": "📅 *Feed de calendario*\n\nSuscríbete a este enlace en Google/Apple Calendar para ver tus tareas de Porabot allí (solo lectura):\n\n`{url}`\n\nCualquiera con este enlace puede leer tus tareas — mantenlo privado. El botón de abajo genera un enlace nuevo y revoca este.",
+        "ics_feed_regenerated": "🔄 Nuevo enlace generado — el anterior ya no funciona.",
         "enter_task": "Escribe qué debo recordarte.\nPuedes incluir hora: *\"Llamar a mamá mañana a las 18:00\"*.",
         "parse_error": "Error al procesar el texto. Revisa el formato.",
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",

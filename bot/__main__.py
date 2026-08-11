@@ -40,6 +40,7 @@ from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.habit_reports import setup_habit_reports
 from bot.services.delete_cleanup import setup_delete_cleanup
+from bot.services.webserver import create_app, start_web_server
 from bot.handlers.reminders import _cleanup_stale_timers
 
 
@@ -188,6 +189,13 @@ async def main() -> None:
 
     scheduler.start()
     await scheduler_service.reconcile_jobs_with_db()
+
+    # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
+    # configured) the Mini App — runs alongside long polling, not instead
+    # of it. See bot/services/webserver.py's module docstring for scope.
+    web_app = create_app(session_pool)
+    web_runner = await start_web_server(web_app, config.WEB_SERVER_HOST, config.WEB_SERVER_PORT)
+
     logger.info("Starting polling…")
 
     # Docker sends SIGTERM on `docker compose up -d --build` recreate / `stop`.
@@ -214,6 +222,11 @@ async def main() -> None:
             await bot.session.close()
         except Exception as e:
             logger.warning("Error closing Telegram session: %s", e)
+
+        try:
+            await web_runner.cleanup()
+        except Exception as e:
+            logger.warning("Error shutting down web server: %s", e)
 
         scheduler.shutdown(wait=False)
 

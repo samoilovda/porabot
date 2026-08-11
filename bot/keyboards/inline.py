@@ -830,6 +830,14 @@ def get_settings_keyboard(
         )
     )
 
+    # 4.4: read-only .ics calendar feed link.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_ics_feed", "📅 Calendar feed"),
+            callback_data="settings_ics_feed",
+        )
+    )
+
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),
@@ -837,6 +845,20 @@ def get_settings_keyboard(
         )
     )
 
+    return builder.as_markup()
+
+
+def get_ics_feed_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """4.4: keyboard for the calendar-feed screen — regenerate (revoke the
+    old URL) or go back to Settings."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_ics_regenerate", "🔄 Generate new link"),
+            callback_data="settings_ics_feed_regenerate",
+        )
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 
 

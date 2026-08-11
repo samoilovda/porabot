@@ -150,6 +150,7 @@ async def init_db(engine: AsyncEngine) -> None:
             ("habit_report_weekday", "INTEGER DEFAULT 6"),
             ("habit_report_time", "VARCHAR DEFAULT '23:50'"),
             ("last_habit_report_date", "VARCHAR"),
+            ("ics_feed_token", "VARCHAR"),
         ]:
             await _add_column_if_missing(conn, "users", col, col_type)
 

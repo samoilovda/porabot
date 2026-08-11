@@ -1,7 +1,9 @@
 """UserDAO — data access for the User model."""
 
+import secrets
 from typing import Optional
 
+from sqlalchemy import select
 
 from bot.database.dao.base import BaseDAO
 from bot.database.models import User
@@ -71,3 +73,33 @@ class UserDAO(BaseDAO[User]):
                 if hasattr(user, key):
                     setattr(user, key, value)
             await self.session.flush()
+
+    # -------------------------------------------------------------------
+    # 4.4: ICS feed token
+    # -------------------------------------------------------------------
+
+    async def ensure_ics_feed_token(self, user_id: int) -> Optional[str]:
+        """Return the user's feed token, generating one on first use."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        if not user.ics_feed_token:
+            user.ics_feed_token = secrets.token_urlsafe(24)
+            await self.session.flush()
+        return user.ics_feed_token
+
+    async def regenerate_ics_feed_token(self, user_id: int) -> Optional[str]:
+        """Issue a fresh feed token, invalidating the previous feed URL."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        user.ics_feed_token = secrets.token_urlsafe(24)
+        await self.session.flush()
+        return user.ics_feed_token
+
+    async def get_by_ics_feed_token(self, token: str) -> Optional[User]:
+        """Reverse lookup for the aiohttp GET /ics/<token>.ics route."""
+        if not token:
+            return None
+        result = await self.session.execute(select(User).where(User.ics_feed_token == token))
+        return result.scalar_one_or_none()

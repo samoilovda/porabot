@@ -551,6 +551,87 @@ class ReminderDAO(BaseDAO[Reminder]):
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def search_user_reminders(self, user_id: int, query: str) -> Sequence[Reminder]:
+        """3.4: `/find <text>` — case-insensitive substring search over the
+        user's pending, non-fluid tasks. Same active-list rules as
+        get_user_reminders (hides soft-deleted and already-completed
+        recurring cycles)."""
+        needle = f"%{query.strip()}%"
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+                Reminder.reminder_text.ilike(needle),
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
+            )
+            .order_by(Reminder.execution_time, Reminder.id)
+        )
+        return result.scalars().all()
+
+    async def get_user_reminders_today(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
+        """3.4 "today" filter — convenience alias, same query as the daily
+        brief's pending-today list."""
+        return await self.get_today_tasks_by_status(user_id, user_tz_str, "pending")
+
+    async def get_user_reminders_this_week(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
+        """3.4 "this week" filter: pending tasks due within the next 7 local
+        days (today through +6 days inclusive)."""
+        try:
+            tz = pytz.timezone(user_tz_str)
+        except Exception:
+            tz = pytz.UTC
+
+        now_local = datetime.now(tz)
+        start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = start_of_day_local + timedelta(days=7)
+
+        start_utc = start_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        end_utc = end_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+                Reminder.execution_time >= start_utc,
+                Reminder.execution_time < end_utc,
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
+            )
+            .order_by(Reminder.execution_time, Reminder.id)
+        )
+        return result.scalars().all()
+
+    async def get_user_reminders_recurring(self, user_id: int) -> Sequence[Reminder]:
+        """3.4 "recurring" filter — active recurring tasks (habits included,
+        since they're also Reminder rows with is_recurring=True)."""
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+                Reminder.is_recurring.is_(True),
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
+            )
+            .order_by(Reminder.execution_time, Reminder.id)
+        )
+        return result.scalars().all()
+
     async def get_habit_motivation_stats(
         self,
         user_id: int,

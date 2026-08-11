@@ -16,6 +16,7 @@ RU: dict[str, Any] = {
     "cmd_desc_start": "Главное меню",
     "cmd_desc_help": "Показать помощь",
     "cmd_desc_cancel": "Отменить текущее действие",
+    "cmd_desc_find": "Поиск по задачам",
     "btn_new_task": "➕ Новая задача",
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
@@ -90,6 +91,21 @@ RU: dict[str, Any] = {
     "btn_delete_prefix": "🗑 Удалить:",
     "btn_refresh": "🔄 Обновить",
     "btn_close": "❌ Закрыть",
+
+    # Поиск и фильтры — 3.4
+    "btn_filter_today": "📅 Сегодня",
+    "btn_filter_week": "🗓 Эта неделя",
+    "btn_filter_overdue": "⏰ Просроченные",
+    "btn_filter_recurring": "🔁 Повторяющиеся",
+    "btn_filter_back": "🔙 Все задачи",
+    "find_usage": "Использование: /find текст",
+    "find_no_results": "🔍 Ничего не найдено по «{query}».",
+    "find_no_results_filter": "🔍 По этому фильтру задач нет.",
+    "find_results_header": "🔍 *Результаты по «{query}»:*\n",
+    "filter_header_today": "📅 *Сегодня:*\n",
+    "filter_header_week": "🗓 *Эта неделя:*\n",
+    "filter_header_overdue": "⏰ *Просроченные:*\n",
+    "filter_header_recurring": "🔁 *Повторяющиеся:*\n",
 
     # Wizard
     "enter_task": "Напиши, о чем напомнить.\nМожно сразу с временем: *\"Позвонить маме завтра в 18:00\"*.",

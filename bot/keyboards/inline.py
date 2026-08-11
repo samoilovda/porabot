@@ -548,6 +548,54 @@ def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
 # TASK LIST KEYBOARDS
 # =============================================================================
 
+def _build_task_action_rows(tasks: list[Any], l10n: dict[str, Any]) -> list[list[InlineKeyboardButton]]:
+    """Per-task Done/Settings/Delete button row — shared by the plain task
+    list and the 3.4 search/filter results view."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for task in tasks:
+        if hasattr(task, 'reminder_text'):
+            task_text = task.reminder_text
+            task_id = task.id
+        else:
+            task_text = str(task.get('reminder_text', ''))
+            task_id = task.get('id', '')
+
+        text_preview = (task_text[:18] + "…") if len(task_text) > 18 else task_text
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{l10n['btn_done_task_prefix']} {text_preview}",
+                    callback_data=f"done_task_{task_id}",
+                ),
+                InlineKeyboardButton(
+                    text=l10n.get("btn_task_settings", "⚙️"),
+                    callback_data=f"task_settings_{task_id}",
+                ),
+                InlineKeyboardButton(
+                    text=l10n["btn_delete"],
+                    callback_data=f"del_task_{task_id}",
+                ),
+            ]
+        )
+    return rows
+
+
+def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """3.4: results view for /find and the quick filters (today / this week
+    / overdue / recurring) — per-task actions plus a way back to the full
+    unfiltered list, deliberately without the paging/refresh machinery of
+    get_tasks_list_keyboard since a filtered set isn't a "page" of anything."""
+    builder = InlineKeyboardBuilder()
+    for row in _build_task_action_rows(tasks[:25], l10n):
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),
+        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+    )
+    return builder.as_markup()
+
+
 def get_tasks_list_keyboard(
     tasks: list[Any],  # type: ignore
     l10n: dict[str, Any],
@@ -574,38 +622,20 @@ def get_tasks_list_keyboard(
         # Shows each task with Done! and Delete buttons
     """
     builder = InlineKeyboardBuilder()
-    
-    for task in tasks:
-        # Extract text safely (works with both Reminder objects and dicts)
-        if hasattr(task, 'reminder_text'):
-            task_text = task.reminder_text
-        else:
-            task_text = str(task.get('reminder_text', ''))
-        
-        # Truncate long text for display
-        text_preview = (
-            task_text[:18] + "…"
-            if len(task_text) > 18
-            else task_text
-        )
-        
+
+    for row in _build_task_action_rows(tasks, l10n):
+        builder.row(*row)
+
+    # 3.4: search/filter entry points — a full-text search plus quick
+    # filters over the same active task set get_user_reminders queries.
+    if total_pages <= 1:
         builder.row(
-            InlineKeyboardButton(
-                text=f"{l10n['btn_done_task_prefix']} {text_preview}",
-                callback_data=f"done_task_{task.id}" if hasattr(task, 'id') else f"done_task_{task.get('id', '')}",
-            ),
-            InlineKeyboardButton(
-                text=l10n.get("btn_task_settings", "⚙️"),
-                callback_data=(
-                    f"task_settings_{task.id}"
-                    if hasattr(task, 'id')
-                    else f"task_settings_{task.get('id', '')}"
-                ),
-            ),
-            InlineKeyboardButton(
-                text=l10n["btn_delete"],
-                callback_data=f"del_task_{task.id}" if hasattr(task, 'id') else f"del_task_{task.get('id', '')}",
-            ),
+            InlineKeyboardButton(text=l10n.get("btn_filter_today", "📅 Today"), callback_data="tasks_filter_today"),
+            InlineKeyboardButton(text=l10n.get("btn_filter_week", "🗓 This week"), callback_data="tasks_filter_week"),
+        )
+        builder.row(
+            InlineKeyboardButton(text=l10n.get("btn_filter_overdue", "⏰ Overdue"), callback_data="tasks_filter_overdue"),
+            InlineKeyboardButton(text=l10n.get("btn_filter_recurring", "🔁 Recurring"), callback_data="tasks_filter_recurring"),
         )
 
     # Page navigation row — only shown when there's more than one page.

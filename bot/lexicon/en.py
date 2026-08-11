@@ -16,6 +16,7 @@ EN: dict[str, Any] = {
     "cmd_desc_start": "Main menu",
     "cmd_desc_help": "Show help",
     "cmd_desc_cancel": "Cancel current action",
+    "cmd_desc_find": "Search your tasks",
     "btn_new_task": "➕ New Task",
     "btn_my_tasks": "📅 My Tasks",
     "btn_settings": "⚙️ Settings",
@@ -90,6 +91,21 @@ EN: dict[str, Any] = {
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
     "btn_close": "❌ Close",
+
+    # Search and filters — 3.4
+    "btn_filter_today": "📅 Today",
+    "btn_filter_week": "🗓 This week",
+    "btn_filter_overdue": "⏰ Overdue",
+    "btn_filter_recurring": "🔁 Recurring",
+    "btn_filter_back": "🔙 All tasks",
+    "find_usage": "Usage: /find text",
+    "find_no_results": "🔍 Nothing found for «{query}».",
+    "find_no_results_filter": "🔍 No tasks match this filter.",
+    "find_results_header": "🔍 *Results for «{query}»:*\n",
+    "filter_header_today": "📅 *Today:*\n",
+    "filter_header_week": "🗓 *This week:*\n",
+    "filter_header_overdue": "⏰ *Overdue:*\n",
+    "filter_header_recurring": "🔁 *Recurring:*\n",
 
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",

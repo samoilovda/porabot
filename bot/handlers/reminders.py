@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 import pytz
 from aiogram import Router, F
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -31,6 +31,7 @@ from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_done_followup_keyboard,
     get_edit_keyboard,
+    get_filtered_tasks_keyboard,
     get_parse_confirmation_keyboard,
     get_repeat_builder_keyboard,
     get_repeat_end_keyboard,
@@ -1344,6 +1345,86 @@ async def callback_tasks_page(
         parse_mode="MarkdownV2",
     )
     await callback.answer()
+
+
+# ---------------------------------------------------------------------------
+# Search and filters — 3.4
+# ---------------------------------------------------------------------------
+
+def _render_filtered_tasks_text(tasks: list, user: User, l10n: dict[str, Any], header: str) -> str:
+    lines = [header] + [_format_task_line_md2(task, user) for task in tasks[:_TASKS_PAGE_SIZE]]
+    return "\n".join(lines)
+
+
+@router.message(Command("find"))
+async def cmd_find(
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    await state.clear()
+    query = message.text.split(maxsplit=1)[1].strip() if message.text and " " in message.text else ""
+    if not query:
+        await message.answer(l10n.get("find_usage", "Usage: /find <text>"))
+        return
+
+    tasks = await reminder_dao.search_user_reminders(user.id, query)
+    if not tasks:
+        await message.answer(l10n.get("find_no_results", "🔍 Nothing found for «{query}».").format(query=escape_markdown(query)))
+        return
+
+    header = l10n.get("find_results_header", "🔍 *Results for «{query}»:*\n").format(query=escape_markdown_v2(query))
+    await message.answer(
+        _render_filtered_tasks_text(tasks, user, l10n, header),
+        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
+        parse_mode="MarkdownV2",
+    )
+
+
+async def _show_filtered_tasks(
+    callback: CallbackQuery, tasks: list, user: User, l10n: dict[str, Any], header_key: str, header_default: str
+) -> None:
+    if not tasks:
+        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await callback.answer()
+        return
+    header = l10n.get(header_key, header_default)
+    await callback.message.edit_text(
+        _render_filtered_tasks_text(tasks, user, l10n, header),
+        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
+        parse_mode="MarkdownV2",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tasks_filter_today")
+async def callback_tasks_filter_today(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    tasks = await reminder_dao.get_user_reminders_today(user.id, user.timezone)
+    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_today", "📅 *Today:*\n")
+
+
+@router.callback_query(F.data == "tasks_filter_week")
+async def callback_tasks_filter_week(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    tasks = await reminder_dao.get_user_reminders_this_week(user.id, user.timezone)
+    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_week", "🗓 *This week:*\n")
+
+
+@router.callback_query(F.data == "tasks_filter_overdue")
+async def callback_tasks_filter_overdue(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    tasks = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0)
+    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_overdue", "⏰ *Overdue:*\n")
+
+
+@router.callback_query(F.data == "tasks_filter_recurring")
+async def callback_tasks_filter_recurring(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    tasks = await reminder_dao.get_user_reminders_recurring(user.id)
+    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_recurring", "🔁 *Recurring:*\n")
 
 
 @router.callback_query(F.data == "recovery_done_all")

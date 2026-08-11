@@ -769,6 +769,15 @@ def get_settings_keyboard(
         )
     )
 
+    # 3.3: export before delete — psychologically easier to clear an
+    # account when you can grab your data first.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_export_data", "📤 Export data"),
+            callback_data="settings_export_data",
+        )
+    )
+
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),

@@ -212,6 +212,17 @@ async def main() -> None:
     # port is a deliberate deployment decision, not a side effect of
     # upgrading an existing install.
     web_runner = await _start_web_server_if_enabled(session_pool)
+    if web_runner is not None:
+        # 3.1: same reasoning as cleanup_rate_limit_hits above, applied to
+        # the HTTP-route IP rate limiter (bot/services/webserver.py) —
+        # without a periodic sweep its per-IP dict only ever grows.
+        scheduler.add_job(
+            web_runner.app["http_rate_limiter"].cleanup_expired,
+            "interval",
+            minutes=10,
+            id="cleanup_http_rate_limit_hits",
+            replace_existing=True,
+        )
 
     logger.info("Starting polling…")
 

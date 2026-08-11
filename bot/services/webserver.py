@@ -15,6 +15,8 @@ internet.
 """
 
 import logging
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -34,6 +36,59 @@ logger = logging.getLogger(__name__)
 _WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 _MINIAPP_HEATMAP_DEFAULT_DAYS = 90
 _MINIAPP_HEATMAP_MAX_DAYS = 365
+
+
+# ---------------------------------------------------------------------------
+# 3.1: IP-based rate limit for unauthenticated HTTP routes
+# ---------------------------------------------------------------------------
+# /ics/<token>.ics and /api/miniapp/* touch the DB (or, for miniapp, at
+# least run initData HMAC validation) on every request, including ones
+# with a wrong/missing token — unauthenticated traffic could otherwise load
+# the DB directly. Same sliding-window-with-cleanup shape as
+# bot/middlewares/rate_limit.py's RateLimitMiddleware (per-key deque of
+# monotonic timestamps): cleanup_expired() actually drops entries for keys
+# that have gone quiet, not just trims their deque — a version of this
+# exact mechanism that only trimmed and never dropped leaked memory forever
+# and was fixed once already for the Telegram-update rate limiter.
+_RATE_LIMITED_PREFIXES = ("/ics/", "/api/miniapp/")
+
+
+class HttpRateLimiter:
+    def __init__(self, max_requests: int = 30, window_seconds: float = 10.0) -> None:
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._hits: dict[str, deque] = defaultdict(deque)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits[key]
+        while hits and now - hits[0] > self.window_seconds:
+            hits.popleft()
+        if len(hits) >= self.max_requests:
+            return False
+        hits.append(now)
+        return True
+
+    def cleanup_expired(self) -> None:
+        now = time.monotonic()
+        stale_keys = []
+        for key, hits in self._hits.items():
+            while hits and now - hits[0] > self.window_seconds:
+                hits.popleft()
+            if not hits:
+                stale_keys.append(key)
+        for key in stale_keys:
+            del self._hits[key]
+
+
+@web.middleware
+async def _http_rate_limit_middleware(request: web.Request, handler):
+    if request.path.startswith(_RATE_LIMITED_PREFIXES):
+        limiter: HttpRateLimiter = request.app["http_rate_limiter"]
+        key = request.remote or "unknown"
+        if not limiter.allow(key):
+            return web.json_response({"error": "rate_limited"}, status=429)
+    return await handler(request)
 
 
 async def handle_healthz(request: web.Request) -> web.Response:
@@ -168,9 +223,10 @@ def create_app(session_pool, bot_token: str = "") -> web.Application:
     background jobs (see bot/services/*.py). *bot_token* signs/validates
     Mini App initData (4.6) — optional so 4.4-only callers (and tests that
     don't touch the Mini App routes) don't need to supply one."""
-    app = web.Application()
+    app = web.Application(middlewares=[_http_rate_limit_middleware])
     app["session_pool"] = session_pool
     app["bot_token"] = bot_token
+    app["http_rate_limiter"] = HttpRateLimiter()
     app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/ics/{token}.ics", handle_ics_feed)
 

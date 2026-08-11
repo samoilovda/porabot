@@ -331,10 +331,20 @@ async def state_habit_time(
         )
         
         time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
-        await message.answer(
-            l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str),
-            parse_mode="Markdown"
-        )
+        reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+
+        # 3.6: soft, one-time nudge on the 11th active habit — not a hard
+        # limit (Streaks caps at 12), just a heads-up that most people don't
+        # sustain more than ten at once. get_habit_motivation_stats'
+        # active_count already covers both fixed and fluid habits (is_habit
+        # is True for both), so this one check catches the threshold exactly
+        # once, right as it's crossed, instead of nagging on every habit
+        # created after it.
+        stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
+        if stats.get("active_count") == 11:
+            reply_text = f"{reply_text}\n\n{l10n.get('habit_overload_hint', '')}"
+
+        await message.answer(reply_text, parse_mode="Markdown")
         await state.clear()
         
     except ValueError as ve:

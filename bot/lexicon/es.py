@@ -291,6 +291,7 @@ ES.update(
         "habit_default_name": "Mi hábito",
         "habit_time_retry": "❌ No pude entender la hora. Inténtalo de nuevo (por ejemplo `10:00`).",
         "habit_created": "✅ **Hábito diario creado**\nTe recordaré **{habit}** cada día a las `{time}`.",
+        "habit_overload_hint": "💡 Ya tienes más de diez hábitos. Casi nadie mantiene más de diez a la vez — quizás valga la pena enfocarte en los más importantes.",
         "habit_fluid_name_prompt": "🌊 Envía el nombre de tu hábito flexible.\n\nEjemplo: `Leer 20 páginas`",
         "habit_fluid_mode_prompt": "Elige el modo del hábito flexible:",
         "habit_fluid_mode_brief_only": "1) Solo resumen de mañana + comprobación de noche",

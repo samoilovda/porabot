@@ -299,6 +299,7 @@ EN: dict[str, Any] = {
     "habit_default_name": "My Habit",
     "habit_time_retry": "❌ I couldn't understand the time. Please try again (e.g. `10:00`).",
     "habit_created": "✅ **Daily Habit Created!**\nI will remind you to **{habit}** every day at `{time}`.",
+    "habit_overload_hint": "💡 You now have more than ten habits. Almost nobody keeps up more than ten at once — you might want to focus on the ones that matter most.",
     "habit_fluid_name_prompt": "🌊 Send the name of your fluid habit.\n\nExample: `Read 20 pages`",
     "habit_fluid_mode_prompt": "Choose fluid habit mode:",
     "habit_fluid_mode_brief_only": "1) Morning brief + evening check",

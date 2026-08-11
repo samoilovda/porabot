@@ -597,13 +597,33 @@ def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
     return builder.as_markup()
 
 
+# fix(1.3): Telegram rejects an ENTIRE keyboard if any one button's
+# callback_data exceeds 64 bytes — a single over-long tag would silently
+# break the whole tags menu, not just its own button. bot/utils/tags.py
+# caps new tags at 24 chars going forward, but tags written before that
+# cap existed can still be longer, so this stays defensive independently.
+_MAX_CALLBACK_DATA_BYTES = 64
+# Telegram also rejects a keyboard with too many buttons/rows; keep the
+# tags menu well under that so it always renders.
+_MAX_TAG_BUTTONS = 30
+
+
 def get_tags_menu_keyboard(tags: list[str], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     """4.3: one button per distinct tag, two per row, tapping filters the
     task list to that tag (tasks_tag:<tag> callback)."""
     builder = InlineKeyboardBuilder()
     row: list[InlineKeyboardButton] = []
+    shown = 0
     for tag in tags:
-        row.append(InlineKeyboardButton(text=f"#{tag}", callback_data=f"tasks_tag:{tag}"))
+        if shown >= _MAX_TAG_BUTTONS:
+            break
+        callback_data = f"tasks_tag:{tag}"
+        if len(callback_data.encode("utf-8")) > _MAX_CALLBACK_DATA_BYTES:
+            # Can't safely address this tag by value — skip its button
+            # rather than let it poison the whole keyboard.
+            continue
+        row.append(InlineKeyboardButton(text=f"#{tag}", callback_data=callback_data))
+        shown += 1
         if len(row) == 2:
             builder.row(*row)
             row = []

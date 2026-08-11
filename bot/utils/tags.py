@@ -15,6 +15,15 @@ from typing import Optional
 # so Cyrillic tags work) after a '#'.
 _TAG_RE = re.compile(r"#(\w+)", re.UNICODE)
 
+# fix(1.3): callback_data (bot/keyboards/inline.py's `tasks_tag:<tag>`
+# buttons) is capped by Telegram at 64 bytes. Cyrillic is 2 bytes/char, so
+# an unbounded tag can blow that limit and get the WHOLE keyboard rejected
+# — not just its own button. Truncate (not drop) so the task still gets
+# tagged with something recognizable, and cap the count per task so a
+# single reminder can't single-handedly make the tags menu unusable.
+MAX_TAG_LENGTH = 24
+MAX_TAGS_PER_REMINDER = 10
+
 # "!1"/"!2"/"!3" as a standalone token: bounded by whitespace/string edges
 # or common punctuation, so "цена!2" or "ой!" don't false-positive.
 _PRIORITY_RE = re.compile(r"(?:(?<=\s)|^)!([1-3])(?=\s|$|[.,!?;:])", re.UNICODE)
@@ -36,10 +45,11 @@ def extract_tags_and_priority(text: str) -> tuple[str, Optional[str], Optional[i
     tags: list[str] = []
     seen: set[str] = set()
     for m in _TAG_RE.finditer(text):
-        tag = m.group(1).lower()
+        tag = m.group(1).lower()[:MAX_TAG_LENGTH]
         if tag and tag not in seen:
             seen.add(tag)
-            tags.append(tag)
+            if len(tags) < MAX_TAGS_PER_REMINDER:
+                tags.append(tag)
     clean = _TAG_RE.sub("", text)
 
     priority: Optional[int] = None

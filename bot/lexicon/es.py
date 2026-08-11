@@ -139,6 +139,7 @@ ES.update(
         "donate_invoice_title": "Apoyar a Porabot",
         "donate_invoice_description": "Una propina voluntaria — ¡gracias por apoyar el desarrollo!",
         "donate_thanks": "☕ ¡Muchas gracias por apoyar a Porabot! 💛",
+        "donate_unknown_payment_error": "Pago no reconocido. Inténtalo de nuevo.",
         "enter_task": "Escribe qué debo recordarte.\nPuedes incluir hora: *\"Llamar a mamá mañana a las 18:00\"*.",
         "parse_error": "Error al procesar el texto. Revisa el formato.",
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",

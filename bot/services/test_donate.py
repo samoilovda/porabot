@@ -12,7 +12,9 @@ from bot.handlers.donate import (
     callback_donate_open,
     cmd_donate,
     process_pre_checkout,
+    process_pre_checkout_unknown,
     process_successful_payment,
+    router,
 )
 from bot.lexicon.ru import RU
 
@@ -85,6 +87,33 @@ async def test_pre_checkout_always_approved_for_fixed_price_tip() -> None:
     pre_checkout_query = SimpleNamespace(answer=AsyncMock())
     await process_pre_checkout(pre_checkout_query)
     pre_checkout_query.answer.assert_awaited_once_with(ok=True)
+
+
+def _handler_filters(func_name: str) -> list:
+    handler = next(h for h in router.pre_checkout_query.handlers if h.callback.__name__ == func_name)
+    return list(handler.filters or [])
+
+
+def test_pre_checkout_handler_is_scoped_to_donate_payload() -> None:
+    """Regression (fix 2.4): @router.pre_checkout_query() had no filter at
+    all — it intercepted ANY pre-checkout, for any future payment flow,
+    and unconditionally approved it. process_pre_checkout must only match
+    payloads this donation flow itself creates (donate:<amount>,
+    bot/handlers/donate.py's callback_donate_amount)."""
+    filters = _handler_filters("process_pre_checkout")
+    assert len(filters) == 1
+
+    magic_filter = filters[0].magic
+    assert magic_filter.resolve(SimpleNamespace(invoice_payload="donate:50")) is True
+    assert magic_filter.resolve(SimpleNamespace(invoice_payload="something_else")) is False
+
+
+async def test_pre_checkout_unknown_payload_is_rejected() -> None:
+    pre_checkout_query = SimpleNamespace(invoice_payload="something_else", answer=AsyncMock())
+    await process_pre_checkout_unknown(pre_checkout_query, RU)
+    pre_checkout_query.answer.assert_awaited_once_with(
+        ok=False, error_message=RU["donate_unknown_payment_error"]
+    )
 
 
 async def test_successful_payment_sends_thank_you() -> None:

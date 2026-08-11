@@ -73,11 +73,27 @@ async def callback_donate_amount(callback: CallbackQuery, l10n: dict[str, Any]) 
     await callback.answer()
 
 
-@router.pre_checkout_query()
+@router.pre_checkout_query(F.invoice_payload.startswith("donate:"))
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
     # A fixed-price digital tip has nothing to reserve or validate server
     # side (no stock, no shipping, no external order) — always approve.
     await pre_checkout_query.answer(ok=True)
+
+
+@router.pre_checkout_query()
+async def process_pre_checkout_unknown(pre_checkout_query: PreCheckoutQuery, l10n: dict[str, Any]) -> None:
+    # fix(2.4): the donation payload is the ONLY payment flow this bot has
+    # today, so a filterless handler answering ok=True was harmless in
+    # practice — but it would silently auto-confirm any future payment
+    # flow too, without validating anything about it. Reject explicitly
+    # instead of letting an unmatched pre-checkout hang unanswered.
+    logger.warning(
+        "Rejecting pre-checkout with unrecognized payload: %r", pre_checkout_query.invoice_payload
+    )
+    await pre_checkout_query.answer(
+        ok=False,
+        error_message=l10n.get("donate_unknown_payment_error", "Unrecognized payment. Please try again."),
+    )
 
 
 @router.message(F.successful_payment)

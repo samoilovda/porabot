@@ -136,6 +136,7 @@ EN: dict[str, Any] = {
     "donate_invoice_title": "Support Porabot",
     "donate_invoice_description": "A voluntary tip — thank you for supporting development!",
     "donate_thanks": "☕ Thank you so much for supporting Porabot! 💛",
+    "donate_unknown_payment_error": "Unrecognized payment. Please try again.",
 
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",

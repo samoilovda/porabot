@@ -191,7 +191,7 @@ def get_edit_keyboard(
     builder.row(
         InlineKeyboardButton(
             text=f"{l10n['btn_repeat_prefix']} {rrule_text}",
-            callback_data=f"edit_toggle_repeat_{reminder_id}"
+            callback_data=f"edit_repeat_menu_{reminder_id}"
         )
     )
 
@@ -242,6 +242,92 @@ def get_edit_keyboard(
         )
     )
 
+    return builder.as_markup()
+
+
+# =============================================================================
+# REPEAT BUILDER KEYBOARDS (3.1: full RRULE construction UI)
+# =============================================================================
+
+RRULE_WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
+
+def get_repeat_builder_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+    end_label: str,
+) -> InlineKeyboardMarkup:
+    """Main menu of the repeat (RRULE) builder — replaces the old 4-option
+    cycling button with real construction options over the existing
+    next_occurrence_utc/rrulestr engine."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_none", "🚫 No repeat"), callback_data=f"rrb_none_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_daily", "📆 Every day"), callback_data=f"rrb_daily_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekdays_opt", "💼 Weekdays"), callback_data=f"rrb_weekdays_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekend_opt", "🏖 Weekend"), callback_data=f"rrb_weekend_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekly", "🗓 Weekly (same day)"), callback_data=f"rrb_weekly_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_interval", "🔢 Every N days"), callback_data=f"rrb_interval_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_custom_days", "☑️ Pick weekdays"), callback_data=f"rrb_customdays_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_monthly", "📅 Monthly on day"), callback_data=f"rrb_monthly_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_last_weekday", "🏁 Last workday"), callback_data=f"rrb_lastwd_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_repeat_end", "⏳ End: {end}").format(end=end_label),
+            callback_data=f"rrb_end_{reminder_id}",
+        )
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_back_{reminder_id}"))
+    return builder.as_markup()
+
+
+def get_repeat_weekday_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+    selected: set[str],
+) -> InlineKeyboardMarkup:
+    """Checkbox picker for arbitrary weekday combinations (BYDAY=...)."""
+    builder = InlineKeyboardBuilder()
+    names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    row: list[InlineKeyboardButton] = []
+    for i, code in enumerate(RRULE_WEEKDAY_CODES):
+        mark = "✅" if code in selected else "⬜"
+        label = names[i] if i < len(names) else code
+        row.append(InlineKeyboardButton(text=f"{mark} {label}", callback_data=f"rrb_wd_{reminder_id}_{code}"))
+        if len(row) == 4:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_done_days", "✅ Done"), callback_data=f"rrb_wddone_{reminder_id}")
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_open_{reminder_id}"))
+    return builder.as_markup()
+
+
+def get_repeat_end_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """End-condition submenu: unlimited / COUNT= / UNTIL=."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_none", "♾ Unlimited"), callback_data=f"rrb_endnone_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_count", "🔢 After N times"), callback_data=f"rrb_endcount_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_until", "📅 Until date"), callback_data=f"rrb_enduntil_{reminder_id}"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_open_{reminder_id}"))
     return builder.as_markup()
 
 

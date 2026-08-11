@@ -13,7 +13,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 import pytz
 from aiogram import Router, F
@@ -32,6 +32,9 @@ from bot.keyboards.inline import (
     get_done_followup_keyboard,
     get_edit_keyboard,
     get_parse_confirmation_keyboard,
+    get_repeat_builder_keyboard,
+    get_repeat_end_keyboard,
+    get_repeat_weekday_keyboard,
     get_snooze_keyboard,
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
@@ -71,17 +74,127 @@ _TASKS_PAGE_SIZE = 25
 # Helpers
 # ---------------------------------------------------------------------------
 
+_RRULE_WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+_RRULE_WEEKDAYS_SET = {"MO", "TU", "WE", "TH", "FR"}
+_RRULE_WEEKEND_SET = {"SA", "SU"}
+
+
+def _parse_rrule_parts(rrule_string: str) -> dict[str, str]:
+    """Parse a flat RRULE string ("FREQ=DAILY;INTERVAL=2") into a dict.
+
+    Deliberately not using dateutil.rrule here — we only need the raw
+    key/value pairs for rendering and for reconstructing a new rule on top
+    of an existing one, not date math.
+    """
+    parts: dict[str, str] = {}
+    for chunk in (rrule_string or "").split(";"):
+        if "=" in chunk:
+            key, _, value = chunk.partition("=")
+            parts[key.strip().upper()] = value.strip()
+    return parts
+
+
+def _rrule_end_label(rrule_string: Optional[str], l10n: dict[str, Any]) -> str:
+    """Human-readable label for the COUNT=/UNTIL= end-condition of a rule."""
+    if not rrule_string:
+        return l10n.get("repeat_end_none", "unlimited")
+    parts = _parse_rrule_parts(rrule_string)
+    count = parts.get("COUNT")
+    until = parts.get("UNTIL")
+    if count:
+        return l10n.get("repeat_end_count_label", "{count} times").format(count=count)
+    if until:
+        try:
+            date_part = until[:8]
+            d = datetime.strptime(date_part, "%Y%m%d").date()
+            return l10n.get("repeat_end_until_label", "until {date}").format(date=d.strftime("%d.%m.%Y"))
+        except ValueError:
+            pass
+    return l10n.get("repeat_end_none", "unlimited")
+
+
 def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
-    """Return a human-readable recurrence label for *reminder*."""
+    """Return a human-readable recurrence label for arbitrary RRULE strings.
+
+    Recognizes every shape the 3.1 repeat builder can produce: every-N-days,
+    specific weekdays, weekdays/weekend presets, monthly-by-day, last-weekday-
+    of-month, plus a COUNT=/UNTIL= end-condition suffix — not just the four
+    canned patterns the old cycling button offered.
+    """
     if not reminder.is_recurring or not reminder.rrule_string:
         return l10n["repeat_none"]
-    if "DAILY" in reminder.rrule_string:
-        return l10n["repeat_day"]
-    if "BYDAY" in reminder.rrule_string:
-        return l10n["repeat_weekdays"]
-    if "WEEKLY" in reminder.rrule_string:
-        return l10n["repeat_week"]
-    return l10n["repeat_none"]
+
+    rrule_string = reminder.rrule_string
+    parts = _parse_rrule_parts(rrule_string)
+    freq = parts.get("FREQ", "")
+    try:
+        interval = max(1, int(parts.get("INTERVAL", "1") or 1))
+    except ValueError:
+        interval = 1
+    byday = parts.get("BYDAY")
+    bymonthday = parts.get("BYMONTHDAY")
+    bysetpos = parts.get("BYSETPOS")
+
+    if freq == "DAILY":
+        base = l10n["repeat_day"] if interval == 1 else l10n.get("repeat_every_n_days", "Every {n} days").format(n=interval)
+    elif freq == "WEEKLY":
+        if byday:
+            days = {d.strip() for d in byday.split(",") if d.strip()}
+            if days == _RRULE_WEEKDAYS_SET:
+                base = l10n["repeat_weekdays"]
+            elif days == _RRULE_WEEKEND_SET:
+                base = l10n.get("repeat_weekend", "Weekend")
+            else:
+                names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                ordered = [c for c in _RRULE_WEEKDAY_CODES if c in days]
+                base = ", ".join(
+                    names[_RRULE_WEEKDAY_CODES.index(c)] for c in ordered if _RRULE_WEEKDAY_CODES.index(c) < len(names)
+                ) or l10n["repeat_week"]
+        else:
+            base = l10n["repeat_week"] if interval == 1 else l10n.get("repeat_every_n_weeks", "Every {n} weeks").format(n=interval)
+    elif freq == "MONTHLY":
+        if bysetpos == "-1" and byday:
+            base = l10n.get("repeat_last_weekday", "Last workday of the month")
+        elif bymonthday:
+            base = l10n.get("repeat_monthly_day", "Day {day} of the month").format(day=bymonthday)
+        else:
+            base = l10n.get("repeat_month", "Monthly")
+    else:
+        base = l10n["repeat_none"]
+
+    end_label = _rrule_end_label(rrule_string, l10n)
+    if end_label != l10n.get("repeat_end_none", "unlimited"):
+        base = f"{base} · {end_label}"
+    return base
+
+
+async def _apply_repeat_change(
+    reminder,
+    user: User,
+    scheduler_service: SchedulerService,
+    reminder_dao: ReminderDAO,
+    is_recurring: bool,
+    rrule_string: Optional[str],
+) -> bool:
+    """Persist a new repeat rule and reschedule. Returns False (and rolls
+    back) if scheduling fails."""
+    reminder.is_recurring = is_recurring
+    reminder.rrule_string = rrule_string
+    await reminder_dao.session.flush()
+    try:
+        _reschedule_current_execution(reminder, user, scheduler_service)
+    except Exception:
+        await reminder_dao.session.rollback()
+        return False
+    return True
+
+
+async def _render_repeat_builder(message: Message, reminder, l10n: dict[str, Any]) -> None:
+    end_label = _rrule_end_label(reminder.rrule_string if reminder.is_recurring else None, l10n)
+    await message.edit_text(
+        l10n.get("repeat_builder_title", "🔁 Configure repeat:"),
+        reply_markup=get_repeat_builder_keyboard(reminder.id, l10n, end_label),
+    )
 
 
 def _reschedule_current_execution(reminder, user: User, scheduler_service: SchedulerService) -> None:
@@ -597,48 +710,427 @@ async def callback_edit_edit(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("edit_toggle_repeat_"))
-async def callback_edit_repeat(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
-    user: User, l10n: dict[str, Any]
-) -> None:
-    _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_toggle_repeat_")[1])
+# ---------------------------------------------------------------------------
+# Repeat (RRULE) builder — 3.1
+# ---------------------------------------------------------------------------
+# Replaces the old edit_toggle_repeat_ cycling button with a real builder UI
+# over next_occurrence_utc's existing rrulestr engine (bot/utils/time_ext.py).
+# All frequency-preset callbacks below reset the end-condition (COUNT=/
+# UNTIL=) to keep merging simple: pick a base rule first, then optionally
+# open "⏳ End: ..." to layer a COUNT= or UNTIL= on top of it.
+
+async def _get_owned_or_alert(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any], prefix: str):
+    reminder_id = int(callback.data.split(prefix)[1])
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
-        return await callback.answer(l10n["item_not_found"], show_alert=True)
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return None
+    return reminder
 
-    options = {
-        l10n["repeat_none"]:     (False, None),
-        l10n["repeat_day"]:      (True, "FREQ=DAILY"),
-        l10n["repeat_weekdays"]: (True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
-        l10n["repeat_week"]:     (True, "FREQ=WEEKLY"),
-    }
-    current_key = next((k for k, v in options.items() if reminder.is_recurring and reminder.rrule_string == v[1]), l10n["repeat_none"])
-    keys = list(options)
-    next_key = keys[(keys.index(current_key) + 1) % len(keys)]
-    is_rec, rrule = options[next_key]
 
-    reminder.is_recurring = is_rec
-    reminder.rrule_string = rrule
-    await reminder_dao.session.flush()
+@router.callback_query(F.data.startswith("edit_repeat_menu_"))
+async def callback_edit_repeat_menu(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    _reset_auto_delete(callback.message)
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "edit_repeat_menu_")
+    if not reminder:
+        return
+    await _render_repeat_builder(callback.message, reminder, l10n)
+    await callback.answer()
 
-    try:
-        _reschedule_current_execution(reminder, user, scheduler_service)
-    except Exception:
-        await reminder_dao.session.rollback()
+
+@router.callback_query(F.data.startswith("rrb_open_"))
+async def callback_rrb_open(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_open_")
+    if not reminder:
+        return
+    await _render_repeat_builder(callback.message, reminder, l10n)
+    await callback.answer()
+
+
+async def _apply_and_refresh(
+    callback: CallbackQuery,
+    reminder,
+    user: User,
+    l10n: dict[str, Any],
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    is_recurring: bool,
+    rrule_string: Optional[str],
+) -> None:
+    ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, is_recurring, rrule_string)
+    if not ok:
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
+    await _render_repeat_builder(callback.message, reminder, l10n)
+    await callback.answer(l10n.get("repeat_saved", "✅ Repeat updated."))
 
-    await callback.message.edit_reply_markup(
+
+@router.callback_query(F.data.startswith("rrb_none_"))
+async def callback_rrb_none(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_none_")
+    if not reminder:
+        return
+    await _apply_and_refresh(callback, reminder, user, l10n, reminder_dao, scheduler_service, False, None)
+
+
+@router.callback_query(F.data.startswith("rrb_daily_"))
+async def callback_rrb_daily(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_daily_")
+    if not reminder:
+        return
+    await _apply_and_refresh(callback, reminder, user, l10n, reminder_dao, scheduler_service, True, "FREQ=DAILY")
+
+
+@router.callback_query(F.data.startswith("rrb_weekdays_"))
+async def callback_rrb_weekdays(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_weekdays_")
+    if not reminder:
+        return
+    await _apply_and_refresh(
+        callback, reminder, user, l10n, reminder_dao, scheduler_service, True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_weekend_"))
+async def callback_rrb_weekend(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_weekend_")
+    if not reminder:
+        return
+    await _apply_and_refresh(
+        callback, reminder, user, l10n, reminder_dao, scheduler_service, True, "FREQ=WEEKLY;BYDAY=SA,SU"
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_weekly_"))
+async def callback_rrb_weekly(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_weekly_")
+    if not reminder:
+        return
+    await _apply_and_refresh(callback, reminder, user, l10n, reminder_dao, scheduler_service, True, "FREQ=WEEKLY")
+
+
+@router.callback_query(F.data.startswith("rrb_lastwd_"))
+async def callback_rrb_last_weekday(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_lastwd_")
+    if not reminder:
+        return
+    await _apply_and_refresh(
+        callback,
+        reminder,
+        user,
+        l10n,
+        reminder_dao,
+        scheduler_service,
+        True,
+        "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_interval_"))
+async def callback_rrb_interval_prompt(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_interval_")
+    if not reminder:
+        return
+    await state.set_state(ReminderWizard.waiting_for_repeat_interval)
+    await state.update_data(rrb_reminder_id=reminder.id)
+    await callback.message.edit_text(l10n.get("repeat_interval_prompt", "Every how many days? Send a number (e.g. 3)."))
+    await callback.answer()
+
+
+@router.message(ReminderWizard.waiting_for_repeat_interval, F.text)
+async def state_rrb_interval(
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any],
+) -> None:
+    try:
+        n = int((message.text or "").strip())
+    except ValueError:
+        n = None
+    if n is None or n < 1 or n > 365:
+        await message.answer(l10n.get("repeat_interval_invalid", "❌ Send a whole number from 1 to 365."))
+        return
+    data = await state.get_data()
+    reminder = await reminder_dao.get_owned(int(data.get("rrb_reminder_id", 0)), user.id)
+    await state.clear()
+    if not reminder:
+        await message.answer(l10n["item_not_found"])
+        return
+    rrule = "FREQ=DAILY" if n == 1 else f"FREQ=DAILY;INTERVAL={n}"
+    ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
+    if not ok:
+        await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
+        return
+    end_label = _rrule_end_label(reminder.rrule_string, l10n)
+    await message.answer(
+        l10n.get("repeat_saved", "✅ Repeat updated."),
+        reply_markup=get_repeat_builder_keyboard(reminder.id, l10n, end_label),
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_monthly_"))
+async def callback_rrb_monthly_prompt(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_monthly_")
+    if not reminder:
+        return
+    await state.set_state(ReminderWizard.waiting_for_repeat_monthday)
+    await state.update_data(rrb_reminder_id=reminder.id)
+    await callback.message.edit_text(l10n.get("repeat_monthday_prompt", "Which day of the month? Send a number from 1 to 28."))
+    await callback.answer()
+
+
+@router.message(ReminderWizard.waiting_for_repeat_monthday, F.text)
+async def state_rrb_monthday(
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any],
+) -> None:
+    try:
+        n = int((message.text or "").strip())
+    except ValueError:
+        n = None
+    if n is None or n < 1 or n > 28:
+        await message.answer(l10n.get("repeat_monthday_invalid", "❌ Send a number from 1 to 28."))
+        return
+    data = await state.get_data()
+    reminder = await reminder_dao.get_owned(int(data.get("rrb_reminder_id", 0)), user.id)
+    await state.clear()
+    if not reminder:
+        await message.answer(l10n["item_not_found"])
+        return
+    rrule = f"FREQ=MONTHLY;BYMONTHDAY={n}"
+    ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
+    if not ok:
+        await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
+        return
+    end_label = _rrule_end_label(reminder.rrule_string, l10n)
+    await message.answer(
+        l10n.get("repeat_saved", "✅ Repeat updated."),
+        reply_markup=get_repeat_builder_keyboard(reminder.id, l10n, end_label),
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_customdays_"))
+async def callback_rrb_customdays_open(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_customdays_")
+    if not reminder:
+        return
+    parts = _parse_rrule_parts(reminder.rrule_string or "")
+    preselected = {d for d in (parts.get("BYDAY", "").split(",")) if d}
+    await state.update_data(rrb_selected_days=sorted(preselected))
+    await callback.message.edit_text(
+        l10n.get("repeat_weekday_pick_title", "Pick the days of the week:"),
+        reply_markup=get_repeat_weekday_keyboard(reminder.id, l10n, preselected),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rrb_wd_"))
+async def callback_rrb_toggle_weekday(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    payload = callback.data[len("rrb_wd_"):]
+    try:
+        reminder_id_raw, day_code = payload.rsplit("_", 1)
+        reminder_id = int(reminder_id_raw)
+    except ValueError:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
+    if not reminder:
+        await callback.answer(l10n["item_not_found"], show_alert=True)
+        return
+    data = await state.get_data()
+    selected = set(data.get("rrb_selected_days") or [])
+    if day_code in selected:
+        selected.discard(day_code)
+    else:
+        selected.add(day_code)
+    await state.update_data(rrb_selected_days=sorted(selected))
+    await callback.message.edit_reply_markup(reply_markup=get_repeat_weekday_keyboard(reminder.id, l10n, selected))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rrb_wddone_"))
+async def callback_rrb_weekday_done(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any],
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_wddone_")
+    if not reminder:
+        return
+    data = await state.get_data()
+    selected = [c for c in _RRULE_WEEKDAY_CODES if c in set(data.get("rrb_selected_days") or [])]
+    await state.update_data(rrb_selected_days=None)
+    if not selected:
+        await callback.answer(l10n.get("repeat_weekday_pick_empty", "❌ Pick at least one day."), show_alert=True)
+        return
+    rrule = f"FREQ=WEEKLY;BYDAY={','.join(selected)}"
+    await _apply_and_refresh(callback, reminder, user, l10n, reminder_dao, scheduler_service, True, rrule)
+
+
+@router.callback_query(F.data.startswith("rrb_end_"))
+async def callback_rrb_end_menu(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_end_")
+    if not reminder:
+        return
+    await callback.message.edit_text(
+        l10n.get("repeat_builder_title", "🔁 Configure repeat:"),
+        reply_markup=get_repeat_end_keyboard(reminder.id, l10n),
+    )
+    await callback.answer()
+
+
+def _strip_end_condition(rrule_string: Optional[str]) -> str:
+    parts = _parse_rrule_parts(rrule_string or "")
+    parts.pop("COUNT", None)
+    parts.pop("UNTIL", None)
+    if not parts.get("FREQ"):
+        parts["FREQ"] = "DAILY"
+    return ";".join(f"{k}={v}" for k, v in parts.items())
+
+
+@router.callback_query(F.data.startswith("rrb_endnone_"))
+async def callback_rrb_end_none(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_endnone_")
+    if not reminder:
+        return
+    rrule = _strip_end_condition(reminder.rrule_string)
+    await _apply_and_refresh(callback, reminder, user, l10n, reminder_dao, scheduler_service, True, rrule)
+
+
+@router.callback_query(F.data.startswith("rrb_endcount_"))
+async def callback_rrb_endcount_prompt(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_endcount_")
+    if not reminder:
+        return
+    await state.set_state(ReminderWizard.waiting_for_repeat_end_count)
+    await state.update_data(rrb_reminder_id=reminder.id)
+    await callback.message.edit_text(l10n.get("repeat_end_count_prompt", "Stop after how many repeats? Send a number from 1 to 999."))
+    await callback.answer()
+
+
+@router.message(ReminderWizard.waiting_for_repeat_end_count, F.text)
+async def state_rrb_end_count(
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any],
+) -> None:
+    try:
+        n = int((message.text or "").strip())
+    except ValueError:
+        n = None
+    if n is None or n < 1 or n > 999:
+        await message.answer(l10n.get("repeat_end_count_invalid", "❌ Send a number from 1 to 999."))
+        return
+    data = await state.get_data()
+    reminder = await reminder_dao.get_owned(int(data.get("rrb_reminder_id", 0)), user.id)
+    await state.clear()
+    if not reminder or not reminder.is_recurring or not reminder.rrule_string:
+        await message.answer(l10n["item_not_found"])
+        return
+    base = _strip_end_condition(reminder.rrule_string)
+    rrule = f"{base};COUNT={n}"
+    ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
+    if not ok:
+        await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
+        return
+    end_label = _rrule_end_label(reminder.rrule_string, l10n)
+    await message.answer(
+        l10n.get("repeat_saved", "✅ Repeat updated."),
+        reply_markup=get_repeat_builder_keyboard(reminder.id, l10n, end_label),
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_enduntil_"))
+async def callback_rrb_enduntil_prompt(
+    callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_enduntil_")
+    if not reminder:
+        return
+    await state.set_state(ReminderWizard.waiting_for_repeat_end_until)
+    await state.update_data(rrb_reminder_id=reminder.id)
+    await callback.message.edit_text(l10n.get("repeat_end_date_prompt", "Repeat until which date? Send DD.MM.YYYY."))
+    await callback.answer()
+
+
+@router.message(ReminderWizard.waiting_for_repeat_end_until, F.text)
+async def state_rrb_end_until(
+    message: Message, state: FSMContext, reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+    user: User, l10n: dict[str, Any],
+) -> None:
+    raw = (message.text or "").strip()
+    parsed_date = None
+    try:
+        parsed_date = datetime.strptime(raw, "%d.%m.%Y").date()
+    except ValueError:
+        pass
+    today_local = datetime.now(timezone.utc).date()
+    if parsed_date is None or parsed_date <= today_local:
+        await message.answer(l10n.get("repeat_end_date_invalid", "❌ Send a future date as DD.MM.YYYY."))
+        return
+    data = await state.get_data()
+    reminder = await reminder_dao.get_owned(int(data.get("rrb_reminder_id", 0)), user.id)
+    await state.clear()
+    if not reminder or not reminder.is_recurring or not reminder.rrule_string:
+        await message.answer(l10n["item_not_found"])
+        return
+    base = _strip_end_condition(reminder.rrule_string)
+    rrule = f"{base};UNTIL={parsed_date.strftime('%Y%m%d')}"
+    ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
+    if not ok:
+        await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
+        return
+    end_label = _rrule_end_label(reminder.rrule_string, l10n)
+    await message.answer(
+        l10n.get("repeat_saved", "✅ Repeat updated."),
+        reply_markup=get_repeat_builder_keyboard(reminder.id, l10n, end_label),
+    )
+
+
+@router.callback_query(F.data.startswith("rrb_back_"))
+async def callback_rrb_back(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    reminder = await _get_owned_or_alert(callback, reminder_dao, user, l10n, "rrb_back_")
+    if not reminder:
+        return
+    await callback.message.edit_text(
+        l10n["task_settings_title"].format(text=escape_markdown(reminder.reminder_text)),
         reply_markup=get_edit_keyboard(
             reminder.id,
             l10n,
-            is_rec,
+            reminder.is_recurring,
             reminder.is_nagging,
             reminder.nagging_max_repeats,
-            next_key,
-        )
+            _rrule_text(reminder, l10n),
+        ),
     )
     await callback.answer()
 

@@ -69,7 +69,32 @@ async def test_toggle_nagging_on_past_one_off_reminder_removes_job_instead_of_fi
     assert scheduler.get_job("55") is None
 
 
+def _repeat_builder_l10n() -> dict:
+    return {
+        "item_not_found": "not found",
+        "status_on": "ON",
+        "status_off": "OFF",
+        "btn_repeat_prefix": "Repeat:",
+        "btn_nagging_prefix": "{icon} Nagging:",
+        "btn_nagging_repeats_prefix": "Nag repeats: {count}",
+        "btn_delete": "Delete",
+        "btn_cancel": "Cancel",
+        "repeat_none": "None",
+        "repeat_day": "Daily",
+        "repeat_weekdays": "Weekdays",
+        "repeat_week": "Weekly",
+        "repeat_end_none": "unlimited",
+        "repeat_builder_title": "Configure repeat:",
+        "repeat_saved": "Repeat updated.",
+        "schedule_error": "Failed to schedule.",
+    }
+
+
 async def test_toggle_repeat_on_past_recurring_reminder_advances_to_future_occurrence() -> None:
+    """3.1: picking a new repeat preset (via the RRULE builder) on an
+    already-overdue recurring reminder must advance execution_time to a
+    future occurrence instead of leaving a stale date-job that would fire
+    immediately."""
     reminders_module = _load_module("bot/handlers/reminders.py")
 
     scheduler = AsyncIOScheduler()
@@ -93,26 +118,12 @@ async def test_toggle_repeat_on_past_recurring_reminder_advances_to_future_occur
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
-        data="edit_toggle_repeat_77",
-        message=SimpleNamespace(edit_reply_markup=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
+        data="rrb_daily_77",
+        message=SimpleNamespace(edit_text=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
         answer=AsyncMock(),
     )
-    l10n = {
-        "item_not_found": "not found",
-        "status_on": "ON",
-        "status_off": "OFF",
-        "btn_repeat_prefix": "Repeat:",
-        "btn_nagging_prefix": "{icon} Nagging:",
-        "btn_nagging_repeats_prefix": "Nag repeats: {count}",
-        "btn_delete": "Delete",
-        "btn_cancel": "Cancel",
-        "repeat_none": "None",
-        "repeat_day": "Daily",
-        "repeat_weekdays": "Weekdays",
-        "repeat_week": "Weekly",
-    }
 
-    await reminders_module.callback_edit_repeat(callback, reminder_dao, service, user, l10n)
+    await reminders_module.callback_rrb_daily(callback, reminder_dao, service, user, _repeat_builder_l10n())
 
     job = scheduler.get_job("77")
     assert job is not None
@@ -148,27 +159,12 @@ async def test_enabling_repeat_on_a_past_plain_task_creates_a_future_occurrence(
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
-        data="edit_toggle_repeat_88",
-        message=SimpleNamespace(edit_reply_markup=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
+        data="rrb_daily_88",
+        message=SimpleNamespace(edit_text=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
         answer=AsyncMock(),
     )
-    l10n = {
-        "item_not_found": "not found",
-        "status_on": "ON",
-        "status_off": "OFF",
-        "btn_repeat_prefix": "Repeat:",
-        "btn_nagging_prefix": "{icon} Nagging:",
-        "btn_nagging_repeats_prefix": "Nag repeats: {count}",
-        "btn_delete": "Delete",
-        "btn_cancel": "Cancel",
-        "repeat_none": "None",
-        "repeat_day": "Daily",
-        "repeat_weekdays": "Weekdays",
-        "repeat_week": "Weekly",
-    }
 
-    # First tap: none -> daily.
-    await reminders_module.callback_edit_repeat(callback, reminder_dao, service, user, l10n)
+    await reminders_module.callback_rrb_daily(callback, reminder_dao, service, user, _repeat_builder_l10n())
 
     assert reminder.is_recurring is True
     assert reminder.rrule_string == "FREQ=DAILY"
@@ -178,9 +174,10 @@ async def test_enabling_repeat_on_a_past_plain_task_creates_a_future_occurrence(
     assert reminder.execution_time > past_time
 
 
-async def test_repeat_toggle_cycles_through_all_options_and_back_to_none() -> None:
-    """none -> daily -> weekdays -> weekly -> none, updating both the DB
-    fields and the scheduled job at each step."""
+async def test_repeat_builder_cycles_through_presets_and_back_to_none() -> None:
+    """none -> daily -> weekdays -> weekly -> none via the 3.1 repeat
+    builder callbacks, updating both the DB fields and the scheduled job at
+    each step (replaces the old single cycling edit_toggle_repeat_ button)."""
     reminders_module = _load_module("bot/handlers/reminders.py")
 
     scheduler = AsyncIOScheduler()
@@ -204,40 +201,23 @@ async def test_repeat_toggle_cycles_through_all_options_and_back_to_none() -> No
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
-        data="edit_toggle_repeat_99",
-        message=SimpleNamespace(edit_reply_markup=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
+        message=SimpleNamespace(edit_text=AsyncMock(), chat=SimpleNamespace(id=1), message_id=1),
         answer=AsyncMock(),
     )
-    l10n = {
-        "item_not_found": "not found",
-        "status_on": "ON",
-        "status_off": "OFF",
-        "btn_repeat_prefix": "Repeat:",
-        "btn_nagging_prefix": "{icon} Nagging:",
-        "btn_nagging_repeats_prefix": "Nag repeats: {count}",
-        "btn_delete": "Delete",
-        "btn_cancel": "Cancel",
-        "repeat_none": "None",
-        "repeat_day": "Daily",
-        "repeat_weekdays": "Weekdays",
-        "repeat_week": "Weekly",
-    }
+    l10n = _repeat_builder_l10n()
 
-    expected_sequence = [
-        (True, "FREQ=DAILY"),
-        (True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
-        (True, "FREQ=WEEKLY"),
-        (False, None),
+    steps = [
+        (reminders_module.callback_rrb_daily, "rrb_daily_99", True, "FREQ=DAILY"),
+        (reminders_module.callback_rrb_weekdays, "rrb_weekdays_99", True, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+        (reminders_module.callback_rrb_weekly, "rrb_weekly_99", True, "FREQ=WEEKLY"),
+        (reminders_module.callback_rrb_none, "rrb_none_99", False, None),
     ]
-    for expected_is_recurring, expected_rrule in expected_sequence:
-        await reminders_module.callback_edit_repeat(callback, reminder_dao, service, user, l10n)
+    for handler, data, expected_is_recurring, expected_rrule in steps:
+        callback.data = data
+        await handler(callback, reminder_dao, service, user, l10n)
         assert reminder.is_recurring == expected_is_recurring
         assert reminder.rrule_string == expected_rrule
         job = scheduler.get_job("99")
-        if expected_is_recurring:
-            assert job is not None
-        else:
-            # Turning recurrence back off for a still-future one-off must
-            # still leave its own upcoming job scheduled (execution_time
-            # itself hasn't changed and is still ahead of now).
-            assert job is not None
+        # execution_time is still in the future throughout, so a job always
+        # stays scheduled regardless of whether recurrence is on or off.
+        assert job is not None

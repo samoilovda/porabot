@@ -57,10 +57,13 @@ async def _run_habit_list(habit) -> str:
         get_user_reminders=AsyncMock(return_value=fixed),
         get_active_fluid_habits=AsyncMock(return_value=fluid),
     )
+    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
     message = SimpleNamespace(edit_text=AsyncMock())
     callback = SimpleNamespace(data="habit_list", message=message, answer=AsyncMock())
 
-    await cb_habit_list(callback=callback, user=user, reminder_dao=reminder_dao, l10n=l10n)
+    await cb_habit_list(
+        callback=callback, user=user, reminder_dao=reminder_dao, habit_event_dao=habit_event_dao, l10n=l10n
+    )
 
     return message.edit_text.await_args.args[0]
 

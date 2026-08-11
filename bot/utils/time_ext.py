@@ -22,19 +22,39 @@ def parse_hhmm(raw: str, fallback: str) -> dt_time:
     return dt_time(hour=int(fh), minute=int(fm))
 
 
-def is_quiet_hours(user, now_local: datetime) -> bool:
-    """Whether *now_local* (timezone-aware, already in the user's local zone)
-    falls within the user's configured quiet hours window."""
-    if not bool(getattr(user, "quiet_hours_enabled", False)):
-        return False
-    start = parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
-    end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-    current = now_local.time()
+def _time_in_window(current: dt_time, start: dt_time, end: dt_time) -> bool:
     if start == end:
         return True
     if start < end:
         return start <= current < end
     return current >= start or current < end
+
+
+def is_quiet_hours(user, now_local: datetime, *, is_habit: bool = False) -> bool:
+    """Whether *now_local* (timezone-aware, already in the user's local zone)
+    falls within the user's configured quiet hours window.
+
+    3.5: two extensions on top of the single all-week start-end window:
+      - a separate weekend window (Sat/Sun), used instead of the weekday one
+        when quiet_hours_weekend_enabled is set;
+      - quiet_hours_habits_exempt: habits can wake the user even during
+        quiet hours while regular tasks stay silenced — set is_habit=True
+        for a habit-like reminder to honor that.
+    """
+    if not bool(getattr(user, "quiet_hours_enabled", False)):
+        return False
+    if is_habit and bool(getattr(user, "quiet_hours_habits_exempt", False)):
+        return False
+
+    is_weekend = now_local.weekday() >= 5  # Sat=5, Sun=6
+    if is_weekend and bool(getattr(user, "quiet_hours_weekend_enabled", False)):
+        start = parse_hhmm(getattr(user, "quiet_hours_weekend_start", "23:00"), "23:00")
+        end = parse_hhmm(getattr(user, "quiet_hours_weekend_end", "07:00"), "07:00")
+    else:
+        start = parse_hhmm(getattr(user, "quiet_hours_start", "23:00"), "23:00")
+        end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+
+    return _time_in_window(now_local.time(), start, end)
 
 
 def next_occurrence_utc(

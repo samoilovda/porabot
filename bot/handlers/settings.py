@@ -1,13 +1,14 @@
 """Settings handlers — timezone, language, and UTC offset preferences."""
 
+import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pytz
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -162,6 +163,100 @@ async def callback_change_lang(callback: CallbackQuery, l10n: dict[str, Any]) ->
     await callback.answer()
 
 
+def _dt_iso(value) -> Any:
+    return value.isoformat() if value else None
+
+
+def build_data_export(user: User, reminders, habit_events) -> dict:
+    """Build the JSON-serializable payload for the 3.3 data export: user
+    settings + reminders + habit_events. Only excludes reminders currently
+    inside the undo-delete window (pending_delete_at set) — those are about
+    to be purged and aren't meaningfully "the user's data" any more."""
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "user": {
+            "id": user.id,
+            "timezone": user.timezone,
+            "language": user.language,
+            "show_utc_offset": bool(getattr(user, "show_utc_offset", False)),
+            "quiet_hours_enabled": bool(getattr(user, "quiet_hours_enabled", False)),
+            "quiet_hours_start": getattr(user, "quiet_hours_start", None),
+            "quiet_hours_end": getattr(user, "quiet_hours_end", None),
+            "quiet_hours_weekend_enabled": bool(getattr(user, "quiet_hours_weekend_enabled", False)),
+            "quiet_hours_weekend_start": getattr(user, "quiet_hours_weekend_start", None),
+            "quiet_hours_weekend_end": getattr(user, "quiet_hours_weekend_end", None),
+            "quiet_hours_habits_exempt": bool(getattr(user, "quiet_hours_habits_exempt", False)),
+            "briefs_enabled": bool(getattr(user, "briefs_enabled", True)),
+            "morning_brief_time": getattr(user, "morning_brief_time", None),
+            "evening_brief_time": getattr(user, "evening_brief_time", None),
+            "missed_recovery_enabled": bool(getattr(user, "missed_recovery_enabled", True)),
+            "missed_recovery_time": getattr(user, "missed_recovery_time", None),
+            "habit_reports_enabled": bool(getattr(user, "habit_reports_enabled", True)),
+            "habit_report_weekday": getattr(user, "habit_report_weekday", None),
+            "habit_report_time": getattr(user, "habit_report_time", None),
+        },
+        "reminders": [
+            {
+                "id": r.id,
+                "text": r.reminder_text,
+                "execution_time": _dt_iso(r.execution_time),
+                "is_recurring": r.is_recurring,
+                "rrule_string": r.rrule_string,
+                "is_habit": r.is_habit,
+                "is_fluid_habit": r.is_fluid_habit,
+                "fluid_mode": r.fluid_mode,
+                "status": r.status,
+                "is_nagging": r.is_nagging,
+                "nagging_max_repeats": r.nagging_max_repeats,
+                "habit_streak_current": r.habit_streak_current,
+                "habit_streak_best": r.habit_streak_best,
+                "fluid_streak_current": getattr(r, "fluid_streak_current", 0),
+                "fluid_streak_best": getattr(r, "fluid_streak_best", 0),
+                "completed_at": _dt_iso(r.completed_at),
+                "created_at": _dt_iso(r.created_at),
+            }
+            for r in reminders
+            if getattr(r, "pending_delete_at", None) is None
+        ],
+        "habit_events": [
+            {
+                "reminder_id": e.reminder_id,
+                "habit_text": e.habit_text,
+                "local_date": e.local_date,
+                "due_at": _dt_iso(e.due_at),
+                "outcome": e.outcome,
+                "source": e.source,
+                "created_at": _dt_iso(e.created_at),
+            }
+            for e in habit_events
+        ],
+    }
+
+
+@router.callback_query(F.data == "settings_export_data")
+async def callback_export_data(
+    callback: CallbackQuery,
+    user: User,
+    reminder_dao: ReminderDAO,
+    habit_event_dao: HabitEventDAO,
+    l10n: dict[str, Any],
+) -> None:
+    try:
+        reminders = await reminder_dao.get_all(user_id=user.id)
+        habit_events = await habit_event_dao.get_all(user_id=user.id)
+        payload = build_data_export(user, reminders, habit_events)
+        data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        await callback.message.answer_document(
+            BufferedInputFile(data, filename=f"porabot_export_{user.id}.json"),
+            caption=l10n.get("export_data_caption", "📤 Here is your data export."),
+        )
+    except Exception as e:
+        logger.error("Data export failed for user %s: %s", user.id, e, exc_info=True)
+        await callback.answer(l10n.get("export_data_error", "❌ Failed to export data."), show_alert=True)
+        return
+    await callback.answer()
+
+
 @router.callback_query(F.data == "settings_clear_all")
 async def callback_clear_all_prompt(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
     await callback.message.edit_text(
@@ -279,21 +374,27 @@ async def callback_settings_back(callback: CallbackQuery, user: User, l10n: dict
     await callback.answer()
 
 
+def _quiet_hours_kwargs(user: User) -> dict[str, Any]:
+    """Keyword args for get_quiet_hours_setup_keyboard, read from *user* —
+    shared by every handler that (re)renders that keyboard (3.5)."""
+    return dict(
+        enabled=bool(getattr(user, "quiet_hours_enabled", False)),
+        start_time=getattr(user, "quiet_hours_start", "23:00"),
+        end_time=getattr(user, "quiet_hours_end", "07:00"),
+        weekend_enabled=bool(getattr(user, "quiet_hours_weekend_enabled", False)),
+        weekend_start_time=getattr(user, "quiet_hours_weekend_start", "23:00"),
+        weekend_end_time=getattr(user, "quiet_hours_weekend_end", "10:00"),
+        habits_exempt=bool(getattr(user, "quiet_hours_habits_exempt", False)),
+    )
+
+
 @router.callback_query(F.data == "settings_quiet_setup")
 async def callback_quiet_setup(callback: CallbackQuery, user: User, l10n: dict[str, Any], state: FSMContext) -> None:
     await state.clear()
     from bot.keyboards.inline import get_quiet_hours_setup_keyboard
 
-    enabled = bool(getattr(user, "quiet_hours_enabled", False))
-    start = getattr(user, "quiet_hours_start", "23:00")
-    end = getattr(user, "quiet_hours_end", "07:00")
     await callback.message.edit_reply_markup(
-        reply_markup=get_quiet_hours_setup_keyboard(
-            l10n,
-            enabled=enabled,
-            start_time=start,
-            end_time=end,
-        )
+        reply_markup=get_quiet_hours_setup_keyboard(l10n, **_quiet_hours_kwargs(user))
     )
     await callback.answer()
 
@@ -308,22 +409,49 @@ async def callback_quiet_toggle(
     enabled = not bool(getattr(user, "quiet_hours_enabled", False))
     await user_dao.update_settings(user.id, quiet_hours_enabled=enabled)
     user.quiet_hours_enabled = enabled
-    start = getattr(user, "quiet_hours_start", "23:00")
-    end = getattr(user, "quiet_hours_end", "07:00")
     await callback.message.edit_reply_markup(
-        reply_markup=get_quiet_hours_setup_keyboard(
-            l10n,
-            enabled=enabled,
-            start_time=start,
-            end_time=end,
-        )
+        reply_markup=get_quiet_hours_setup_keyboard(l10n, **_quiet_hours_kwargs(user))
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.in_(["quiet_edit_start", "quiet_edit_end"]))
+@router.callback_query(F.data == "quiet_weekend_toggle")
+async def callback_quiet_weekend_toggle(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_quiet_hours_setup_keyboard
+
+    enabled = not bool(getattr(user, "quiet_hours_weekend_enabled", False))
+    await user_dao.update_settings(user.id, quiet_hours_weekend_enabled=enabled)
+    user.quiet_hours_weekend_enabled = enabled
+    await callback.message.edit_reply_markup(
+        reply_markup=get_quiet_hours_setup_keyboard(l10n, **_quiet_hours_kwargs(user))
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "quiet_habits_exempt_toggle")
+async def callback_quiet_habits_exempt_toggle(
+    callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext
+) -> None:
+    await state.clear()
+    from bot.keyboards.inline import get_quiet_hours_setup_keyboard
+
+    exempt = not bool(getattr(user, "quiet_hours_habits_exempt", False))
+    await user_dao.update_settings(user.id, quiet_hours_habits_exempt=exempt)
+    user.quiet_hours_habits_exempt = exempt
+    await callback.message.edit_reply_markup(
+        reply_markup=get_quiet_hours_setup_keyboard(l10n, **_quiet_hours_kwargs(user))
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.in_(["quiet_edit_start", "quiet_edit_end", "quiet_edit_weekend_start", "quiet_edit_weekend_end"])
+)
 async def callback_quiet_edit_time(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
-    target = "start" if callback.data.endswith("start") else "end"
+    target = callback.data.removeprefix("quiet_edit_")  # start | end | weekend_start | weekend_end
     await state.update_data(quiet_target=target)
     await state.set_state(SettingsState.waiting_for_quiet_time)
     await callback.message.edit_text(
@@ -434,16 +562,19 @@ async def state_set_quiet_time(
     value = f"{h:02d}:{m:02d}"
     data = await state.get_data()
     target = data.get("quiet_target")
-    if target not in {"start", "end"}:
+    field_by_target = {
+        "start": "quiet_hours_start",
+        "end": "quiet_hours_end",
+        "weekend_start": "quiet_hours_weekend_start",
+        "weekend_end": "quiet_hours_weekend_end",
+    }
+    field = field_by_target.get(target)
+    if field is None:
         await state.clear()
         await message.answer(l10n.get("parse_error", "Error parsing text. Check the format."))
         return
-    if target == "start":
-        await user_dao.update_settings(user.id, quiet_hours_start=value)
-        user.quiet_hours_start = value
-    else:
-        await user_dao.update_settings(user.id, quiet_hours_end=value)
-        user.quiet_hours_end = value
+    await user_dao.update_settings(user.id, **{field: value})
+    setattr(user, field, value)
     await state.clear()
 
     from bot.keyboards.inline import get_quiet_hours_setup_keyboard
@@ -454,12 +585,7 @@ async def state_set_quiet_time(
     )
     await message.answer(
         _render_settings_text(user, l10n),
-        reply_markup=get_quiet_hours_setup_keyboard(
-            l10n,
-            enabled=bool(getattr(user, "quiet_hours_enabled", False)),
-            start_time=getattr(user, "quiet_hours_start", "23:00"),
-            end_time=getattr(user, "quiet_hours_end", "07:00"),
-        ),
+        reply_markup=get_quiet_hours_setup_keyboard(l10n, **_quiet_hours_kwargs(user)),
         parse_mode="Markdown",
     )
 

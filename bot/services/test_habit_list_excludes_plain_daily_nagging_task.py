@@ -57,12 +57,13 @@ async def test_habit_list_does_not_show_plain_daily_nagging_task() -> None:
         get_user_reminders=AsyncMock(return_value=[plain_task]),
         get_active_fluid_habits=AsyncMock(return_value=[]),
     )
+    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
     user = SimpleNamespace(id=99, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(edit_text=AsyncMock())
     callback = SimpleNamespace(message=message, answer=AsyncMock())
 
-    await habits_module.cb_habit_list(callback, user, reminder_dao, l10n)
+    await habits_module.cb_habit_list(callback, user, reminder_dao, habit_event_dao, l10n)
 
     # No habits qualify — must land on the "no active habits" branch, not
     # list the plain task.

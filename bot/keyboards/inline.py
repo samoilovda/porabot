@@ -191,7 +191,7 @@ def get_edit_keyboard(
     builder.row(
         InlineKeyboardButton(
             text=f"{l10n['btn_repeat_prefix']} {rrule_text}",
-            callback_data=f"edit_toggle_repeat_{reminder_id}"
+            callback_data=f"edit_repeat_menu_{reminder_id}"
         )
     )
 
@@ -242,6 +242,92 @@ def get_edit_keyboard(
         )
     )
 
+    return builder.as_markup()
+
+
+# =============================================================================
+# REPEAT BUILDER KEYBOARDS (3.1: full RRULE construction UI)
+# =============================================================================
+
+RRULE_WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
+
+def get_repeat_builder_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+    end_label: str,
+) -> InlineKeyboardMarkup:
+    """Main menu of the repeat (RRULE) builder — replaces the old 4-option
+    cycling button with real construction options over the existing
+    next_occurrence_utc/rrulestr engine."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_none", "🚫 No repeat"), callback_data=f"rrb_none_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_daily", "📆 Every day"), callback_data=f"rrb_daily_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekdays_opt", "💼 Weekdays"), callback_data=f"rrb_weekdays_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekend_opt", "🏖 Weekend"), callback_data=f"rrb_weekend_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_weekly", "🗓 Weekly (same day)"), callback_data=f"rrb_weekly_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_interval", "🔢 Every N days"), callback_data=f"rrb_interval_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_custom_days", "☑️ Pick weekdays"), callback_data=f"rrb_customdays_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_monthly", "📅 Monthly on day"), callback_data=f"rrb_monthly_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_last_weekday", "🏁 Last workday"), callback_data=f"rrb_lastwd_{reminder_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_repeat_end", "⏳ End: {end}").format(end=end_label),
+            callback_data=f"rrb_end_{reminder_id}",
+        )
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_back_{reminder_id}"))
+    return builder.as_markup()
+
+
+def get_repeat_weekday_keyboard(
+    reminder_id: int,
+    l10n: dict[str, Any],
+    selected: set[str],
+) -> InlineKeyboardMarkup:
+    """Checkbox picker for arbitrary weekday combinations (BYDAY=...)."""
+    builder = InlineKeyboardBuilder()
+    names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    row: list[InlineKeyboardButton] = []
+    for i, code in enumerate(RRULE_WEEKDAY_CODES):
+        mark = "✅" if code in selected else "⬜"
+        label = names[i] if i < len(names) else code
+        row.append(InlineKeyboardButton(text=f"{mark} {label}", callback_data=f"rrb_wd_{reminder_id}_{code}"))
+        if len(row) == 4:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_done_days", "✅ Done"), callback_data=f"rrb_wddone_{reminder_id}")
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_open_{reminder_id}"))
+    return builder.as_markup()
+
+
+def get_repeat_end_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """End-condition submenu: unlimited / COUNT= / UNTIL=."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_none", "♾ Unlimited"), callback_data=f"rrb_endnone_{reminder_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_count", "🔢 After N times"), callback_data=f"rrb_endcount_{reminder_id}"),
+        InlineKeyboardButton(text=l10n.get("btn_repeat_end_until", "📅 Until date"), callback_data=f"rrb_enduntil_{reminder_id}"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_repeat_back", "🔙 Back"), callback_data=f"rrb_open_{reminder_id}"))
     return builder.as_markup()
 
 
@@ -462,6 +548,54 @@ def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
 # TASK LIST KEYBOARDS
 # =============================================================================
 
+def _build_task_action_rows(tasks: list[Any], l10n: dict[str, Any]) -> list[list[InlineKeyboardButton]]:
+    """Per-task Done/Settings/Delete button row — shared by the plain task
+    list and the 3.4 search/filter results view."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for task in tasks:
+        if hasattr(task, 'reminder_text'):
+            task_text = task.reminder_text
+            task_id = task.id
+        else:
+            task_text = str(task.get('reminder_text', ''))
+            task_id = task.get('id', '')
+
+        text_preview = (task_text[:18] + "…") if len(task_text) > 18 else task_text
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{l10n['btn_done_task_prefix']} {text_preview}",
+                    callback_data=f"done_task_{task_id}",
+                ),
+                InlineKeyboardButton(
+                    text=l10n.get("btn_task_settings", "⚙️"),
+                    callback_data=f"task_settings_{task_id}",
+                ),
+                InlineKeyboardButton(
+                    text=l10n["btn_delete"],
+                    callback_data=f"del_task_{task_id}",
+                ),
+            ]
+        )
+    return rows
+
+
+def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """3.4: results view for /find and the quick filters (today / this week
+    / overdue / recurring) — per-task actions plus a way back to the full
+    unfiltered list, deliberately without the paging/refresh machinery of
+    get_tasks_list_keyboard since a filtered set isn't a "page" of anything."""
+    builder = InlineKeyboardBuilder()
+    for row in _build_task_action_rows(tasks[:25], l10n):
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),
+        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+    )
+    return builder.as_markup()
+
+
 def get_tasks_list_keyboard(
     tasks: list[Any],  # type: ignore
     l10n: dict[str, Any],
@@ -488,38 +622,20 @@ def get_tasks_list_keyboard(
         # Shows each task with Done! and Delete buttons
     """
     builder = InlineKeyboardBuilder()
-    
-    for task in tasks:
-        # Extract text safely (works with both Reminder objects and dicts)
-        if hasattr(task, 'reminder_text'):
-            task_text = task.reminder_text
-        else:
-            task_text = str(task.get('reminder_text', ''))
-        
-        # Truncate long text for display
-        text_preview = (
-            task_text[:18] + "…"
-            if len(task_text) > 18
-            else task_text
-        )
-        
+
+    for row in _build_task_action_rows(tasks, l10n):
+        builder.row(*row)
+
+    # 3.4: search/filter entry points — a full-text search plus quick
+    # filters over the same active task set get_user_reminders queries.
+    if total_pages <= 1:
         builder.row(
-            InlineKeyboardButton(
-                text=f"{l10n['btn_done_task_prefix']} {text_preview}",
-                callback_data=f"done_task_{task.id}" if hasattr(task, 'id') else f"done_task_{task.get('id', '')}",
-            ),
-            InlineKeyboardButton(
-                text=l10n.get("btn_task_settings", "⚙️"),
-                callback_data=(
-                    f"task_settings_{task.id}"
-                    if hasattr(task, 'id')
-                    else f"task_settings_{task.get('id', '')}"
-                ),
-            ),
-            InlineKeyboardButton(
-                text=l10n["btn_delete"],
-                callback_data=f"del_task_{task.id}" if hasattr(task, 'id') else f"del_task_{task.get('id', '')}",
-            ),
+            InlineKeyboardButton(text=l10n.get("btn_filter_today", "📅 Today"), callback_data="tasks_filter_today"),
+            InlineKeyboardButton(text=l10n.get("btn_filter_week", "🗓 This week"), callback_data="tasks_filter_week"),
+        )
+        builder.row(
+            InlineKeyboardButton(text=l10n.get("btn_filter_overdue", "⏰ Overdue"), callback_data="tasks_filter_overdue"),
+            InlineKeyboardButton(text=l10n.get("btn_filter_recurring", "🔁 Recurring"), callback_data="tasks_filter_recurring"),
         )
 
     # Page navigation row — only shown when there's more than one page.
@@ -683,6 +799,15 @@ def get_settings_keyboard(
         )
     )
 
+    # 3.3: export before delete — psychologically easier to clear an
+    # account when you can grab your data first.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_export_data", "📤 Export data"),
+            callback_data="settings_export_data",
+        )
+    )
+
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),
@@ -817,8 +942,16 @@ def get_quiet_hours_setup_keyboard(
     enabled: bool,
     start_time: str,
     end_time: str,
+    weekend_enabled: bool = False,
+    weekend_start_time: str = "23:00",
+    weekend_end_time: str = "10:00",
+    habits_exempt: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Keyboard for Quiet Hours setup."""
+    """Keyboard for Quiet Hours setup.
+
+    3.5: adds a separate weekend window (Sat/Sun) and a "habits can wake,
+    regular tasks can't" flag on top of the original single all-week window.
+    """
     builder = InlineKeyboardBuilder()
     toggle_text = l10n.get("btn_quiet_on") if enabled else l10n.get("btn_quiet_off")
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="quiet_toggle"))
@@ -826,5 +959,31 @@ def get_quiet_hours_setup_keyboard(
         InlineKeyboardButton(text=l10n.get("btn_quiet_start").format(time=start_time), callback_data="quiet_edit_start"),
         InlineKeyboardButton(text=l10n.get("btn_quiet_end").format(time=end_time), callback_data="quiet_edit_end"),
     )
+
+    weekend_toggle_text = (
+        l10n.get("btn_quiet_weekend_on", "🏖 Weekend window: ON")
+        if weekend_enabled
+        else l10n.get("btn_quiet_weekend_off", "🏖 Weekend window: OFF")
+    )
+    builder.row(InlineKeyboardButton(text=weekend_toggle_text, callback_data="quiet_weekend_toggle"))
+    if weekend_enabled:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_quiet_weekend_start", "🌙 Weekend start: {time}").format(time=weekend_start_time),
+                callback_data="quiet_edit_weekend_start",
+            ),
+            InlineKeyboardButton(
+                text=l10n.get("btn_quiet_weekend_end", "🌅 Weekend end: {time}").format(time=weekend_end_time),
+                callback_data="quiet_edit_weekend_end",
+            ),
+        )
+
+    habits_exempt_text = (
+        l10n.get("btn_quiet_habits_exempt_on", "🔔 Habits can wake me: ON")
+        if habits_exempt
+        else l10n.get("btn_quiet_habits_exempt_off", "🔕 Habits can wake me: OFF")
+    )
+    builder.row(InlineKeyboardButton(text=habits_exempt_text, callback_data="quiet_habits_exempt_toggle"))
+
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()

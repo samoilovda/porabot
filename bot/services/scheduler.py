@@ -292,13 +292,13 @@ class SchedulerService:
     # Internal
     # ------------------------------------------------------------------
 
-    def _is_quiet_hours_now(self, user, now_utc: datetime) -> bool:
+    def _is_quiet_hours_now(self, user, now_utc: datetime, *, is_habit: bool = False) -> bool:
         try:
             user_tz = pytz.timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        return is_quiet_hours(user, now_local)
+        return is_quiet_hours(user, now_local, is_habit=is_habit)
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
         """Next local time quiet hours end, as UTC.
@@ -317,7 +317,13 @@ class SchedulerService:
         except Exception:
             user_tz = pytz.UTC
         now_local_naive = now_utc.astimezone(user_tz).replace(tzinfo=None)
-        end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
+        # 3.5: the weekend window's end applies if "now" falls on a
+        # Sat/Sun — same day-of-week rule is_quiet_hours uses to pick which
+        # window is currently active.
+        if now_local_naive.weekday() >= 5 and bool(getattr(user, "quiet_hours_weekend_enabled", False)):
+            end = parse_hhmm(getattr(user, "quiet_hours_weekend_end", "10:00"), "10:00")
+        else:
+            end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
         candidate_naive = now_local_naive.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
         if candidate_naive <= now_local_naive:
             candidate_naive += timedelta(days=1)
@@ -352,7 +358,7 @@ class SchedulerService:
                     return
 
                 now_utc = datetime.now(timezone.utc)
-                if self._is_quiet_hours_now(user, now_utc):
+                if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_like(reminder)):
                     job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
                     resume_utc = self._next_quiet_end_utc(user, now_utc)
                     self.scheduler.add_job(

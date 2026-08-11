@@ -43,6 +43,26 @@ async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
         return False
 
 
+# 3.2: EMA-based habit score, shown alongside (not replacing) the streak.
+# Unlike habit_streak_current — which resets to 0 on the first missed cycle
+# — this decays gradually: one skip after a long run barely moves it, the
+# way Loop Habit Tracker's score works. Smaller alpha = slower to move
+# (more history-weighted); 0.2 means roughly the last ~5 cycles dominate.
+_SCORE_ALPHA = 0.2
+
+
+def compute_habit_score(events) -> int:
+    """EMA habit score in [0, 100] from a chronologically-ordered (oldest
+    first) sequence of HabitEvent rows for ONE habit. "not_today"/"missed"
+    count as 0, "done" as 100. Empty history scores 0 (a brand-new habit
+    hasn't proven anything yet, same spirit as streak starting at 0)."""
+    score = 0.0
+    for event in events:
+        value = 100.0 if event.outcome == "done" else 0.0
+        score = score + _SCORE_ALPHA * (value - score)
+    return round(max(0.0, min(100.0, score)))
+
+
 def _aggregate(events) -> list[dict]:
     """Group events by reminder_id into per-habit done/not_today/rate stats."""
     grouped: dict[int, dict] = {}
@@ -96,9 +116,11 @@ def _build_report_text(
     rows: list[dict],
     reminders_by_id: dict[int, Reminder],
     l10n: dict,
+    scores_by_id: dict[int, int] | None = None,
 ) -> str:
     header = title.format(start=start.strftime("%d.%m"), end=end.strftime("%d.%m"))
     lines = [header, ""]
+    scores_by_id = scores_by_id or {}
 
     total_done = 0
     total_not_today = 0
@@ -107,6 +129,10 @@ def _build_report_text(
         total_not_today += row["not_today"]
         streak = _current_streak_label(reminders_by_id.get(row["reminder_id"]))
         streak_suffix = f" · 🔥 {streak}" if streak > 0 else ""
+        # 3.2: EMA score next to the streak — computed from the habit's full
+        # history (scores_by_id), not just this report's window.
+        score = scores_by_id.get(row["reminder_id"])
+        score_suffix = f" · 💪 {score}%" if score is not None else ""
         lines.append(
             l10n.get("habit_report_line", "🫧 {habit} — {done}/{total} ({rate}%){streak}").format(
                 habit=escape_markdown(row["habit_text"]),
@@ -115,6 +141,7 @@ def _build_report_text(
                 rate=row["rate"],
             )
             + streak_suffix
+            + score_suffix
         )
 
     total_all = total_done + total_not_today
@@ -151,6 +178,12 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
     if weekly_events:
         rows = _aggregate(weekly_events)
         if rows:
+            scores_by_id = {
+                row["reminder_id"]: compute_habit_score(
+                    await habit_event_dao.get_events_for_reminder(row["reminder_id"])
+                )
+                for row in rows
+            }
             text = _build_report_text(
                 title=l10n.get("habit_report_weekly_title", "📊 **Итоги недели**"),
                 start=week_start,
@@ -158,6 +191,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                 rows=rows,
                 reminders_by_id=reminders_by_id,
                 l10n=l10n,
+                scores_by_id=scores_by_id,
             )
             all_delivered = await _send_safe(bot, user.id, text) and all_delivered
 
@@ -172,6 +206,12 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
         if monthly_events:
             rows = _aggregate(monthly_events)
             if rows:
+                scores_by_id = {
+                    row["reminder_id"]: compute_habit_score(
+                        await habit_event_dao.get_events_for_reminder(row["reminder_id"])
+                    )
+                    for row in rows
+                }
                 text = _build_report_text(
                     title=l10n.get("habit_report_monthly_title", "📊 **Итоги месяца**"),
                     start=month_start,
@@ -179,6 +219,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                     rows=rows,
                     reminders_by_id=reminders_by_id,
                     l10n=l10n,
+                    scores_by_id=scores_by_id,
                 )
                 all_delivered = await _send_safe(bot, user.id, text) and all_delivered
 

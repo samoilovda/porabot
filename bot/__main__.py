@@ -100,6 +100,7 @@ async def _set_bot_commands(bot: Bot) -> None:
             BotCommand(command="start", description=l10n.get("cmd_desc_start", "Main menu")),
             BotCommand(command="help", description=l10n.get("cmd_desc_help", "Show help")),
             BotCommand(command="cancel", description=l10n.get("cmd_desc_cancel", "Cancel current action")),
+            BotCommand(command="find", description=l10n.get("cmd_desc_find", "Search your tasks")),
         ]
         await bot.set_my_commands(commands, language_code=lang)
 

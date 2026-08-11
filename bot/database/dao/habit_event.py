@@ -122,6 +122,17 @@ class HabitEventDAO(BaseDAO[HabitEvent]):
         )
         return result.scalar_one_or_none() is not None
 
+    async def get_events_for_reminder(self, reminder_id: int) -> Sequence[HabitEvent]:
+        """All events for one habit, oldest first — feeds the 3.2 EMA habit
+        score (bot/services/habit_reports.py's compute_habit_score), which
+        needs the full chronological history, not a fixed date window."""
+        result = await self.session.execute(
+            select(HabitEvent)
+            .where(HabitEvent.reminder_id == reminder_id)
+            .order_by(HabitEvent.local_date, HabitEvent.id)
+        )
+        return result.scalars().all()
+
     async def get_latest_done_event(self, reminder_id: int) -> Optional[HabitEvent]:
         """Most recent 'done' event for a reminder, ordered by local_date (works for
         both fixed habits, which set due_at, and fluid habits, which don't)."""

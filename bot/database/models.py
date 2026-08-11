@@ -78,6 +78,14 @@ class User(Base):
     quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     quiet_hours_start: Mapped[str] = mapped_column(String, default="23:00", server_default="23:00")
     quiet_hours_end: Mapped[str] = mapped_column(String, default="07:00", server_default="07:00")
+    # 3.5: separate weekend window ("Sat/Sun not before 10:00") — used
+    # instead of the weekday window above when enabled.
+    quiet_hours_weekend_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    quiet_hours_weekend_start: Mapped[str] = mapped_column(String, default="23:00", server_default="23:00")
+    quiet_hours_weekend_end: Mapped[str] = mapped_column(String, default="10:00", server_default="10:00")
+    # 3.5: "habits can wake, regular tasks can't" — when set, is_quiet_hours
+    # returns False for habit-like reminders regardless of the window.
+    quiet_hours_habits_exempt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     # Missed-task recovery settings.
     missed_recovery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")

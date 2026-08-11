@@ -41,4 +41,4 @@ def test_edit_keyboard_shows_repeat_button_for_a_plain_non_recurring_task() -> N
         for button in row
     ]
 
-    assert "edit_toggle_repeat_42" in callback_datas
+    assert "edit_repeat_menu_42" in callback_datas

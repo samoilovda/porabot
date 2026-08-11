@@ -193,7 +193,7 @@ async def main() -> None:
     # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
     # configured) the Mini App — runs alongside long polling, not instead
     # of it. See bot/services/webserver.py's module docstring for scope.
-    web_app = create_app(session_pool)
+    web_app = create_app(session_pool, bot_token=config.BOT_TOKEN.get_secret_value())
     web_runner = await start_web_server(web_app, config.WEB_SERVER_HOST, config.WEB_SERVER_PORT)
 
     logger.info("Starting polling…")

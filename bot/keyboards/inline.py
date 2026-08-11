@@ -4,9 +4,10 @@ from typing import Any, Optional
 from datetime import datetime, timedelta
 
 import pytz
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.config import config
 from bot.utils.time_ext import format_time
 
 
@@ -837,6 +838,19 @@ def get_settings_keyboard(
             callback_data="settings_ics_feed",
         )
     )
+
+    # 4.6: Mini App entry point — only shown once a real MINI_APP_URL is
+    # configured (see bot/config.py). web_app buttons require an https://
+    # URL Telegram's client can actually load; there is no meaningful
+    # fallback for an unset one, so the button is simply absent instead of
+    # shipping a button that can never work.
+    if config.MINI_APP_URL:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_open_mini_app", "📊 Open progress view"),
+                web_app=WebAppInfo(url=config.MINI_APP_URL),
+            )
+        )
 
     builder.row(
         InlineKeyboardButton(

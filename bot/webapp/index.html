@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Porabot</title>
+<!-- 4.6: the one external asset a Mini App is expected to load — Telegram's
+     own Web App JS SDK, per https://core.telegram.org/bots/webapps -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/miniapp/style.css">
+</head>
+<body>
+<div id="app">
+  <h1>Porabot</h1>
+
+  <section id="scores-section">
+    <h2 id="scores-title">Habit scores</h2>
+    <div id="scores"></div>
+  </section>
+
+  <section id="heatmap-section">
+    <h2 id="heatmap-title">Completion heatmap</h2>
+    <div id="heatmap-legend"></div>
+    <div id="heatmap"></div>
+  </section>
+
+  <p id="status" class="status"></p>
+</div>
+<script src="/miniapp/app.js"></script>
+</body>
+</html>

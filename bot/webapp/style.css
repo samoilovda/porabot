@@ -1,0 +1,135 @@
+/* 4.6: minimal, dependency-free styling. Colors default to a plain
+   light/dark scheme via prefers-color-scheme, then app.js overrides the
+   CSS variables below with Telegram.WebApp.themeParams when available so
+   the Mini App matches the user's Telegram theme instead of clashing
+   with it. */
+
+:root {
+  --bg: #ffffff;
+  --text: #1c1c1e;
+  --hint: #6d6d72;
+  --secondary-bg: #f2f2f7;
+  --button: #2481cc;
+  --button-text: #ffffff;
+  --heat-0: #ebedf0;
+  --heat-1: #9be9a8;
+  --heat-2: #40c463;
+  --heat-3: #30a14e;
+  --heat-4: #216e39;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17212b;
+    --text: #f5f5f5;
+    --hint: #8a99a5;
+    --secondary-bg: #232e3c;
+    --button: #5288c1;
+    --button-text: #ffffff;
+    --heat-0: #2d333b;
+    --heat-1: #0e4429;
+    --heat-2: #006d32;
+    --heat-3: #26a641;
+    --heat-4: #39d353;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0 0 12px;
+}
+
+h2 {
+  font-size: 1rem;
+  color: var(--hint);
+  margin: 20px 0 8px;
+}
+
+#scores {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.habit-card {
+  background: var(--secondary-bg);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.habit-card .habit-name {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.habit-card .habit-meta {
+  font-size: 0.85rem;
+  color: var(--hint);
+  margin-top: 4px;
+}
+
+.score-bar-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--heat-0);
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  background: var(--button);
+}
+
+#heatmap {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 12px;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 4px 0 8px;
+}
+
+.heat-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--heat-0);
+}
+
+.heat-cell[data-level="1"] { background: var(--heat-1); }
+.heat-cell[data-level="2"] { background: var(--heat-2); }
+.heat-cell[data-level="3"] { background: var(--heat-3); }
+.heat-cell[data-level="4"] { background: var(--heat-4); }
+
+#heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--hint);
+  margin-bottom: 4px;
+}
+
+.status {
+  font-size: 0.85rem;
+  color: var(--hint);
+  text-align: center;
+}
+
+.status.error {
+  color: #e53935;
+}

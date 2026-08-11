@@ -791,6 +791,20 @@ class ReminderDAO(BaseDAO[Reminder]):
             "avg_score": avg_score,
         }
 
+    async def get_active_habits(self, user_id: int) -> Sequence[Reminder]:
+        """4.6: all active habits (fixed-time and fluid) for the Mini App's
+        habit-score view. `is_habit` is set True for both kinds at creation
+        time (see create_reminder), so a single flag check covers them."""
+        result = await self.session.execute(
+            select(Reminder).where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.pending_delete_at.is_(None),
+                Reminder.is_habit.is_(True),
+            )
+        )
+        return result.scalars().all()
+
     async def get_active_fluid_habits(self, user_id: int) -> Sequence[Reminder]:
         """Return active fluid habits for a user."""
         result = await self.session.execute(

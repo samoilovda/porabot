@@ -21,6 +21,7 @@ ES.update(
         "cmd_desc_help": "Mostrar ayuda",
         "cmd_desc_cancel": "Cancelar la acción actual",
         "cmd_desc_find": "Buscar en tus tareas",
+        "cmd_desc_donate": "Apoyar a Porabot",
         "btn_new_task": "➕ Nueva tarea",
         "btn_my_tasks": "📅 Mis tareas",
         "btn_settings": "⚙️ Ajustes",
@@ -130,6 +131,13 @@ ES.update(
 
         # Mini App — 4.6
         "btn_open_mini_app": "📊 Ver progreso",
+
+        # Donaciones con Telegram Stars — 5.1 (voluntarias, no un muro de pago)
+        "btn_donate": "☕ Apoyar a Porabot",
+        "donate_prompt": "☕ ¿Te gusta Porabot? Puedes apoyar el desarrollo con Telegram Stars — elige una cantidad:",
+        "donate_invoice_title": "Apoyar a Porabot",
+        "donate_invoice_description": "Una propina voluntaria — ¡gracias por apoyar el desarrollo!",
+        "donate_thanks": "☕ ¡Muchas gracias por apoyar a Porabot! 💛",
         "enter_task": "Escribe qué debo recordarte.\nPuedes incluir hora: *\"Llamar a mamá mañana a las 18:00\"*.",
         "parse_error": "Error al procesar el texto. Revisa el formato.",
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",

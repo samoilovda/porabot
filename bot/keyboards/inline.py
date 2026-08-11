@@ -852,6 +852,14 @@ def get_settings_keyboard(
             )
         )
 
+    # 5.1: voluntary Telegram Stars tip jar — not gating anything.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_donate", "☕ Support Porabot"),
+            callback_data="donate_open",
+        )
+    )
+
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),
@@ -872,6 +880,27 @@ def get_ics_feed_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
             callback_data="settings_ics_feed_regenerate",
         )
     )
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
+    return builder.as_markup()
+
+
+# 5.1: preset Telegram Stars donation amounts — a tip jar, not a paywall
+# (see bot/handlers/donate.py's module docstring). Lives here rather than
+# in the handler module so get_donate_keyboard has no reason to import
+# handlers (this module is imported BY handlers, never the other way).
+DONATION_PRESETS = [25, 50, 100, 200]
+
+
+def get_donate_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Amount-picker for the 5.1 Telegram Stars donation flow."""
+    builder = InlineKeyboardBuilder()
+    buttons = [
+        InlineKeyboardButton(text=f"⭐ {amount}", callback_data=f"donate_amount_{amount}")
+        for amount in DONATION_PRESETS
+    ]
+    builder.row(*buttons[:2])
+    if len(buttons) > 2:
+        builder.row(*buttons[2:])
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 

@@ -17,6 +17,7 @@ RU: dict[str, Any] = {
     "cmd_desc_help": "Показать помощь",
     "cmd_desc_cancel": "Отменить текущее действие",
     "cmd_desc_find": "Поиск по задачам",
+    "cmd_desc_donate": "Поддержать Porabot",
     "btn_new_task": "➕ Новая задача",
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
@@ -127,6 +128,13 @@ RU: dict[str, Any] = {
 
     # Mini App — 4.6
     "btn_open_mini_app": "📊 Открыть визуализацию",
+
+    # Донаты через Telegram Stars — 5.1 (добровольные, не пейволл)
+    "btn_donate": "☕ Поддержать Porabot",
+    "donate_prompt": "☕ Нравится Porabot? Можешь поддержать разработку через Telegram Stars — выбери сумму:",
+    "donate_invoice_title": "Поддержать Porabot",
+    "donate_invoice_description": "Добровольный донат — спасибо, что поддерживаешь разработку!",
+    "donate_thanks": "☕ Спасибо огромное за поддержку Porabot! 💛",
 
     # Wizard
     "enter_task": "Напиши, о чем напомнить.\nМожно сразу с временем: *\"Позвонить маме завтра в 18:00\"*.",

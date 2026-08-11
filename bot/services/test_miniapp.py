@@ -87,6 +87,32 @@ def test_client_supplied_user_id_only_trusted_after_signature_check() -> None:
     assert validate_init_data(forged, BOT_TOKEN) is None
 
 
+def test_real_init_data_with_signature_field_is_accepted() -> None:
+    """fix(1.2): Bot API 7.10 added a "signature" field (Ed25519, for
+    third-party validation) to initData. Telegram's docs are ambiguous
+    about whether it belongs in the HMAC data-check-string; the wrong
+    answer would make every Mini App request fail HMAC validation. Build a
+    signed initData string carrying "signature" the same way a real
+    Telegram client would (i.e. NOT excluded from the data-check-string —
+    confirmed against aiogram's own reference implementation) and check it
+    is accepted end to end."""
+    fields = {
+        "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
+        "user": json.dumps({"id": 777, "first_name": "Bob"}, separators=(",", ":")),
+        "auth_date": str(int(time.time())),
+        "signature": "3q2-7_ed25519-looking-base64url-signature",
+    }
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    fields["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    result = validate_init_data(urlencode(fields), BOT_TOKEN)
+
+    assert result is not None
+    assert result["user_id"] == 777
+    assert result["user"]["first_name"] == "Bob"
+
+
 def test_build_heatmap_payload_fills_gaps_with_zero_days() -> None:
     events = [SimpleNamespace(local_date="2026-01-02", outcome="done")]
     payload = build_heatmap_payload(events, date(2026, 1, 1), date(2026, 1, 3))

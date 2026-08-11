@@ -14,19 +14,27 @@ initData validation follows Telegram's documented scheme
      hex-encoded
   4. valid iff computed_hash == the "hash" field, compared in constant time
 
+The actual HMAC check (step 2-4) delegates to aiogram's own
+`aiogram.utils.web_app.safe_parse_webapp_init_data` (fix 1.2) rather than a
+hand-rolled implementation, so it tracks Bot API changes upstream instead
+of drifting. Confirmed against a real initData string carrying Bot API
+7.10's "signature" field (Ed25519, for third-party validation): aiogram's
+data-check-string excludes only "hash" — "signature" is treated as a
+regular field and included, same as this module always did — so that field
+does not break the HMAC check either before or after this change.
+
 This is a real auth boundary: the client can put ANY user_id it wants into
 the unsigned parts of a request, so nothing here ever trusts a client-
 supplied user id — only the "user" field's id from a request whose hash
 validated against the bot's own token counts.
 """
 
-import hashlib
-import hmac
-import json
 import time
 from datetime import date, timedelta
 from typing import Any, Optional
-from urllib.parse import parse_qsl
+
+from aiogram.utils.web_app import safe_parse_webapp_init_data
+from pydantic import ValidationError
 
 # initData is short-lived proof of an active Mini App session, not a
 # long-term credential — Telegram itself recommends treating anything
@@ -55,41 +63,25 @@ def validate_init_data(
         return None
 
     try:
-        pairs = parse_qsl(init_data, strict_parsing=True, keep_blank_values=True)
-    except ValueError:
-        return None
-    data = dict(pairs)
-
-    received_hash = data.pop("hash", None)
-    if not received_hash:
+        parsed = safe_parse_webapp_init_data(token=bot_token, init_data=init_data)
+    except (ValueError, ValidationError, TypeError):
+        # ValueError: bad/missing hash (aiogram's own signature check).
+        # ValidationError/TypeError: well-signed but malformed field shape
+        # (e.g. "user" isn't valid JSON/object) — still not trustworthy.
         return None
 
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
-    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    computed_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    if not hmac.compare_digest(computed_hash, received_hash):
+    if parsed.user is None:
         return None
 
-    auth_date_raw = data.get("auth_date", "")
-    if not auth_date_raw.isdigit():
-        return None
-    auth_date = int(auth_date_raw)
-
+    auth_date = int(parsed.auth_date.timestamp())
     current = now if now is not None else int(time.time())
     if current - auth_date > max_age_seconds:
         return None
     if auth_date - current > _CLOCK_SKEW_TOLERANCE_SECONDS:
         return None
 
-    user_raw = data.get("user")
-    if not user_raw:
-        return None
-    try:
-        user_obj = json.loads(user_raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    user_id = user_obj.get("id") if isinstance(user_obj, dict) else None
+    user_obj = parsed.user.model_dump(exclude_none=True)
+    user_id = user_obj.get("id")
     if not isinstance(user_id, int):
         return None
 

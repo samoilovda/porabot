@@ -13,6 +13,8 @@ from bot.database.engine import Base
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.handlers.reminders import (
+    _TASKS_PAGE_SIZE,
+    _render_filtered_tasks_text,
     callback_tasks_filter_by_tag,
     callback_tasks_filter_overdue,
     callback_tasks_filter_recurring,
@@ -264,6 +266,35 @@ async def test_filter_by_tag_no_results() -> None:
     await callback_tasks_filter_by_tag(callback, reminder_dao, user, RU)
 
     message.edit_text.assert_awaited_once_with(RU.get("find_no_results_filter"), reply_markup=None)
+
+
+def _fake_task(i: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=i, reminder_text=f"Task {i}", execution_time=datetime(2026, 5, 1, 9, 0, 0),
+        is_recurring=False, is_nagging=False,
+    )
+
+
+def test_render_filtered_tasks_text_adds_truncation_notice_over_page_size() -> None:
+    """Regression (fix 2.3): results were silently cut to _TASKS_PAGE_SIZE
+    with no indication more matches existed."""
+    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
+    tasks = [_fake_task(i) for i in range(40)]
+
+    text = _render_filtered_tasks_text(tasks, user, RU, "header\n")
+
+    assert text.count("▫️") == _TASKS_PAGE_SIZE
+    assert RU["find_truncated_notice"].format(shown=_TASKS_PAGE_SIZE, total=40) in text
+
+
+def test_render_filtered_tasks_text_no_notice_under_page_size() -> None:
+    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
+    tasks = [_fake_task(i) for i in range(10)]
+
+    text = _render_filtered_tasks_text(tasks, user, RU, "header\n")
+
+    assert text.count("▫️") == 10
+    assert "Показаны первые" not in text
 
 
 def test_filtered_tasks_keyboard_has_close_and_back_buttons() -> None:

@@ -109,6 +109,7 @@ EN: dict[str, Any] = {
     "find_no_results": "🔍 Nothing found for «{query}».",
     "find_no_results_filter": "🔍 No tasks match this filter.",
     "find_results_header": "🔍 *Results for «{query}»:*\n",
+    "find_truncated_notice": "Showing first {shown} of {total}.",
     "filter_header_today": "📅 *Today:*\n",
     "filter_header_week": "🗓 *This week:*\n",
     "filter_header_overdue": "⏰ *Overdue:*\n",

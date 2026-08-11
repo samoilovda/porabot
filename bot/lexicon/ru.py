@@ -109,6 +109,7 @@ RU: dict[str, Any] = {
     "find_no_results": "🔍 Ничего не найдено по «{query}».",
     "find_no_results_filter": "🔍 По этому фильтру задач нет.",
     "find_results_header": "🔍 *Результаты по «{query}»:*\n",
+    "find_truncated_notice": "Показаны первые {shown} из {total}.",
     "filter_header_today": "📅 *Сегодня:*\n",
     "filter_header_week": "🗓 *Эта неделя:*\n",
     "filter_header_overdue": "⏰ *Просроченные:*\n",

@@ -1381,6 +1381,15 @@ async def callback_tasks_page(
 
 def _render_filtered_tasks_text(tasks: list, user: User, l10n: dict[str, Any], header: str) -> str:
     lines = [header] + [_format_task_line_md2(task, user) for task in tasks[:_TASKS_PAGE_SIZE]]
+    if len(tasks) > _TASKS_PAGE_SIZE:
+        # fix(2.3): the list is silently cut to _TASKS_PAGE_SIZE (Telegram
+        # message/keyboard limits) — without this, a user sees 25 lines and
+        # has no way to know there were more matches.
+        lines.append(
+            l10n.get("find_truncated_notice", "Showing first {shown} of {total}.").format(
+                shown=_TASKS_PAGE_SIZE, total=len(tasks)
+            )
+        )
     return "\n".join(lines)
 
 

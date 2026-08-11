@@ -112,6 +112,7 @@ ES.update(
         "find_no_results": "🔍 No se encontró nada para «{query}».",
         "find_no_results_filter": "🔍 No hay tareas que coincidan con este filtro.",
         "find_results_header": "🔍 *Resultados para «{query}»:*\n",
+        "find_truncated_notice": "Se muestran los primeros {shown} de {total}.",
         "filter_header_today": "📅 *Hoy:*\n",
         "filter_header_week": "🗓 *Esta semana:*\n",
         "filter_header_overdue": "⏰ *Atrasadas:*\n",

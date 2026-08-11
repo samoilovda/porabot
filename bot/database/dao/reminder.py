@@ -31,6 +31,14 @@ class ReminderDAO(BaseDAO[Reminder]):
 
     model = Reminder  # Class attribute - set by concrete DAO subclass
 
+    @staticmethod
+    def _priority_order():
+        """4.3: priority 1 (highest) sorts first, NULL priority sorts last,
+        execution_time/id break ties — used by every "active task list"
+        query so priority affects both the task list and (via
+        get_today_pending_tasks) the morning brief."""
+        return (func.coalesce(Reminder.priority, 4), Reminder.execution_time, Reminder.id)
+
     # 3.2: access is intentionally open (WhitelistMiddleware disabled) with
     # only a per-user request-RATE cap (RateLimitMiddleware), no cap on
     # total VOLUME — one user could create an unbounded number of reminders,
@@ -55,6 +63,8 @@ class ReminderDAO(BaseDAO[Reminder]):
         fluid_mode: Optional[str] = None,
         is_nagging: bool = False,
         nagging_max_repeats: int = 3,
+        tags: Optional[str] = None,
+        priority: Optional[int] = None,
     ) -> Reminder:
         """Insert a new reminder, flush, and return it with `id` populated.
 
@@ -108,6 +118,8 @@ class ReminderDAO(BaseDAO[Reminder]):
             habit_active_due_at=execution_time if is_habit else None,
             is_nagging=is_nagging,
             nagging_max_repeats=nagging_max_repeats,
+            tags=tags,
+            priority=priority,
         )
         self.session.add(reminder)
         await self.session.flush()  # Flush to populate auto-generated ID
@@ -169,7 +181,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             # requests (two tasks with the identical execution_time could
             # otherwise swap positions between page loads, which would
             # shuffle pagination).
-            .order_by(Reminder.execution_time, Reminder.id)  # Order by when task fires (earliest first)
+            .order_by(*self._priority_order())  # 4.3: priority first, then when task fires (earliest first)
         )
         return result.scalars().all()
 
@@ -432,7 +444,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                         Reminder.completed_for_execution_time < Reminder.execution_time,
                     ),
                 )
-                .order_by(Reminder.execution_time)  # Order by when task fires
+                .order_by(*self._priority_order())  # 4.3: priority first, then when task fires
             )
 
         result = await self.session.execute(stmt)
@@ -544,12 +556,59 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            .order_by(Reminder.execution_time.asc())
+            .order_by(*self._priority_order())
         )
         if limit is not None:
             stmt = stmt.limit(max(1, int(limit)))
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def get_distinct_tags(self, user_id: int) -> Sequence[str]:
+        """4.3: distinct tags across the user's active tasks, for the tag
+        filter menu. Sorted alphabetically."""
+        result = await self.session.execute(
+            select(Reminder.tags).where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+                Reminder.tags.is_not(None),
+            )
+        )
+        tags: set[str] = set()
+        for (csv,) in result.all():
+            if csv:
+                tags.update(t for t in csv.split(",") if t)
+        return sorted(tags)
+
+    async def get_reminders_by_tag(self, user_id: int, tag: str) -> Sequence[Reminder]:
+        """4.3: active tasks carrying exactly *tag* (case-insensitive).
+
+        LIKE narrows the SQL scan, but the exact membership check happens in
+        Python against the comma-split list — otherwise tag="om" would also
+        match a task tagged "дом" via a naive substring LIKE.
+        """
+        tag_l = tag.strip().lower()
+        if not tag_l:
+            return []
+        needle = f"%{tag_l}%"
+        result = await self.session.execute(
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.is_fluid_habit.is_(False),
+                Reminder.pending_delete_at.is_(None),
+                Reminder.tags.ilike(needle),
+                or_(
+                    Reminder.completed_for_execution_time.is_(None),
+                    Reminder.completed_for_execution_time < Reminder.execution_time,
+                ),
+            )
+            .order_by(*self._priority_order())
+        )
+        rows = result.scalars().all()
+        return [r for r in rows if tag_l in (r.tags or "").split(",")]
 
     async def search_user_reminders(self, user_id: int, query: str) -> Sequence[Reminder]:
         """3.4: `/find <text>` — case-insensitive substring search over the
@@ -570,7 +629,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            .order_by(Reminder.execution_time, Reminder.id)
+            .order_by(*self._priority_order())
         )
         return result.scalars().all()
 
@@ -608,7 +667,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            .order_by(Reminder.execution_time, Reminder.id)
+            .order_by(*self._priority_order())
         )
         return result.scalars().all()
 
@@ -628,7 +687,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            .order_by(Reminder.execution_time, Reminder.id)
+            .order_by(*self._priority_order())
         )
         return result.scalars().all()
 

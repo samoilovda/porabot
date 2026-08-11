@@ -343,6 +343,15 @@ class Reminder(Base):
     # Optional note attached when user marks task done.
     last_completion_note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # 4.3: tags and priority parsed out of the phrase at creation time
+    # ("купить молоко #дом !2"). tags is a comma-separated lowercase list —
+    # no separate table, this is a flat filter, not a taxonomy. priority is
+    # 1 (highest) .. 3 (lowest); NULL means "no priority set". Both affect
+    # sort order in the task list and the morning brief (NULL priority
+    # sorts last) — see ReminderDAO's ordering helpers.
+    tags: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    priority: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # Task state: 'pending' (waiting) or 'completed' (done)
     # Used for daily briefs and filtering completed tasks
     status: Mapped[str] = mapped_column(

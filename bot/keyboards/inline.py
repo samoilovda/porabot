@@ -596,6 +596,25 @@ def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
     return builder.as_markup()
 
 
+def get_tags_menu_keyboard(tags: list[str], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """4.3: one button per distinct tag, two per row, tapping filters the
+    task list to that tag (tasks_tag:<tag> callback)."""
+    builder = InlineKeyboardBuilder()
+    row: list[InlineKeyboardButton] = []
+    for tag in tags:
+        row.append(InlineKeyboardButton(text=f"#{tag}", callback_data=f"tasks_tag:{tag}"))
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),
+        InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+    )
+    return builder.as_markup()
+
+
 def get_tasks_list_keyboard(
     tasks: list[Any],  # type: ignore
     l10n: dict[str, Any],
@@ -636,6 +655,9 @@ def get_tasks_list_keyboard(
         builder.row(
             InlineKeyboardButton(text=l10n.get("btn_filter_overdue", "⏰ Overdue"), callback_data="tasks_filter_overdue"),
             InlineKeyboardButton(text=l10n.get("btn_filter_recurring", "🔁 Recurring"), callback_data="tasks_filter_recurring"),
+        )
+        builder.row(
+            InlineKeyboardButton(text=l10n.get("btn_filter_tags", "🏷 Tags"), callback_data="tasks_tags_menu"),
         )
 
     # Page navigation row — only shown when there's more than one page.

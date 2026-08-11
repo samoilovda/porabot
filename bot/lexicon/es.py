@@ -115,6 +115,12 @@ ES.update(
         "filter_header_week": "🗓 *Esta semana:*\n",
         "filter_header_overdue": "⏰ *Atrasadas:*\n",
         "filter_header_recurring": "🔁 *Recurrentes:*\n",
+
+        # Etiquetas y prioridades — 4.3
+        "btn_filter_tags": "🏷 Etiquetas",
+        "tags_menu_title": "🏷 Elige una etiqueta:",
+        "no_tags_yet": "Aún no hay etiquetas. Añade #etiqueta al texto de una tarea.",
+        "filter_header_tag": "🏷 *Etiqueta #{tag}:*\n",
         "enter_task": "Escribe qué debo recordarte.\nPuedes incluir hora: *\"Llamar a mamá mañana a las 18:00\"*.",
         "parse_error": "Error al procesar el texto. Revisa el formato.",
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",

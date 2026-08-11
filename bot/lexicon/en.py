@@ -113,6 +113,12 @@ EN: dict[str, Any] = {
     "filter_header_overdue": "⏰ *Overdue:*\n",
     "filter_header_recurring": "🔁 *Recurring:*\n",
 
+    # Tags and priorities — 4.3
+    "btn_filter_tags": "🏷 Tags",
+    "tags_menu_title": "🏷 Pick a tag:",
+    "no_tags_yet": "No tags yet. Add #tag to a task's text.",
+    "filter_header_tag": "🏷 *#{tag}:*\n",
+
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",
     "parse_error": "Error parsing text. Check the format.",

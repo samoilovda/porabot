@@ -37,6 +37,7 @@ from bot.keyboards.inline import (
     get_repeat_end_keyboard,
     get_repeat_weekday_keyboard,
     get_snooze_keyboard,
+    get_tags_menu_keyboard,
     get_tasks_list_keyboard,
     get_time_selection_keyboard,
     get_undo_delete_keyboard,
@@ -46,6 +47,7 @@ from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
+from bot.utils.tags import extract_tags_and_priority, format_tags, priority_glyph
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 router = Router(name="reminders")
@@ -233,7 +235,12 @@ def _format_task_line_md2(task, user: User) -> str:
     """Render one task-list row for a MarkdownV2 message, escaping only the data."""
     dt_str = escape_markdown_v2(format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
     flags = f"{'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}"
-    return f"▫️ `{dt_str}`: {flags}{escape_markdown_v2(task.reminder_text)}"
+    # 4.3: priority glyph prefix and #tag suffix, both optional.
+    glyph = priority_glyph(getattr(task, "priority", None))
+    priority_prefix = f"{glyph} " if glyph else ""
+    tags_text = format_tags(getattr(task, "tags", None))
+    tags_suffix = f" {escape_markdown_v2(tags_text)}" if tags_text else ""
+    return f"▫️ `{dt_str}`: {priority_prefix}{flags}{escape_markdown_v2(task.reminder_text)}{tags_suffix}"
 
 
 def _paginate_tasks_for_list(tasks: list, page: int = 0) -> tuple[list, int, int]:
@@ -334,8 +341,16 @@ async def _handle_parsed_result(
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
 ) -> None:
-    clean_text = result.clean_text or l10n.get("task_untitled", "Untitled task")
-    await state.update_data(text=clean_text, user_timezone=user.timezone, chat_id=source_message.chat.id)
+    # 4.3: pull #tags and !priority out of the phrase before anything else
+    # touches clean_text — everything downstream (confirmation prompt,
+    # preview, stored reminder_text) should see the phrase without them.
+    raw_text = result.clean_text or l10n.get("task_untitled", "Untitled task")
+    clean_text, tags_csv, priority = extract_tags_and_priority(raw_text)
+    clean_text = clean_text or l10n.get("task_untitled", "Untitled task")
+    await state.update_data(
+        text=clean_text, tags=tags_csv, priority=priority,
+        user_timezone=user.timezone, chat_id=source_message.chat.id,
+    )
 
     if result.parsed_datetime:
         await state.update_data(execution_time=result.parsed_datetime.isoformat())
@@ -377,6 +392,8 @@ async def _save_and_show_edit(
     """Persist reminder to DB, schedule it, send confirmation with edit keyboard."""
     data = await state.get_data()
     text = data.get("text")
+    tags_csv = data.get("tags")
+    priority = data.get("priority")
     execution_time_raw = datetime.fromisoformat(data["execution_time"])
     execution_time = to_utc_naive(execution_time_raw)
     edit_reminder_id = data.get("edit_reminder_id")
@@ -394,6 +411,8 @@ async def _save_and_show_edit(
         new_reminder = await reminder_dao.get_owned(edit_reminder_id, user.id)
         if new_reminder:
             new_reminder.reminder_text = text
+            new_reminder.tags = tags_csv
+            new_reminder.priority = priority
             is_snooze_mode = bool(data.get("is_snooze_mode", False))
             if not (is_snooze_mode and _is_habit_like(new_reminder) and new_reminder.is_recurring):
                 new_reminder.execution_time = execution_time
@@ -409,6 +428,8 @@ async def _save_and_show_edit(
                 is_recurring=False,
                 rrule_string=None,
                 is_nagging=False,
+                tags=tags_csv,
+                priority=priority,
             )
         except ValueError as ve:
             logger.warning("Validation error for user %s: %s", user.id, ve)
@@ -703,7 +724,14 @@ async def callback_edit_edit(
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.set_state(ReminderWizard.choosing_time)
-    await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text)
+    # 4.3: carry the existing tags/priority forward — this flow only
+    # changes the time, so _save_and_show_edit must not wipe them.
+    await state.update_data(
+        edit_reminder_id=reminder.id,
+        text=reminder.reminder_text,
+        tags=reminder.tags,
+        priority=reminder.priority,
+    )
     await callback.message.edit_text(
         l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n),
@@ -1427,6 +1455,42 @@ async def callback_tasks_filter_recurring(
     await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_recurring", "🔁 *Recurring:*\n")
 
 
+@router.callback_query(F.data == "tasks_tags_menu")
+async def callback_tasks_tags_menu(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    """4.3: list the user's distinct tags as buttons to filter by."""
+    tags = await reminder_dao.get_distinct_tags(user.id)
+    if not tags:
+        await callback.answer(l10n.get("no_tags_yet", "You have no tags yet."), show_alert=True)
+        return
+    await callback.message.edit_text(
+        l10n.get("tags_menu_title", "🏷 Pick a tag:"),
+        reply_markup=get_tags_menu_keyboard(list(tags), l10n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tasks_tag:"))
+async def callback_tasks_filter_by_tag(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    """4.3: results for one tag, tapped from callback_tasks_tags_menu."""
+    tag = callback.data.split("tasks_tag:", 1)[1]
+    tasks = await reminder_dao.get_reminders_by_tag(user.id, tag)
+    if not tasks:
+        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await callback.answer()
+        return
+    header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag))
+    await callback.message.edit_text(
+        _render_filtered_tasks_text(tasks, user, l10n, header),
+        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
+        parse_mode="MarkdownV2",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "recovery_done_all")
 async def callback_recovery_done_all(
     callback: CallbackQuery,
@@ -2141,7 +2205,13 @@ async def callback_snooze_act(
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
-        await state.update_data(edit_reminder_id=reminder.id, text=reminder.reminder_text, is_snooze_mode=True)
+        await state.update_data(
+            edit_reminder_id=reminder.id,
+            text=reminder.reminder_text,
+            tags=reminder.tags,
+            priority=reminder.priority,
+            is_snooze_mode=True,
+        )
         await callback.message.edit_text(
             l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
             reply_markup=get_time_selection_keyboard(user.timezone, l10n),

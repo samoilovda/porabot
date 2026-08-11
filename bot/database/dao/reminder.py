@@ -23,6 +23,20 @@ from bot.database.dao.base import BaseDAO
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, is_habit_like
 
+# fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
+# containing them (e.g. "скидка 50%") must be treated as a literal, not a
+# pattern. Escape the escape character itself first, then the wildcards,
+# and pass escape="\\" to ilike(...) at every call site below.
+_LIKE_ESCAPE_CHAR = "\\"
+
+
+def _escape_like(value: str) -> str:
+    return (
+        value.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+        .replace("%", f"{_LIKE_ESCAPE_CHAR}%")
+        .replace("_", f"{_LIKE_ESCAPE_CHAR}_")
+    )
+
 
 class ReminderDAO(BaseDAO[Reminder]):
     """CRUD plus habit-streak, fluid-habit, and daily-brief queries for
@@ -609,7 +623,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         tag_l = tag.strip().lower()
         if not tag_l:
             return []
-        needle = f"%{tag_l}%"
+        needle = f"%{_escape_like(tag_l)}%"
         result = await self.session.execute(
             select(Reminder)
             .where(
@@ -617,7 +631,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(False),
                 Reminder.pending_delete_at.is_(None),
-                Reminder.tags.ilike(needle),
+                Reminder.tags.ilike(needle, escape=_LIKE_ESCAPE_CHAR),
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,
@@ -633,7 +647,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         user's pending, non-fluid tasks. Same active-list rules as
         get_user_reminders (hides soft-deleted and already-completed
         recurring cycles)."""
-        needle = f"%{query.strip()}%"
+        needle = f"%{_escape_like(query.strip())}%"
         result = await self.session.execute(
             select(Reminder)
             .where(
@@ -641,7 +655,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(False),
                 Reminder.pending_delete_at.is_(None),
-                Reminder.reminder_text.ilike(needle),
+                Reminder.reminder_text.ilike(needle, escape=_LIKE_ESCAPE_CHAR),
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,

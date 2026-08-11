@@ -68,6 +68,60 @@ async def test_search_user_reminders_no_match(session) -> None:
     assert results == []
 
 
+async def test_search_treats_percent_as_a_literal_character(session) -> None:
+    """Regression (fix 2.2): "%" is a LIKE wildcard. Unescaped, a query for
+    "скидка 50%" would ALSO match "скидка 500 рублей" (the % matching zero
+    or more characters) — a literal % in the search text must only match a
+    literal %."""
+    dao = ReminderDAO(session)
+    session.add(User(id=1, username="u", timezone="UTC"))
+    await session.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    await dao.create_reminder(user_id=1, text="скидка 50%", execution_time=now + timedelta(hours=1))
+    await dao.create_reminder(user_id=1, text="скидка 500 рублей", execution_time=now + timedelta(hours=2))
+
+    results = await dao.search_user_reminders(1, "скидка 50%")
+
+    texts = {r.reminder_text for r in results}
+    assert texts == {"скидка 50%"}
+
+
+async def test_search_for_bare_percent_does_not_match_everything(session) -> None:
+    """A query of just "%" must not act as "match all" — it should be
+    escaped to a literal percent sign, matching only tasks that contain one."""
+    dao = ReminderDAO(session)
+    session.add(User(id=1, username="u", timezone="UTC"))
+    await session.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    await dao.create_reminder(user_id=1, text="скидка 50%", execution_time=now + timedelta(hours=1))
+    await dao.create_reminder(user_id=1, text="no percent here", execution_time=now + timedelta(hours=2))
+
+    results = await dao.search_user_reminders(1, "%")
+
+    texts = {r.reminder_text for r in results}
+    assert texts == {"скидка 50%"}
+
+
+async def test_tag_filter_treats_underscore_as_a_literal_character(session) -> None:
+    """Same LIKE-escaping fix (2.2) applied to get_reminders_by_tag's SQL
+    narrowing. Note this one does NOT regress on returned results even
+    without the fix — get_reminders_by_tag already re-checks exact tag
+    membership in Python after the SQL scan (see its docstring), so an
+    unescaped "_" only ever widened the *scan*, not the final result set.
+    Kept as a correctness pin, not a behavioral regression test."""
+    dao = ReminderDAO(session)
+    session.add(User(id=1, username="u", timezone="UTC"))
+    await session.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    await dao.create_reminder(user_id=1, text="task one", execution_time=now + timedelta(hours=1), tags="a_b")
+    await dao.create_reminder(user_id=1, text="task two", execution_time=now + timedelta(hours=2), tags="axb")
+
+    results = await dao.get_reminders_by_tag(1, "a_b")
+
+    texts = {r.reminder_text for r in results}
+    assert texts == {"task one"}
+
+
 async def test_get_user_reminders_today_excludes_future_days(session) -> None:
     dao = await _seed(session)
     results = await dao.get_user_reminders_today(1, "UTC")

@@ -942,8 +942,16 @@ def get_quiet_hours_setup_keyboard(
     enabled: bool,
     start_time: str,
     end_time: str,
+    weekend_enabled: bool = False,
+    weekend_start_time: str = "23:00",
+    weekend_end_time: str = "10:00",
+    habits_exempt: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Keyboard for Quiet Hours setup."""
+    """Keyboard for Quiet Hours setup.
+
+    3.5: adds a separate weekend window (Sat/Sun) and a "habits can wake,
+    regular tasks can't" flag on top of the original single all-week window.
+    """
     builder = InlineKeyboardBuilder()
     toggle_text = l10n.get("btn_quiet_on") if enabled else l10n.get("btn_quiet_off")
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="quiet_toggle"))
@@ -951,5 +959,31 @@ def get_quiet_hours_setup_keyboard(
         InlineKeyboardButton(text=l10n.get("btn_quiet_start").format(time=start_time), callback_data="quiet_edit_start"),
         InlineKeyboardButton(text=l10n.get("btn_quiet_end").format(time=end_time), callback_data="quiet_edit_end"),
     )
+
+    weekend_toggle_text = (
+        l10n.get("btn_quiet_weekend_on", "🏖 Weekend window: ON")
+        if weekend_enabled
+        else l10n.get("btn_quiet_weekend_off", "🏖 Weekend window: OFF")
+    )
+    builder.row(InlineKeyboardButton(text=weekend_toggle_text, callback_data="quiet_weekend_toggle"))
+    if weekend_enabled:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_quiet_weekend_start", "🌙 Weekend start: {time}").format(time=weekend_start_time),
+                callback_data="quiet_edit_weekend_start",
+            ),
+            InlineKeyboardButton(
+                text=l10n.get("btn_quiet_weekend_end", "🌅 Weekend end: {time}").format(time=weekend_end_time),
+                callback_data="quiet_edit_weekend_end",
+            ),
+        )
+
+    habits_exempt_text = (
+        l10n.get("btn_quiet_habits_exempt_on", "🔔 Habits can wake me: ON")
+        if habits_exempt
+        else l10n.get("btn_quiet_habits_exempt_off", "🔕 Habits can wake me: OFF")
+    )
+    builder.row(InlineKeyboardButton(text=habits_exempt_text, callback_data="quiet_habits_exempt_toggle"))
+
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -40,6 +41,22 @@ from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.habit_reports import setup_habit_reports
 from bot.services.delete_cleanup import setup_delete_cleanup
 from bot.handlers.reminders import _cleanup_stale_timers
+
+
+def _write_heartbeat() -> None:
+    """Touch config.HEARTBEAT_FILE with the current time (4.4).
+
+    docker-compose's `restart: always` only reacts to the process exiting —
+    a polling loop that's alive but hung (deadlocked, stuck on a network
+    call that never times out) looks identical to a healthy container from
+    the outside. Written at startup and then every minute by a scheduler
+    job; docker-compose's healthcheck fails once this file goes stale.
+    """
+    try:
+        with open(config.HEARTBEAT_FILE, "w") as f:
+            f.write(str(int(time.time())))
+    except OSError as e:
+        logger.warning("Failed to write heartbeat file %s: %s", config.HEARTBEAT_FILE, e)
 
 
 async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
@@ -126,6 +143,17 @@ async def main() -> None:
         id="cleanup_stale_timers",
         replace_existing=True,
     )
+    # 4.4: written now so the healthcheck doesn't see a stale/missing file
+    # during startup (Dockerfile's schema init, etc.), then kept fresh by
+    # the periodic job below.
+    _write_heartbeat()
+    scheduler.add_job(
+        _write_heartbeat,
+        "interval",
+        minutes=1,
+        id="write_heartbeat",
+        replace_existing=True,
+    )
     logger.info("Scheduler configured.")
 
     # Middleware — whitelist intentionally disabled (open access is a
@@ -136,8 +164,19 @@ async def main() -> None:
     # To re-enable the whitelist, restore WhitelistMiddleware registration
     # before DatabaseMiddleware too.
     # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
-    dp.update.middleware(RateLimitMiddleware())
+    rate_limit_middleware = RateLimitMiddleware()
+    dp.update.middleware(rate_limit_middleware)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
+    # 3.1: RateLimitMiddleware's per-user hit dict never dropped an entry on
+    # its own — a user who sent a handful of messages and never returned
+    # left a permanent entry behind. Same cadence as cleanup_stale_timers.
+    scheduler.add_job(
+        rate_limit_middleware.cleanup_expired,
+        "interval",
+        minutes=10,
+        id="cleanup_rate_limit_hits",
+        replace_existing=True,
+    )
 
     # Routers
     for router in all_routers:

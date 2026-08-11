@@ -1,87 +1,20 @@
 """
-SQLAlchemy ORM Models for Porabot
-===================================
+SQLAlchemy ORM models for Porabot: `User`, `Reminder`, `HabitEvent`.
 
-PURPOSE:
-  This module defines the database schema using SQLAlchemy's declarative ORM.
-  It creates two main tables: `users` and `reminders`.
-
-ARCHITECTURE OVERVIEW:
-  
-  ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-  │   User(Base)│────▶│ Base.metadata│────▶│ create_all()    │
-  │             │     │ (table list) │     │ creates tables   │
-  └─────────────┘     └──────────────┘     └─────────────────┘
-
-TABLE SCHEMA:
-  
-  users table:
-    ├── id      INTEGER PRIMARY KEY (Telegram user ID, not auto-incremented)
-    ├── username TEXT (optional Telegram username)
-    ├── timezone TEXT DEFAULT 'UTC' (user's timezone string)
-    ├── language TEXT (language code for i18n)
-    ├── show_utc_offset BOOLEAN DEFAULT 0 (show +HH:MM offset in times)
-    ├── quiet_hours_enabled BOOLEAN DEFAULT 0
-    ├── quiet_hours_start TEXT DEFAULT '23:00'
-    ├── quiet_hours_end TEXT DEFAULT '07:00'
-    ├── missed_recovery_enabled BOOLEAN DEFAULT 1
-    ├── last_missed_recovery_date TEXT (YYYY-MM-DD in user's local timezone)
-    └── created_at DATETIME (when user was added to DB)
-  
-  reminders table:
-    ├── id          INTEGER PRIMARY KEY AUTOINCREMENT (internal task ID)
-    ├── user_id     INTEGER FOREIGN KEY → users.id (who owns this task)
-    ├── reminder_text TEXT (what the user needs to remember)
-    ├── media_file_id TEXT (optional file attachment, e.g., photo/video)
-    ├── media_type TEXT (file type: 'photo', 'video', etc.)
-    ├── execution_time DATETIME (when task should fire - stored in UTC!)
-    ├── is_recurring BOOLEAN DEFAULT 0 (repeating task?)
-    ├── rrule_string TEXT (iCalendar recurrence rule, e.g., "FREQ=DAILY")
-    ├── is_nagging BOOLEAN DEFAULT 0 (send follow-ups every 5 min?)
-    ├── nagging_max_repeats INTEGER DEFAULT 3 (max number of follow-up nags)
-    ├── nagging_sent_count INTEGER DEFAULT 0 (already sent nags for current cycle)
-    ├── completed_for_execution_time DATETIME (hide completed recurring cycle from active list)
-    ├── last_completion_note TEXT (optional note after completion)
-    ├── status      TEXT DEFAULT 'pending' ('pending' or 'completed')
-    ├── completed_at DATETIME (when task was marked done)
-    └── created_at DATETIME (when task was added to DB)
-
-IMPORTANT NOTES:
-  
-  1. execution_time is stored in UTC timezone!
-     - When parsing user input, convert to UTC before saving
-     - When displaying, convert from UTC to user's local time
-     - This avoids timezone drift issues across different users
-  
-  2. id field uses Telegram user ID (not auto-incremented)
-     - Prevents collisions if same user adds multiple tasks
-     - SQLAlchemy handles this with BigInteger and explicit primary_key
-  
-  3. Foreign key constraint: reminders.user_id → users.id
-     - Enforces referential integrity
-     - CASCADE DELETE not enabled (tasks persist after user deletion)
-
-BUG FIXES APPLIED (Phase 1):
-  ✅ Added comprehensive documentation for each field
-  ✅ Explained timezone handling (UTC storage, local display)
-  ✅ Documented foreign key relationships
-  ✅ Added type hints and docstrings for better IDE support
-
-USAGE:
-  from bot.database.models import User, Reminder
-  
-  # Create a new user
-  >>> user = User(id=123456, username="john_doe", timezone="Europe/Moscow")
-  
-  # Create a reminder
-  >>> reminder = Reminder(
-  ...     id=999,
-  ...     user_id=123456,
-  ...     reminder_text="Take medication",
-  ...     execution_time=datetime(2024, 3, 27, 9, 0),  # UTC time!
-  ...     is_recurring=False,
-  ... )
-
+Invariants that hold across this whole module:
+  - Every stored datetime (execution_time, completed_at, habit_active_due_at,
+    due_at, ...) is naive UTC. Convert to the user's local timezone only when
+    rendering; convert back to naive UTC before writing.
+  - `User.id` / `Reminder.user_id` are the Telegram user id (not
+    auto-incremented). `Reminder.id` and `HabitEvent.id` are ordinary
+    auto-incrementing surrogate keys.
+  - A habit is a `Reminder` row with `is_habit=True` (fixed-time) or
+    `is_fluid_habit=True` (day-based, no fixed time) — not a separate table.
+    See `is_habit_like()` at the bottom of this module for the fixed-habit
+    detection used throughout the codebase.
+  - Soft-migrations for columns added after initial release live in
+    `bot/database/engine.py`'s `init_db`, not here — this file is always the
+    CURRENT schema, not a migration history.
 """
 
 from datetime import datetime, timezone
@@ -100,36 +33,9 @@ def _utcnow_naive() -> datetime:
 
 
 class User(Base):
-    """
-    Telegram user model - stores user preferences and settings.
-    
-    This model represents a Telegram user who has interacted with the bot.
-    It stores their timezone, language preference, and other settings.
-    
-    Table: users
-    
-    Architecture:
-      ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-      │   User(Base)│────▶│ Base.metadata│────▶│ create_all()    │
-      │             │     │ (table list) │     │ creates tables   │
-      └─────────────┘     └──────────────┘     └─────────────────┘
-    
-    Fields:
-        id          Telegram user ID (from update.message.from_user.id)
-                  NOT auto-incremented - must be set explicitly!
-                  
-        username    Optional Telegram username (can be None if not set)
-                  
-        timezone    User's timezone string (e.g., "Europe/Moscow")
-                  Default: "UTC" for new users
-                  
-        language    Language code for i18n (e.g., "ru", "en")
-                  Used to select appropriate translations
-                  
-        show_utc_offset Whether to display UTC offset (+03:00) in times
-                  Default: False (show local time only)
-                  
-        created_at  When user was added to database
+    """Telegram user — preferences and settings for reminders, habits, and
+    the scheduled jobs that check them (briefs, missed-task recovery, habit
+    reports). `id` is the Telegram user id itself, not auto-incremented.
     """
 
     __tablename__ = "users"
@@ -222,101 +128,15 @@ class User(Base):
 
 
 class Reminder(Base):
-    """
-    Reminder / task model - stores user's scheduled tasks.
-    
-    This model represents a single reminder that the bot will notify the user about.
-    It supports recurring tasks, nagging mode, and media attachments.
-    
-    Table: reminders
-    
-    Architecture:
-      ┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-      │   Reminder  │────▶│ Base.metadata│────▶│ create_all()    │
-      │             │     │ (table list) │     │ creates tables   │
-      └─────────────┘     └──────────────┘     └─────────────────┘
-    
-    Fields:
-        id              Internal task ID (auto-incremented, not Telegram user ID!)
-        
-        user_id         Foreign key to users.id - who owns this reminder
-        
-        reminder_text   What the user needs to remember (e.g., "Take medication")
-        
-        media_file_id   Optional file attachment (photo/video) for context
-        
-        media_type      File type: 'photo', 'video', etc.
-        
-        execution_time  When task should fire - stored in UTC!
-                      IMPORTANT: Always convert to UTC before saving!
-                      
-        is_recurring    Is this a repeating task? (e.g., "every day at 9am")
-        
-        rrule_string    iCalendar recurrence rule string for recurring tasks
-                      Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,WE,FR"
-                      
-        is_nagging      Should bot send follow-ups every 5 min until done?
-        nagging_max_repeats Maximum number of follow-up nags after main reminder
-        nagging_sent_count Already sent nagging follow-ups in current cycle
-        completed_for_execution_time Marks which recurring cycle is already completed
-        
-        status          Task state: 'pending' (waiting) or 'completed' (done)
-                      Used for daily briefs and filtering
-        
-        completed_at    When task was marked as completed (for analytics)
-        
-        created_at      When reminder was added to database
+    """One-off or recurring task — and, via is_habit/is_fluid_habit, a habit.
 
-    RECURRING TASKS:
-      
-      For recurring tasks, we use the iCalendar RDATE/RRULE format:
-      
-      - One-time task: is_recurring=False, rrule_string=None
-      
-      - Daily at 9am: 
-          is_recurring=True
-          rrule_string="FREQ=DAILY;INTERVAL=1"
-          execution_time=datetime(2024, 3, 27, 9, 0) (first occurrence)
-      
-      - Weekdays only:
-          is_recurring=True
-          rrule_string="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-          execution_time=datetime(2024, 3, 25, 9, 0) (first occurrence)
-      
-      - Weekly:
-          is_recurring=True
-          rrule_string="FREQ=WEEKLY;INTERVAL=1"
-          execution_time=datetime(2024, 3, 27, 9, 0) (first occurrence)
-
-    BUG FIXES APPLIED (Phase 1):
-      ✅ Added comprehensive documentation for each field
-      ✅ Explained timezone handling (UTC storage, local display)
-      ✅ Documented foreign key relationships and constraints
-      ✅ Added type hints and docstrings for better IDE support
-      ✅ Clarified difference between id (task ID) and user_id (owner)
-
-    USAGE:
-      
-      # Create a new one-time reminder
-      >>> from datetime import datetime
-      >>> reminder = Reminder(
-      ...     id=999,  # Must set explicitly - not auto-incremented!
-      ...     user_id=123456,
-      ...     reminder_text="Take medication",
-      ...     execution_time=datetime(2024, 3, 27, 9, 0),  # UTC time!
-      ...     is_recurring=False,
-      ... )
-      
-      # Create a recurring daily reminder
-      >>> recurring = Reminder(
-      ...     id=1000,
-      ...     user_id=123456,
-      ...     reminder_text="Morning meditation",
-      ...     execution_time=datetime(2024, 3, 27, 9, 0),
-      ...     is_recurring=True,
-      ...     rrule_string="FREQ=DAILY;INTERVAL=1",
-      ... )
-
+    `id` is an ordinary auto-incrementing surrogate key (unlike `User.id`).
+    Recurring tasks use iCalendar RRULE strings, e.g.
+    `FREQ=DAILY;INTERVAL=1`, `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR` — see
+    bot/utils/time_ext.py's `next_occurrence_utc` for how the next
+    occurrence is computed (in the user's local timezone, to stay
+    DST-correct). Per-field comments below cover the habit-tracking and
+    delivery-retry columns, which make up most of this model.
     """
 
     __tablename__ = "reminders"

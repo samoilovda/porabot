@@ -67,6 +67,36 @@ def create_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+async def _run_once(conn, name: str, run) -> None:
+    """Run a one-time data migration identified by *name*, exactly once ever.
+
+    Backs onto a plain `schema_migrations(name, applied_at)` table instead of
+    Base.metadata so it stays independent of the ORM model set. Without this,
+    a migration written as an unconditional UPDATE re-matches on every single
+    startup — see the is_habit backfill this replaced, which kept
+    reclassifying any plain daily+nagging reminder as a habit forever, not
+    just the legacy rows it was meant to backfill once.
+    """
+    from sqlalchemy import text
+
+    await conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS schema_migrations "
+            "(name VARCHAR PRIMARY KEY, applied_at DATETIME)"
+        )
+    )
+    already_applied = await conn.execute(
+        text("SELECT 1 FROM schema_migrations WHERE name = :name"), {"name": name}
+    )
+    if already_applied.first() is not None:
+        return
+    await run()
+    await conn.execute(
+        text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :now)"),
+        {"name": name, "now": datetime.utcnow()},
+    )
+
+
 async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> None:
     """ALTER TABLE ADD COLUMN *col*, but only if it isn't already there.
 
@@ -148,24 +178,31 @@ async def init_db(engine: AsyncEngine) -> None:
             await _add_column_if_missing(conn, "reminders", col, col_type)
 
         # Backfill legacy habits created before `is_habit` existed.
-        # Heuristic: daily recurring + nagging reminders were produced by Habits flow.
-        try:
-            async with conn.begin_nested():
-                await conn.execute(
-                    text(
-                        """
-                        UPDATE reminders
-                        SET is_habit = 1
-                        WHERE COALESCE(is_habit, 0) = 0
-                          AND COALESCE(is_recurring, 0) = 1
-                          AND COALESCE(is_nagging, 0) = 1
-                          AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
-                        """
+        # Heuristic: daily recurring + nagging reminders were produced by Habits
+        # flow. Guarded by _run_once (schema_migrations) — this heuristic also
+        # matches a perfectly ordinary task the user turned into daily+nagging
+        # through the edit keyboard, so it must run exactly once, not on every
+        # startup, or every such task gets permanently reclassified as a habit.
+        async def _backfill_is_habit() -> None:
+            try:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        text(
+                            """
+                            UPDATE reminders
+                            SET is_habit = 1
+                            WHERE COALESCE(is_habit, 0) = 0
+                              AND COALESCE(is_recurring, 0) = 1
+                              AND COALESCE(is_nagging, 0) = 1
+                              AND UPPER(COALESCE(rrule_string, '')) LIKE 'FREQ=DAILY%'
+                            """
+                        )
                     )
-                )
-        except (OperationalError, ProgrammingError):
-            # Extremely old schemas may temporarily miss one of these columns.
-            pass
+            except (OperationalError, ProgrammingError):
+                # Extremely old schemas may temporarily miss one of these columns.
+                pass
+
+        await _run_once(conn, "backfill_is_habit_v1", _backfill_is_habit)
 
         # Backfill last_fired_at for pre-existing rows: it's used to tell
         # "never delivered" apart from "delivered, awaiting Done" for
@@ -173,23 +210,31 @@ async def init_db(engine: AsyncEngine) -> None:
         # this, every legacy overdue-but-still-pending one-off reminder
         # looks undelivered on the first post-deploy restart and gets a
         # duplicate catch-up notification, even if the user already saw it.
-        try:
-            async with conn.begin_nested():
-                await conn.execute(
-                    text(
-                        """
-                        UPDATE reminders
-                        SET last_fired_at = execution_time
-                        WHERE last_fired_at IS NULL
-                          AND status = 'pending'
-                          AND COALESCE(is_recurring, 0) = 0
-                          AND execution_time <= :now
-                        """
-                    ),
-                    {"now": datetime.utcnow()},
-                )
-        except (OperationalError, ProgrammingError):
-            pass
+        # Guarded by _run_once too: its own WHERE (last_fired_at IS NULL) is
+        # idempotent by accident (a fired reminder's last_fired_at is set at
+        # fire time and never reset to NULL), but running it as unconditional
+        # per-startup work is pure waste at scale — no reason to keep doing it
+        # forever once every legacy row has been touched.
+        async def _backfill_last_fired_at() -> None:
+            try:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        text(
+                            """
+                            UPDATE reminders
+                            SET last_fired_at = execution_time
+                            WHERE last_fired_at IS NULL
+                              AND status = 'pending'
+                              AND COALESCE(is_recurring, 0) = 0
+                              AND execution_time <= :now
+                            """
+                        ),
+                        {"now": datetime.utcnow()},
+                    )
+            except (OperationalError, ProgrammingError):
+                pass
+
+        await _run_once(conn, "backfill_last_fired_at_v1", _backfill_last_fired_at)
 
         # P1-7: PRAGMA foreign_keys=ON (see create_engine) only enforces
         # constraints on future writes — it never retroactively validates

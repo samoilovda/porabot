@@ -92,9 +92,11 @@ RU: dict[str, Any] = {
     "enter_task": "Напиши, о чем напомнить.\nМожно сразу с временем: *\"Позвонить маме завтра в 18:00\"*.",
     "parse_error": "Ошибка обработки текста. Проверь формат.",
     "ask_time": "Ок, задача: \"{text}\".\nКогда напомнить?",
-    "try_again_manual": "Попробуй снова написать задачу ЦЕЛИКОМ, включая дату и время.",
+    "try_again_manual": "🕒 Напиши время, например `18:30` или `завтра в 9`.",
     "time_in_past": "⏰ Это время уже прошло. Укажи время в будущем.",
+    "choosing_time_retry": "🕒 Не нашёл время в этом сообщении. Попробуй ещё раз, например `18:30` или `завтра в 9`.",
     "forwarded_from": "Переслано от",
+    "text_only_hint": "📝 Пока понимаю только текст. Пришли напоминание текстовым сообщением.",
     
     # Confirmation logic -> Edit Logic
     "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",
@@ -139,6 +141,8 @@ RU: dict[str, Any] = {
     "brief_evening_title": "🌙 **Итоги дня:**",
     "brief_evening_done": "✅ Выполнено: {count}",
     "brief_evening_pending": "⏳ Осталось/Пропущено: {count}\n",
+    "brief_evening_upcoming_title": "⏰ **Ещё сегодня:**",
+    "brief_items_more": "…и ещё {count}",
     "btn_done": "✅ Сделано",
     "btn_not_today": "🚫 Не сегодня",
     "btn_done_short": "✅ Да",

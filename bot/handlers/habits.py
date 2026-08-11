@@ -1,5 +1,6 @@
 """Habits handler — true daily custom habits builder."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,9 +14,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.models import User
+from bot.database.models import is_habit_like as _is_habit_like
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
-from bot.keyboards.inline import get_fluid_pick_time_keyboard
+from bot.handlers.reminders import (
+    _UNDO_DELETE_WINDOW,
+    _message_task_key,
+    _remove_keyboard_after_delay,
+    active_auto_delete_tasks,
+)
+from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
@@ -46,32 +54,24 @@ def _habit_motivation_text(l10n: dict[str, Any], stats: dict[str, int]) -> str:
     )
 
 def _is_habit_entry(reminder) -> bool:
+    """Whether *reminder* belongs in "My Habits".
+
+    Deliberately does NOT match on "daily recurring + nagging" alone — those
+    are ordinary edit-keyboard toggles any plain task can have turned on,
+    and matching on them showed such a task in the habits list (REWORK_PLAN_3
+    1.2). `is_habit` (set only by the Habits creation flow, or by the
+    one-time legacy backfill in bot/database/engine.py) is the source of
+    truth; the remaining checks catch rows that lived as a habit before
+    is_habit existed.
+    """
     return bool(
         getattr(reminder, "is_habit", False)
         or getattr(reminder, "is_fluid_habit", False)
-        or (
-            bool(getattr(reminder, "is_recurring", False))
-            and bool(getattr(reminder, "is_nagging", False))
-            and str(getattr(reminder, "rrule_string", "") or "").upper().startswith("FREQ=DAILY")
-        )
         or getattr(reminder, "habit_active_due_at", None) is not None
         or getattr(reminder, "habit_last_completed_due_at", None) is not None
         or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
         or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
     )
-
-def _is_habit_like(reminder) -> bool:
-    """Fixed-cycle habit detection (mirrors SchedulerService._is_habit_like)."""
-    if getattr(reminder, "is_fluid_habit", False):
-        return False
-    return bool(
-        getattr(reminder, "is_habit", False)
-        or getattr(reminder, "habit_active_due_at", None) is not None
-        or getattr(reminder, "habit_last_completed_due_at", None) is not None
-        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-    )
-
 
 def _habit_streak_labels(reminder) -> tuple[int, int]:
     if getattr(reminder, "is_fluid_habit", False):
@@ -244,8 +244,12 @@ async def cb_fluid_habit_mode(
         )
         await reminder_dao.session.flush()
     except ValueError as ve:
+        # 3.2: create_reminder can now also reject on quota (too many active
+        # habits), not just text length — the old fixed "too long" wording
+        # was misleading for that case. Match reminders.py's existing
+        # pattern (str(ve) shown as-is) instead of guessing which one fired.
         logger.error("Validation error: %s", ve)
-        await callback.message.answer(l10n["habit_create_failed_long"])
+        await callback.message.answer(str(ve))
         await callback.answer()
         return
     except Exception as e:
@@ -333,8 +337,10 @@ async def state_habit_time(
         await state.clear()
         
     except ValueError as ve:
+        # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
+        # instead of the fixed "text too long" wording.
         logger.error("Validation error: %s", ve)
-        await message.answer(l10n["habit_create_failed_long"])
+        await message.answer(str(ve))
     except Exception as e:
         logger.error("Error creating habit: %s", e, exc_info=True)
         # Keep DB and scheduler state consistent if scheduling fails mid-flow.
@@ -673,26 +679,44 @@ async def cb_not_today(
 async def cb_del_habit(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
-    habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
+    """Soft-delete a habit with an undo window (REWORK_PLAN_3 2.4).
+
+    Used to hard-delete the reminder AND its whole habit_events history
+    (streaks, weekly/monthly report data) immediately, with no confirmation
+    and no way back — a mistap on the delete button, which sits right next
+    to the settings gear in the habits list, was permanent. Reuses the same
+    pending_delete_at + undo-window mechanism reminders.py's del_task_
+    already uses for plain tasks (and, incidentally, for fixed habits
+    reachable via "My Tasks" — get_user_reminders doesn't exclude
+    is_habit=True rows, only is_fluid_habit ones). delete_cleanup.py's
+    sweep hard-deletes both the reminder and its habit_events once the
+    undo window elapses, restart-safe by construction.
+    """
     task_id = int(callback.data.split("_")[-1])
-    if not await reminder_dao.get_owned(task_id, user.id):
+    reminder = await reminder_dao.get_owned(task_id, user.id)
+    if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
     try:
-        await habit_event_dao.delete_for_reminder(task_id)
-        await reminder_dao.delete_by_id(task_id)
         scheduler_service.remove_reminder_job(task_id)
-            
-        await callback.answer(l10n["habit_deleted_alert"], show_alert=True)
-        await callback.message.delete()
-        await callback.message.answer(
-            l10n["habit_deleted_followup"],
-            parse_mode="Markdown"
+        scheduler_service.remove_nagging_job(task_id)
+        reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            seconds=_UNDO_DELETE_WINDOW
         )
+        await reminder_dao.session.commit()
+
+        await callback.answer(l10n["habit_deleted_alert"], show_alert=True)
+        await callback.message.edit_text(
+            l10n["habit_deleted_followup"],
+            reply_markup=get_undo_delete_keyboard(task_id, l10n),
+            parse_mode="Markdown",
+        )
+        task = asyncio.create_task(_remove_keyboard_after_delay(callback.message, _UNDO_DELETE_WINDOW))
+        active_auto_delete_tasks[_message_task_key(callback.message)] = task
     except Exception as e:
         logger.error("Error deleting habit %s: %s", task_id, e)
         await callback.answer(l10n["habit_delete_error_alert"], show_alert=True)

@@ -27,7 +27,6 @@ Type a phrase; the bot parses time and extracts the task description:
 - **One-time and recurring** — daily, weekly, or any `RRULE`-expressible pattern
 - **Nagging mode** — follow-up every 5 minutes, capped at a per-task repeat limit (default 3)
 - **Snooze** — 15 min / 1 hour / tomorrow
-- **Media attachments** — photo or video forwarded together with the reminder text
 - **Quiet hours** — configurable sleep window that suppresses all notifications
 - **Missed-task recovery** — after a bot restart a catch-up digest surfaces missed reminders with one-tap "done all" or "snooze all"
 
@@ -38,7 +37,7 @@ Type a phrase; the bot parses time and extracts the task description:
 - **Presets** — common habit templates selectable at creation
 - **Streaks** — `habit_streak_current` / `habit_streak_best` maintained per habit; fluid habits track `fluid_streak_current` / `fluid_streak_best` separately
 - **Undo** — reverts the last completion and restores the streak to the value it had before (via `habit_undo_pending` flag)
-- **"Not today"** — logs the cycle as `not_today` without breaking the streak
+- **"Not today"** — logs the cycle as `not_today` (distinct from an auto-detected `missed`); like a missed cycle, it resets the current streak
 - **Habit sweeper** — background minutely job detects cycles missed while the bot was down or the user had notifications off; writes `missed` events from live DB state, independent of whether any notification was ever sent
 - **Weekly and monthly reports** — aggregated done / not-today / missed rates per habit, sent at a user-configured weekday and time
 

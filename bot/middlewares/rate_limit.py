@@ -72,3 +72,25 @@ class RateLimitMiddleware(BaseMiddleware):
 
         hits.append(now)
         return await handler(event, data)
+
+    def cleanup_expired(self) -> None:
+        """Drop dict entries for users with no hits left in the window (3.1).
+
+        Without this, self._hits only ever grows: a user's deque is trimmed
+        lazily, but only by that SAME user's own future events — a user who
+        sends a handful of messages and never returns leaves their entry
+        (dict key + whatever hits hadn't aged out yet) in memory forever.
+        Every unique user_id ever seen accumulates a permanent entry in a
+        long-running process. Registered as a periodic job in bot/__main__.py
+        so the dict stays bounded to roughly "users active within the last
+        window_seconds", not "every user ever".
+        """
+        now = time.monotonic()
+        stale_user_ids = []
+        for user_id, hits in self._hits.items():
+            while hits and now - hits[0] > self.window_seconds:
+                hits.popleft()
+            if not hits:
+                stale_user_ids.append(user_id)
+        for user_id in stale_user_ids:
+            del self._hits[user_id]

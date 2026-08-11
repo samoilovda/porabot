@@ -92,9 +92,11 @@ EN: dict[str, Any] = {
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",
     "parse_error": "Error parsing text. Check the format.",
     "ask_time": "Ok, task: \"{text}\".\nWhen to remind?",
-    "try_again_manual": "Try again to write the FULL task, including date and time.",
+    "try_again_manual": "🕒 Type the time, e.g. `18:30` or `tomorrow at 9`.",
     "time_in_past": "⏰ This time has already passed. Please choose a future time.",
+    "choosing_time_retry": "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`.",
     "forwarded_from": "Forwarded from",
+    "text_only_hint": "📝 I can only understand text right now. Send your reminder as a text message.",
 
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",
@@ -139,6 +141,8 @@ EN: dict[str, Any] = {
     "brief_evening_title": "🌙 **Day summary:**",
     "brief_evening_done": "✅ Done: {count}",
     "brief_evening_pending": "⏳ Remaining/Missed: {count}\n",
+    "brief_evening_upcoming_title": "⏰ **Still today:**",
+    "brief_items_more": "…and {count} more",
     "btn_done": "✅ Done",
     "btn_not_today": "🚫 Not today",
     "btn_done_short": "✅ Done",

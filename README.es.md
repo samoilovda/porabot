@@ -27,7 +27,6 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Únicos y recurrentes** — diario, semanal o cualquier patrón expresable con `RRULE`
 - **Modo nagging** — recordatorio cada 5 minutos, limitado por un máximo configurable por tarea (por defecto 3)
 - **Posponer** — +15 min / +1 hora / mañana
-- **Adjuntos multimedia** — foto o vídeo enviados junto al texto del recordatorio
 - **Horas silenciosas** — ventana configurable en la que se suprimen todas las notificaciones
 - **Recuperación de tareas perdidas** — tras reiniciar el bot, un resumen de tareas perdidas con botones «completar todo» o «posponer todo»
 
@@ -38,7 +37,7 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Plantillas** — plantillas de hábitos habituales seleccionables al crearlos
 - **Rachas** — `habit_streak_current` / `habit_streak_best` por hábito fijo; `fluid_streak_current` / `fluid_streak_best` para hábitos fluidos
 - **Deshacer** — revierte la última compleción y restaura la racha al valor anterior (flag `habit_undo_pending`)
-- **«Hoy no»** — registra el ciclo como `not_today` sin romper la racha
+- **«Hoy no»** — registra el ciclo como `not_today` (distinto de un `missed` automático); igual que un ciclo perdido, reinicia la racha actual
 - **Sweeper de hábitos** — tarea en segundo plano que cada minuto detecta ciclos perdidos desde el estado de la BD, independientemente de si se envió alguna notificación
 - **Informes semanales y mensuales** — tasas agregadas de completado / hoy-no / perdido por hábito, enviadas en el día y hora configurados por el usuario
 

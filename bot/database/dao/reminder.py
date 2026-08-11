@@ -612,11 +612,25 @@ class ReminderDAO(BaseDAO[Reminder]):
                 return max(0, int(h.fluid_streak_best or 0))
             return max(0, int(h.habit_streak_best or 0))
 
+        # 3.2: average EMA habit score across active habits, for the
+        # dashboard motivational block — additive to the streak numbers
+        # above, not a replacement.
+        from bot.services.habit_reports import compute_habit_score
+
+        habit_event_dao = HabitEventDAO(self.session)
+        scores = []
+        for h in active_habits:
+            habit_events = await habit_event_dao.get_events_for_reminder(h.id)
+            if habit_events:
+                scores.append(compute_habit_score(habit_events))
+        avg_score = round(sum(scores) / len(scores)) if scores else 0
+
         return {
             "active_count": len(active_habits),
             "weekly_done": weekly_done,
             "best_current_streak": max((_current_streak(h) for h in active_habits), default=0),
             "best_ever_streak": max((_best_streak(h) for h in active_habits), default=0),
+            "avg_score": avg_score,
         }
 
     async def get_active_fluid_habits(self, user_id: int) -> Sequence[Reminder]:

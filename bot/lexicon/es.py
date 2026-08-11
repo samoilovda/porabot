@@ -250,7 +250,7 @@ ES.update(
 
         # Habits
         "habits_dashboard": "🫧 **Panel de hábitos**:\nElige una plantilla o crea tu hábito diario.",
-        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak})",
+        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 {avg_score}%",
         "habit_preset_water": "💧 Beber agua",
         "habit_preset_workout": "🧘 Entrenar",
         "habit_preset_rest": "🛌 Descansar",
@@ -273,7 +273,7 @@ ES.update(
         "habit_fluid_created": "✅ **Hábito flexible creado**\nHábito: **{habit}**\nModo: {mode}",
         "habit_no_active": "📋 No tienes hábitos diarios activos.",
         "habit_list_header": "📋 **Tus hábitos diarios activos:**\n",
-        "habit_list_item": "{index}. **{habit}** ({time}) · 🔥 {streak} (máx {best}) · {mode}",
+        "habit_list_item": "{index}. **{habit}** ({time}) · 🔥 {streak} (máx {best}) · 💪 {score}% · {mode}",
         "habit_btn_delete_n": "❌ Eliminar {index}",
         "habit_btn_back_dashboard": "🔙 Volver al panel",
         "habit_deleted_alert": "✅ Hábito eliminado.",

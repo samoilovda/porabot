@@ -10,6 +10,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config import config
 from bot.utils.time_ext import format_time
 
+# fix(3.3): single source of truth for the task-list page size — used both
+# to slice which tasks get rendered as buttons here and, in
+# bot/handlers/reminders.py, to slice the matching text. The two used to be
+# separate literals (25 here, _TASKS_PAGE_SIZE there) that happened to
+# agree; nothing enforced that, so a future edit to one alone would have
+# made the text and keyboard show different tasks.
+TASKS_PAGE_SIZE = 25
+
 
 def _format_utc_offset(tz_name: str) -> str:
     """Return current UTC offset label like UTC+03:00 for a timezone."""
@@ -588,7 +596,7 @@ def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
     unfiltered list, deliberately without the paging/refresh machinery of
     get_tasks_list_keyboard since a filtered set isn't a "page" of anything."""
     builder = InlineKeyboardBuilder()
-    for row in _build_task_action_rows(tasks[:25], l10n):
+    for row in _build_task_action_rows(tasks[:TASKS_PAGE_SIZE], l10n):
         builder.row(*row)
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),

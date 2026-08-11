@@ -28,6 +28,7 @@ from bot.database.models import User
 from bot.database.models import is_habit_like as _is_habit_like
 from bot.lexicon import ALL_MENU_BUTTON_TEXTS
 from bot.keyboards.inline import (
+    TASKS_PAGE_SIZE,
     get_completed_tasks_keyboard,
     get_done_followup_keyboard,
     get_edit_keyboard,
@@ -70,7 +71,10 @@ _PARSE_CONFIDENCE_THRESHOLD = 0.7
 # unbounded task list can blow both limits and the list silently fails to
 # render at all. Page what's shown/rendered into buttons instead of just
 # truncating with an unreachable "...and N more" tail (P1-12).
-_TASKS_PAGE_SIZE = 25
+# fix(3.3): value itself now lives in bot.keyboards.inline as TASKS_PAGE_SIZE
+# (single source of truth shared with get_tasks_list_keyboard) — this name
+# is kept as a local alias so the rest of this file doesn't need touching.
+_TASKS_PAGE_SIZE = TASKS_PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,49 @@ automated backups, add a cron entry:
 
 ---
 
+## Optional: .ics Feed and Mini App (Web Server)
+
+The bot can also run a small HTTP server, alongside long polling, for two
+optional features:
+
+- the per-user `.ics` calendar feed
+- the Telegram Mini App (progress heatmap / habit scores)
+
+This is **off by default**. Opening an HTTP port is a deliberate choice, not
+something that should happen automatically after an upgrade. To turn it on,
+add to `/opt/porabot/.env`:
+
+```bash
+WEB_SERVER_ENABLED=true
+PUBLIC_BASE_URL=https://porabot.example.com
+MINI_APP_URL=https://porabot.example.com/miniapp   # only if you use the Mini App
+```
+
+`WEB_SERVER_HOST` defaults to `127.0.0.1` — the process binds to localhost
+only, on the assumption that something else (a reverse proxy) terminates TLS
+and is the actual public listener. Do **not** set it to `0.0.0.0` unless you
+understand the implications: it makes the bot listen on every network
+interface, without TLS, and Telegram requires `https://` for `PUBLIC_BASE_URL`
+and `MINI_APP_URL` anyway — an in-app WebView refuses to load `http://`.
+
+The straightforward way to expose it publicly:
+
+1. Put a reverse proxy (nginx, Caddy, Traefik) in front, terminating TLS,
+   forwarding to `127.0.0.1:${WEB_SERVER_PORT}` (default `8080`).
+2. Point `PUBLIC_BASE_URL` (and `MINI_APP_URL`, if used) at the proxy's
+   public HTTPS URL.
+3. If running via `docker compose` and the proxy runs on the same Docker
+   network, add a `ports:` section to the `bot` service in
+   `docker-compose.yml` (there is none by default, so the container's port
+   is not published to the host) — or better, put the proxy on the same
+   Docker network and skip publishing the port to the host entirely.
+
+If `WEB_SERVER_ENABLED` is unset or `false`, the `.ics` feed and Mini App
+links are never generated and no HTTP socket is opened — this only affects
+those two optional features, not core reminders/habits functionality.
+
+---
+
 ## Health Monitoring
 
 `docker-compose.yml` defines a `healthcheck` that fails if `bot/__main__.py`

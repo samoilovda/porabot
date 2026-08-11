@@ -107,6 +107,20 @@ async def _set_bot_commands(bot: Bot) -> None:
         await bot.set_my_commands(commands, language_code=lang)
 
 
+async def _start_web_server_if_enabled(session_pool):
+    """fix(1.1): opening an HTTP port is opt-in (WEB_SERVER_ENABLED), not a
+    side effect of upgrading an existing install. Returns the runner if
+    started, None otherwise — callers must skip cleanup() when None."""
+    if not config.WEB_SERVER_ENABLED:
+        logger.info("Web server disabled (WEB_SERVER_ENABLED=False)")
+        return None
+    logger.info(
+        "Web server enabled, binding %s:%s", config.WEB_SERVER_HOST, config.WEB_SERVER_PORT
+    )
+    web_app = create_app(session_pool, bot_token=config.BOT_TOKEN.get_secret_value())
+    return await start_web_server(web_app, config.WEB_SERVER_HOST, config.WEB_SERVER_PORT)
+
+
 async def main() -> None:
     logger.info("Starting Porabot (TZ=%s)", config.TZ)
 
@@ -194,8 +208,10 @@ async def main() -> None:
     # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
     # configured) the Mini App — runs alongside long polling, not instead
     # of it. See bot/services/webserver.py's module docstring for scope.
-    web_app = create_app(session_pool, bot_token=config.BOT_TOKEN.get_secret_value())
-    web_runner = await start_web_server(web_app, config.WEB_SERVER_HOST, config.WEB_SERVER_PORT)
+    # Opt-in via WEB_SERVER_ENABLED (see bot/config.py) — opening an HTTP
+    # port is a deliberate deployment decision, not a side effect of
+    # upgrading an existing install.
+    web_runner = await _start_web_server_if_enabled(session_pool)
 
     logger.info("Starting polling…")
 
@@ -224,10 +240,11 @@ async def main() -> None:
         except Exception as e:
             logger.warning("Error closing Telegram session: %s", e)
 
-        try:
-            await web_runner.cleanup()
-        except Exception as e:
-            logger.warning("Error shutting down web server: %s", e)
+        if web_runner is not None:
+            try:
+                await web_runner.cleanup()
+            except Exception as e:
+                logger.warning("Error shutting down web server: %s", e)
 
         scheduler.shutdown(wait=False)
 

@@ -57,7 +57,16 @@ class Settings(BaseSettings):
     # (see bot/services/webserver.py, wired up in bot/__main__.py). Serves
     # the per-user .ics calendar feed (4.4) and the Mini App's static
     # frontend + JSON API (4.6) from one aiohttp.web.Application.
-    WEB_SERVER_HOST: str = "0.0.0.0"
+    # Off by default: opening an HTTP port is an opt-in decision, not a
+    # side effect of upgrading. Set to True once WEB_SERVER_HOST/PORT,
+    # PUBLIC_BASE_URL and (if used) MINI_APP_URL are actually configured.
+    WEB_SERVER_ENABLED: bool = False
+    # Bind to localhost only by default — this process is meant to sit
+    # behind a reverse proxy that terminates TLS and does the actual public
+    # listening. Set to "0.0.0.0" only when the process itself runs inside a
+    # container/network namespace where that's already the isolation
+    # boundary (e.g. Docker, with the port published deliberately).
+    WEB_SERVER_HOST: str = "127.0.0.1"
     WEB_SERVER_PORT: int = 8080
     # Publicly reachable origin for links the bot sends to the user (the
     # .ics feed URL, the Mini App web_app button). Deliberately empty by

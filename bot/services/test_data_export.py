@@ -53,6 +53,8 @@ def _reminder(**overrides) -> SimpleNamespace:
         completed_at=None,
         created_at=datetime(2026, 4, 1, 9, 0, 0),
         pending_delete_at=None,
+        tags=None,
+        priority=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -95,6 +97,21 @@ def test_export_excludes_reminders_pending_delete() -> None:
 
     ids = [r["id"] for r in payload["reminders"]]
     assert ids == [1]
+
+
+def test_export_includes_tags_and_priority() -> None:
+    """Regression (fix 2.1): tags/priority (4.3) were added to Reminder
+    after the export payload (3.3) was written, and never backfilled into
+    it — "take out your data" silently dropped exactly what the user
+    typed by hand."""
+    user = _user()
+    reminder = _reminder(tags="дом,покупки", priority=2)
+
+    payload = build_data_export(user, [reminder], [])
+
+    exported = payload["reminders"][0]
+    assert exported["tags"] == "дом,покупки"
+    assert exported["priority"] == 2
 
 
 async def test_export_data_sends_a_document() -> None:

@@ -204,6 +204,8 @@ def build_data_export(user: User, reminders, habit_events) -> dict:
                 "execution_time": _dt_iso(r.execution_time),
                 "is_recurring": r.is_recurring,
                 "rrule_string": r.rrule_string,
+                "tags": r.tags,
+                "priority": r.priority,
                 "is_habit": r.is_habit,
                 "is_fluid_habit": r.is_fluid_habit,
                 "fluid_mode": r.fluid_mode,

@@ -133,6 +133,33 @@ class HabitEventDAO(BaseDAO[HabitEvent]):
         )
         return result.scalars().all()
 
+    async def get_events_for_reminders(self, reminder_ids: Sequence[int]) -> dict[int, list[HabitEvent]]:
+        """fix(3.2): batched counterpart to get_events_for_reminder — one
+        query for ALL of *reminder_ids* instead of one call per habit
+        (handle_miniapp_scores used to loop and call get_events_for_reminder
+        per habit: 20 habits meant 20 round trips). Returns a dict keyed by
+        reminder_id, each value oldest-first — same order/contract
+        compute_habit_score expects, so swapping the caller over is a pure
+        perf change with identical scores.
+
+        Deliberately still unbounded by date, same as get_events_for_reminder
+        — compute_habit_score is an EMA that (mathematically) never fully
+        forgets older events, so truncating history here risks changing a
+        score by a sub-rounding amount in an edge case; not worth that risk
+        for a memory optimization. If a caller ever needs a bounded window,
+        it should call get_events_in_range instead (see handle_miniapp_heatmap)."""
+        if not reminder_ids:
+            return {}
+        result = await self.session.execute(
+            select(HabitEvent)
+            .where(HabitEvent.reminder_id.in_(reminder_ids))
+            .order_by(HabitEvent.reminder_id, HabitEvent.local_date, HabitEvent.id)
+        )
+        by_reminder: dict[int, list[HabitEvent]] = {rid: [] for rid in reminder_ids}
+        for event in result.scalars().all():
+            by_reminder.setdefault(event.reminder_id, []).append(event)
+        return by_reminder
+
     async def get_latest_done_event(self, reminder_id: int) -> Optional[HabitEvent]:
         """Most recent 'done' event for a reminder, ordered by local_date (works for
         both fixed habits, which set due_at, and fluid habits, which don't)."""

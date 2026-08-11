@@ -174,10 +174,10 @@ async def handle_miniapp_scores(request: web.Request) -> web.Response:
         reminder_dao = ReminderDAO(session)
         habit_event_dao = HabitEventDAO(session)
         habits = await reminder_dao.get_active_habits(user_id)
-        habits_with_events = []
-        for habit in habits:
-            events = await habit_event_dao.get_events_for_reminder(habit.id)
-            habits_with_events.append((habit, events))
+        # fix(3.2): one query for every habit's events instead of one query
+        # per habit (was N+1 — 20 habits meant 20 round trips per request).
+        events_by_reminder = await habit_event_dao.get_events_for_reminders([h.id for h in habits])
+        habits_with_events = [(habit, events_by_reminder.get(habit.id, [])) for habit in habits]
 
     payload = build_scores_payload(habits_with_events, compute_habit_score)
     return web.json_response(payload)

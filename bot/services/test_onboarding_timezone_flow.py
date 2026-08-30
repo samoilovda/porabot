@@ -64,8 +64,11 @@ async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
         answer=AsyncMock(),
     )
     l10n = get_l10n("en")
+    reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[]))
 
-    await callback_set_tz(callback=callback, user_dao=user_dao, user=user, l10n=l10n, state=state)
+    await callback_set_tz(
+        callback=callback, user_dao=user_dao, user=user, l10n=l10n, state=state, reminder_dao=reminder_dao
+    )
 
     user_dao.update_timezone.assert_awaited_once_with(202, "Europe/Moscow")
     assert user.timezone == "Europe/Moscow"

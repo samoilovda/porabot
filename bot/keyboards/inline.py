@@ -1102,3 +1102,48 @@ def get_quiet_hours_setup_keyboard(
 
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
+
+
+# =============================================================================
+# HABIT TIMEZONE MIGRATION KEYBOARDS
+# =============================================================================
+
+def get_tz_migration_choice_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Shown right after a timezone change when the user has migratable
+    habits: migrate all of them, pick individually, or leave every one as
+    it is (same UTC instant, drifting local time)."""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_tz_migrate_all", "✅ Migrate all"), callback_data="tzmig_all"))
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_tz_migrate_pick", "📝 Choose habits"), callback_data="tzmig_pick"))
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_tz_migrate_none", "🚫 Leave as is"), callback_data="tzmig_none"))
+    return builder.as_markup()
+
+
+# Telegram limits keyboards to a modest number of rows before they become
+# unwieldy/get rejected — matches the same defensive cap used for the tags
+# menu (_MAX_TAG_BUTTONS in get_tags_menu_keyboard).
+_TZMIG_MAX_HABITS = 40
+
+
+def get_tz_migration_pick_keyboard(
+    items: list[Any],
+    selected_ids: set[int],
+    l10n: dict[str, Any],
+) -> InlineKeyboardMarkup:
+    """One toggle row per habit (✅/⬜ + name + its current local time),
+    modeled on the weekday-picker checklist (get_repeat_weekday_keyboard)."""
+    builder = InlineKeyboardBuilder()
+    for item in items[:_TZMIG_MAX_HABITS]:
+        mark = "✅" if item.reminder_id in selected_ids else "⬜"
+        preview = (item.text[:20] + "…") if len(item.text) > 20 else item.text
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{mark} {preview} · {item.old_local_hhmm}",
+                callback_data=f"tzmig_toggle_{item.reminder_id}",
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_tz_migrate_apply", "✅ Apply"), callback_data="tzmig_apply"),
+        InlineKeyboardButton(text=l10n.get("btn_tz_migrate_back", "🔙 Back"), callback_data="tzmig_back"),
+    )
+    return builder.as_markup()

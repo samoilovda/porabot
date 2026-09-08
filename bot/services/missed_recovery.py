@@ -103,7 +103,7 @@ async def process_missed_task_recovery() -> None:
 
             eligible_users.append((user, now_local, today_key))
 
-        for user, now_local, today_key in eligible_users:
+        for user, _now_local, today_key in eligible_users:
             async with session_pool_factory() as session:
                 reminder_dao = ReminderDAO(session)
                 overdue = await reminder_dao.get_overdue_pending_tasks(

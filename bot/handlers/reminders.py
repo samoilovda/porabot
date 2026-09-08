@@ -16,17 +16,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pytz
-from aiogram import Router, F
-from aiogram.filters import Command, StateFilter
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.database.models import is_habit_like as _is_habit_like
-from bot.lexicon import ALL_MENU_BUTTON_TEXTS
 from bot.keyboards.inline import (
     TASKS_PAGE_SIZE,
     get_completed_tasks_keyboard,
@@ -43,6 +42,7 @@ from bot.keyboards.inline import (
     get_time_selection_keyboard,
     get_undo_delete_keyboard,
 )
+from bot.lexicon import ALL_MENU_BUTTON_TEXTS
 from bot.services.missed_recovery import RECOVERY_DIGEST_LIMIT
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
@@ -526,7 +526,7 @@ async def handle_forwarded_task(
         elif fwd.type == "channel":
             origin_name = fwd.chat.title
         elif fwd.type == "chat":
-            origin_name = getattr(fwd, "sender_chat").title if getattr(fwd, "sender_chat", None) else "Group"
+            origin_name = fwd.sender_chat.title if getattr(fwd, "sender_chat", None) else "Group"
 
     if origin_name:
         prefix = f"👤 {l10n.get('forwarded_from', 'Forwarded from')} {origin_name}:\n"

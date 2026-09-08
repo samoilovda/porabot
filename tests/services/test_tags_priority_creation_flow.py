@@ -11,8 +11,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.engine import Base
 from bot.database.models import User
 from bot.handlers.reminders import _handle_parsed_result
 from bot.lexicon.ru import RU

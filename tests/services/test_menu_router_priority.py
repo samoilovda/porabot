@@ -19,7 +19,8 @@ from unittest.mock import AsyncMock, patch
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Chat, Message, Update, User as TgUser
+from aiogram.types import Chat, Message, Update
+from aiogram.types import User as TgUser
 
 # bot.handlers (via bot.handlers.admin -> bot.config) requires BOT_TOKEN to be
 # set at import time; the value itself is never used by this test.

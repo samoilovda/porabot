@@ -10,7 +10,7 @@ session_pool()`. The DatabaseMiddleware commits on success and rolls back on
 exception (Unit of Work). Background jobs manage their own sessions.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -22,6 +22,13 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 logger = __import__("logging").getLogger(__name__)
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC now, matching the repo-wide invariant (see
+    bot/database/models.py's module docstring) — datetime.utcnow() is
+    deprecated since 3.12 and this is its direct replacement."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -93,7 +100,7 @@ async def _run_once(conn, name: str, run) -> None:
     await run()
     await conn.execute(
         text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :now)"),
-        {"name": name, "now": datetime.utcnow()},
+        {"name": name, "now": _utcnow_naive()},
     )
 
 
@@ -121,9 +128,10 @@ async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> N
 
 async def init_db(engine: AsyncEngine) -> None:
     """Create all tables defined in models.py. Call once at startup."""
-    from bot.database import models  # noqa: F401 — registers models in metadata
     from sqlalchemy import text
     from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    from bot.database import models  # noqa: F401 — registers models in metadata
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -236,7 +244,7 @@ async def init_db(engine: AsyncEngine) -> None:
                               AND execution_time <= :now
                             """
                         ),
-                        {"now": datetime.utcnow()},
+                        {"now": _utcnow_naive()},
                     )
             except (OperationalError, ProgrammingError):
                 pass

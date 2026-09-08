@@ -15,9 +15,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, ErrorEvent
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,21 +28,20 @@ from bot.config import config, validate_config
 
 validate_config()
 
-from bot.database.engine import create_engine, create_session_maker, init_db, dispose_engine
-from bot.middlewares.database import DatabaseMiddleware
-from bot.middlewares.whitelist import WhitelistMiddleware
-from bot.middlewares.rate_limit import RateLimitMiddleware
+from bot.database.engine import create_engine, create_session_maker, dispose_engine, init_db
 from bot.handlers import all_routers
-from bot.services.scheduler import SchedulerService
-from bot.services.daily_briefs import setup_daily_briefs
-from bot.services.missed_recovery import setup_missed_task_recovery
-from bot.services.habit_sweeper import setup_habit_sweeper
-from bot.services.habit_reports import setup_habit_reports
-from bot.services.delete_cleanup import setup_delete_cleanup
-from bot.services.retention_cleanup import setup_retention_cleanup
-from bot.services.webserver import create_app, start_web_server
-from bot.services.fsm_storage import SQLAlchemyFSMStorage, cleanup_stale_fsm_state
 from bot.handlers.reminders import _cleanup_stale_timers
+from bot.middlewares.database import DatabaseMiddleware
+from bot.middlewares.rate_limit import RateLimitMiddleware
+from bot.services.daily_briefs import setup_daily_briefs
+from bot.services.delete_cleanup import setup_delete_cleanup
+from bot.services.fsm_storage import SQLAlchemyFSMStorage, cleanup_stale_fsm_state
+from bot.services.habit_reports import setup_habit_reports
+from bot.services.habit_sweeper import setup_habit_sweeper
+from bot.services.missed_recovery import setup_missed_task_recovery
+from bot.services.retention_cleanup import setup_retention_cleanup
+from bot.services.scheduler import SchedulerService
+from bot.services.webserver import create_app, start_web_server
 
 
 def _write_heartbeat() -> None:

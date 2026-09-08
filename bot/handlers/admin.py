@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 @router.message(filters.Command("debug"))
 async def cmd_debug(
-    message: Message, 
-    user_dao: UserDAO, 
+    message: Message,
+    user_dao: UserDAO,
     scheduler_service: SchedulerService
 ) -> None:
     """Admin-only command to show system status."""

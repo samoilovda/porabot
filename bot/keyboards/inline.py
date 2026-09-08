@@ -1,7 +1,7 @@
 """Inline keyboards for Porabot."""
 
-from typing import Any, Optional
 from datetime import datetime
+from typing import Any, Optional
 
 import pytz
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -43,7 +43,7 @@ def get_time_selection_keyboard(
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for choosing reminder time.
-    
+
     If a fixed time-of-day has passed today, it rolls over to tomorrow.
 
     Args:
@@ -795,7 +795,7 @@ def get_settings_keyboard(
         # Shows Change Timezone, Change Language, Toggle UTC Offset buttons
     """
     builder = InlineKeyboardBuilder()
-    
+
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_change_tz"],
@@ -814,7 +814,7 @@ def get_settings_keyboard(
             callback_data="settings_toggle_utc"
         )
     )
-    
+
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_briefs_setup", "📋 Briefs setup"),
@@ -971,15 +971,15 @@ def get_language_selection_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
 def get_briefs_setup_keyboard(l10n: dict[str, Any], enabled: bool, morning_str: str, evening_str: str) -> InlineKeyboardMarkup:
     """Keyboard for Custom Daily Briefs."""
     builder = InlineKeyboardBuilder()
-    
+
     toggle_text = l10n.get("btn_briefs_on") if enabled else l10n.get("btn_briefs_off")
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="briefs_toggle"))
-    
+
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_morning_brief").format(time=morning_str), callback_data="briefs_edit_morning"),
         InlineKeyboardButton(text=l10n.get("btn_evening_brief").format(time=evening_str), callback_data="briefs_edit_evening")
     )
-    
+
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 

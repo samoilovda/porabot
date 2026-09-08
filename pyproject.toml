@@ -1,0 +1,32 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes (unused imports/vars, undefined names — the
+# class of bug that slipped through as a NameError before these existed —
+# see fix(2.3)'s stray `uid` references), I: import sorting, B: flake8-bugbear.
+# Deliberately NOT "UP" (pyupgrade): its two biggest rules here (datetime.UTC
+# alias, Optional[X] -> X | None) would auto-rewrite ~280 lines of working,
+# unrelated code in one pass — a stylistic modernization, not a correctness
+# or maintainability fix, and not worth that diff surface in the same pass
+# that establishes the linter. Revisit separately if desired.
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    # Long lines are common in this codebase's docstrings/l10n dicts;
+    # line-length=120 already covers most real cases, don't nitpick the rest.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally do things production code shouldn't have to justify:
+# star-shaped fixtures, `import *`-adjacent module reloading via
+# importlib.util, and asserts as the primary control flow.
+"tests/**/*.py" = ["E501"]
+# Composition root: logging.basicConfig() and validate_config() must run
+# BEFORE anything below them is imported (several of those modules log at
+# import time, and importing bot.config's validated singleton before
+# validate_config() runs would defeat the point of validating it first).
+# The import-order-follows-top-to-bottom-execution-order shape here is
+# deliberate, not an oversight E402 would otherwise be flagging.
+"bot/__main__.py" = ["E402"]

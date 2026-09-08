@@ -7,13 +7,12 @@ DAOs against one session without managing commits themselves. Job targets
 (outside request scope, no middleware) open and commit their own sessions.
 """
 
-from typing import Generic, TypeVar, Type, Optional, Sequence, Any
+from typing import Any, Generic, Optional, Sequence, Type, TypeVar
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.engine import Base
-
 
 T = TypeVar("T", bound=Base)
 

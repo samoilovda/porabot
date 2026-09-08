@@ -88,7 +88,6 @@ def test_evening_text_caps_completed_and_overdue_and_upcoming_independently() ->
 
 
 def test_evening_text_omits_upcoming_section_when_nothing_upcoming() -> None:
-    completed = []
     overdue = [_FakeTask(1)]
     user = type("U", (), {"timezone": "UTC", "show_utc_offset": False})()
     l10n = get_l10n("en")

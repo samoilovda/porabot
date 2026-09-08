@@ -6,27 +6,27 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytz
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.database.dao.habit_event import HabitEventDAO
+from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.database.models import is_habit_like as _is_habit_like
-from bot.database.dao.reminder import ReminderDAO
-from bot.database.dao.habit_event import HabitEventDAO
 from bot.handlers.reminders import (
     _UNDO_DELETE_WINDOW,
     _message_task_key,
     _remove_keyboard_after_delay,
     active_auto_delete_tasks,
 )
-from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_keyboard
+from bot.keyboards.inline import get_undo_delete_keyboard
 from bot.services.habit_reports import compute_habit_score
-from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
+from bot.services.scheduler import SchedulerService
 from bot.utils.markdown import escape_markdown
 from bot.utils.pagination import limit_items, preview_line
 from bot.utils.time_ext import (
@@ -172,10 +172,10 @@ async def cb_habit_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict
 async def cb_habit_preset(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
     preset_key = callback.data.split("_")[-1]
     habit_text = _preset_habit_texts(l10n).get(preset_key, l10n["habit_unknown"])
-    
+
     await state.update_data(habit_text=habit_text)
     await state.set_state(HabitState.waiting_for_time)
-    
+
     await callback.message.edit_text(
         l10n["habit_selected_prompt"].format(habit=habit_text),
         parse_mode="Markdown"
@@ -246,7 +246,7 @@ async def cb_fluid_habit_mode(
 
     try:
         now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
-        reminder = await reminder_dao.create_reminder(
+        await reminder_dao.create_reminder(
             user_id=user.id,
             text=habit_text,
             execution_time=now_utc + timedelta(days=365 * 5),
@@ -295,26 +295,26 @@ async def state_habit_name(message: Message, state: FSMContext, l10n: dict[str, 
 
 @router.message(HabitState.waiting_for_time)
 async def state_habit_time(
-    message: Message, 
-    state: FSMContext, 
-    user: User, 
-    reminder_dao: ReminderDAO, 
+    message: Message,
+    state: FSMContext,
+    user: User,
+    reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
     l10n: dict[str, Any],
 ) -> None:
     if not message.text:
         return
-        
+
     data = await state.get_data()
     habit_text = data.get("habit_text", l10n["habit_default_name"])
-    
+
     parser = InputParser()
     result = await parser.parse(message.text, user.timezone)
-    
+
     if not result.parsed_datetime:
         await message.answer(l10n["habit_time_retry"])
         return
-        
+
     # Normalize to UTC once and store as naive UTC in DB.
     execution_time_utc = to_utc_naive(result.parsed_datetime)
 
@@ -344,7 +344,7 @@ async def state_habit_time(
             to_utc_aware(execution_time_utc),
             is_nagging=reminder.is_nagging,
         )
-        
+
         time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
         reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
 
@@ -361,7 +361,7 @@ async def state_habit_time(
 
         await message.answer(reply_text, parse_mode="Markdown")
         await state.clear()
-        
+
     except ValueError as ve:
         # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
         # instead of the fixed "text too long" wording.
@@ -372,7 +372,7 @@ async def state_habit_time(
         # Keep DB and scheduler state consistent if scheduling fails mid-flow.
         await reminder_dao.session.rollback()
         await message.answer(l10n["habit_create_failed_internal"])
-        
+
 @router.callback_query(F.data == "habit_list")
 async def cb_habit_list(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, l10n: dict[str, Any]
@@ -396,7 +396,7 @@ async def cb_habit_list(
         )
         await callback.answer()
         return
-        
+
     # Build an inline keyboard with delete buttons for each habit
     builder = InlineKeyboardBuilder()
     text_lines = [l10n["habit_list_header"]]

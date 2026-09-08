@@ -2,7 +2,7 @@
 settings, reachable from Settings next to "Clear all"."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 

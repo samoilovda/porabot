@@ -7,22 +7,22 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytz
-from aiogram import Router, F
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.config import config
-from bot.database.dao.user import UserDAO
-from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
+from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
-    get_timezone_keyboard,
-    get_settings_keyboard,
-    get_language_selection_keyboard,
     get_clear_all_confirm_keyboard,
     get_ics_feed_keyboard,
+    get_language_selection_keyboard,
+    get_settings_keyboard,
+    get_timezone_keyboard,
     get_tz_migration_choice_keyboard,
     get_tz_migration_pick_keyboard,
 )
@@ -35,6 +35,7 @@ from bot.services.tz_migration import (
     migratable_habits,
 )
 from bot.utils.markdown import escape_markdown
+
 
 class SettingsState(StatesGroup):
     waiting_for_brief_time = State()
@@ -816,7 +817,7 @@ async def callback_briefs_edit_hour(callback: CallbackQuery, l10n: dict[str, Any
     target = callback.data.split("_")[-1]  # 'morning' or 'evening'
     await state.update_data(brief_target=target)
     await state.set_state(SettingsState.waiting_for_brief_time)
-    
+
     # Needs to remove inline keyboard while waiting for input
     await callback.message.edit_text(
         l10n.get("choose_hour", "Please type the time (e.g. 09:30 or 23:45):"),
@@ -829,7 +830,7 @@ async def callback_briefs_edit_hour(callback: CallbackQuery, l10n: dict[str, Any
 async def state_briefs_set_time(message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]) -> None:
     if not message.text:
         return
-    
+
     # BUG-H4 FIX: Strict HH:MM validation — the InputParser is designed for full
     # reminder phrases, not time-only config. Freeform inputs like "in 30 minutes"
     # would produce the wrong brief time with no feedback to the user.
@@ -839,30 +840,30 @@ async def state_briefs_set_time(message: Message, state: FSMContext, user: User,
     if not match:
         await message.answer(l10n["brief_time_invalid_format"], parse_mode="Markdown")
         return
-    
+
     h, m = int(match.group(1)), int(match.group(2))
     if not (0 <= h <= 23 and 0 <= m <= 59):
         await message.answer(l10n["brief_time_invalid_value"], parse_mode="Markdown")
         return
-    
+
     extracted_time_str = f"{h:02d}:{m:02d}"
-    
+
     data = await state.get_data()
     target = data.get("brief_target")
-    
+
     if target == "morning":
         await user_dao.update_briefs_settings(user.id, morning_brief_time=extracted_time_str)
         user.morning_brief_time = extracted_time_str
     elif target == "evening":
         await user_dao.update_briefs_settings(user.id, evening_brief_time=extracted_time_str)
         user.evening_brief_time = extracted_time_str
-        
+
     await state.clear()
-    
+
     enabled = getattr(user, 'briefs_enabled', True)
     morning = getattr(user, 'morning_brief_time', "09:00")
     evening = getattr(user, 'evening_brief_time', "23:00")
-    
+
     from bot.keyboards.inline import get_briefs_setup_keyboard
     text = _render_settings_text(user, l10n)
     await message.answer(text, reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening), parse_mode="Markdown")

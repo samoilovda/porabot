@@ -1,7 +1,7 @@
-from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock
 
 from bot.lexicon import get_l10n
 
@@ -102,8 +102,8 @@ def test_manual_timezone_offset_resolution_half_hour() -> None:
 
 
 def test_manual_timezone_offset_resolution_unknown_half_hour_rejected() -> None:
-    import pytz
     import pytest
+    import pytz
 
     with pytest.raises(pytz.UnknownTimeZoneError):
         resolve_timezone_candidate("+1:15")

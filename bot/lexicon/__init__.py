@@ -3,8 +3,8 @@
 from typing import Any, Optional
 
 from bot.lexicon.en import EN
-from bot.lexicon.ru import RU
 from bot.lexicon.es import ES
+from bot.lexicon.ru import RU
 
 # Default language string if None is provided
 DEFAULT_LANG = "ru"

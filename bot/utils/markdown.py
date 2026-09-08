@@ -2,7 +2,6 @@
 
 import re
 
-
 _MDV2_SPECIAL_CHARS_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 _MD_LEGACY_SPECIAL_CHARS_RE = re.compile(r"([_*`\[])")
 

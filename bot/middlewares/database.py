@@ -13,12 +13,13 @@ import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User as TgUser
+from aiogram.types import TelegramObject
+from aiogram.types import User as TgUser
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from bot.database.dao.user import UserDAO
-from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.habit_event import HabitEventDAO
+from bot.database.dao.reminder import ReminderDAO
+from bot.database.dao.user import UserDAO
 from bot.lexicon import get_l10n
 
 logger = logging.getLogger(__name__)

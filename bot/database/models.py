@@ -39,7 +39,7 @@ class User(Base):
     """
 
     __tablename__ = "users"
-    
+
     __table_args__ = (
         Index('idx_users_timezone', 'timezone'),      # For timezone-based queries
         Index('idx_users_language', 'language'),      # For language filtering
@@ -47,29 +47,29 @@ class User(Base):
 
     # Telegram user ID - NOT auto-incremented, must be set from update!
     id: Mapped[int] = mapped_column(
-        BigInteger, 
-        primary_key=True, 
+        BigInteger,
+        primary_key=True,
         autoincrement=False  # Use Telegram ID directly (no auto-inc)
     )
-    
+
     # Optional Telegram username (can be None if not set by user)
     username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+
     # User's timezone string (e.g., "Europe/Moscow", "America/New_York")
     # Default: UTC for new users who haven't set their timezone yet
     timezone: Mapped[str] = mapped_column(
-        String, 
+        String,
         default="UTC"  # Safe default - converts all times to UTC internally
     )
-    
+
     # Language code for i18n (e.g., "ru", "en")
     # Used to select appropriate translations via get_l10n()
     language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+
     # Whether to show UTC offset (+HH:MM) in formatted times
     # Default: False (show local time only for better UX)
     show_utc_offset: Mapped[bool] = mapped_column(
-        Boolean, 
+        Boolean,
         default=False,  # Don't clutter messages with +03:00 by default
         server_default="0"  # SQLite string literal for boolean
     )
@@ -158,7 +158,7 @@ class Reminder(Base):
     """
 
     __tablename__ = "reminders"
-    
+
     __table_args__ = (
         Index('idx_reminders_user_id', 'user_id'),           # For user-specific queries
         Index('idx_reminders_execution_time', 'execution_time'),  # For time-based filtering
@@ -167,39 +167,39 @@ class Reminder(Base):
 
     # Internal task ID - auto-incremented (NOT Telegram user ID!)
     id: Mapped[int] = mapped_column(
-        primary_key=True, 
+        primary_key=True,
         autoincrement=True  # Auto-increment for internal task ID
     )
-    
+
     # Foreign key to users table - who owns this reminder
     user_id: Mapped[int] = mapped_column(
-        BigInteger, 
+        BigInteger,
         ForeignKey("users.id"),  # Reference users.id column
         nullable=False  # Every reminder must have an owner
     )
-    
+
     # What the user needs to remember (e.g., "Take medication at 9am")
     reminder_text: Mapped[str] = mapped_column(
-        String, 
+        String,
         nullable=False  # Required - can't create empty reminders
     )
 
     # Optional media attachment for context (photo/video)
     media_file_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
+
     # Media type: 'photo', 'video', etc.
     media_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # When task should fire - stored in UTC timezone!
     # IMPORTANT: Always convert to UTC before saving to avoid timezone drift
     execution_time: Mapped[datetime] = mapped_column(
-        DateTime, 
+        DateTime,
         nullable=False  # Required - can't schedule without a time
     )
 
     # Is this a repeating task? (e.g., "every day at 9am")
     is_recurring: Mapped[bool] = mapped_column(
-        Boolean, 
+        Boolean,
         default=False  # One-time tasks are the default
     )
 
@@ -270,7 +270,7 @@ class Reminder(Base):
 
     # Should bot send follow-ups every 5 min until user marks task done?
     is_nagging: Mapped[bool] = mapped_column(
-        Boolean, 
+        Boolean,
         default=False  # Nagging mode disabled by default
     )
 
@@ -365,7 +365,7 @@ class Reminder(Base):
     # Task state: 'pending' (waiting) or 'completed' (done)
     # Used for daily briefs and filtering completed tasks
     status: Mapped[str] = mapped_column(
-        String, 
+        String,
         default="pending"  # New tasks start as pending
     )
 

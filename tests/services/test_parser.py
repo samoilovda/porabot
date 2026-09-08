@@ -1,7 +1,7 @@
 from datetime import datetime
 
-import pytz
 import pytest
+import pytz
 
 pytest.importorskip("natasha")
 from bot.services.parser import InputParser

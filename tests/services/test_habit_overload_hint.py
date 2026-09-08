@@ -6,16 +6,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.engine import Base
 from bot.database.models import User
 from bot.handlers.habits import state_habit_time
 from bot.lexicon.ru import RU
 from bot.services.scheduler import SchedulerService
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 @pytest.fixture

@@ -16,9 +16,9 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import bot.services.scheduler as scheduler_module
-from bot.database.engine import Base
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import Reminder, User
+from bot.database.engine import Base
+from bot.database.models import User
 from bot.services.daily_briefs import process_daily_briefs
 
 
@@ -43,7 +43,7 @@ async def _seed_user_with_task(session_factory, *, morning_time: str) -> None:
             evening_brief_time="23:59",
         )
         session.add(user)
-        reminder = await ReminderDAO(session).create_reminder(
+        await ReminderDAO(session).create_reminder(
             user_id=555,
             text="Test task",
             execution_time=datetime.now(timezone.utc).replace(tzinfo=None),

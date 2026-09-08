@@ -38,7 +38,6 @@ def test_task_list_line_escapes_only_user_data_not_backticks() -> None:
 
 async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() -> None:
     reminders_module = _load_module("bot/handlers/reminders.py")
-    ReminderWizard = reminders_module.ReminderWizard
     from aiogram.fsm.context import FSMContext
     from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.memory import MemoryStorage

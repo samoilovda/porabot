@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import bot.services.scheduler as scheduler_module
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.engine import Base
 from bot.database.models import User
 from bot.services.habit_sweeper import sweep_habit_cycles
 

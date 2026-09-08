@@ -11,7 +11,7 @@ os.environ.setdefault("BOT_TOKEN", "123456:TEST-TOKEN-NOT-REAL-ABCDEFGHIJKLMNOPQ
 
 import bot.handlers.menu as menu
 import bot.handlers.reminders as reminders
-from bot.lexicon import ALL_MENU_BUTTON_TEXTS, _LEXICONS
+from bot.lexicon import _LEXICONS, ALL_MENU_BUTTON_TEXTS
 
 
 def _handler_filter_matches(handler_callback, text: str) -> bool:

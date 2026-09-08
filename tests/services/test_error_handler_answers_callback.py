@@ -20,7 +20,8 @@ from unittest.mock import AsyncMock, patch
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, Chat, Message, Update, User as TgUser
+from aiogram.types import CallbackQuery, Chat, Message, Update
+from aiogram.types import User as TgUser
 
 os.environ.setdefault("BOT_TOKEN", "123456:TEST-TOKEN-NOT-REAL-ABCDEFGHIJKLMNOPQRS")
 

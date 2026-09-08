@@ -92,7 +92,7 @@ EN: dict[str, Any] = {
     "btn_clear_all_cancel": "↩ Cancel",
     "clear_all_confirm_text": "⚠️ This will delete **all** your tasks, habits, and settings permanently.\n\nAre you sure?",
     "clear_all_done": "✅ All your data was deleted. Let's start from scratch.",
-    
+
     # Custom Daily Briefs Settings
     "btn_briefs_setup": "📋 Briefs setup",
     "btn_briefs_on": "🔔 Daily Briefs: ON",

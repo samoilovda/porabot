@@ -3,15 +3,15 @@
 import logging
 from typing import Any
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
-from bot.keyboards.reply import get_main_menu_keyboard
 from bot.keyboards.inline import get_language_selection_keyboard, get_timezone_keyboard
+from bot.keyboards.reply import get_main_menu_keyboard
 from bot.lexicon import get_l10n
 from bot.utils.markdown import escape_markdown
 

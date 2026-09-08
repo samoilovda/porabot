@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytz
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import Message
 from sqlalchemy import and_, or_, select, update
 

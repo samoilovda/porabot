@@ -1,6 +1,7 @@
 """Time utilities for UTC normalization and display formatting."""
 
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from typing import Optional
 
 import pytz

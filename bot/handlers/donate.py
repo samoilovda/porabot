@@ -13,7 +13,7 @@ provider_token is the empty string, unlike a real-money invoice.
 import logging
 from typing import Any
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 

@@ -15,7 +15,6 @@ Verifies:
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -23,10 +22,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import bot.services.scheduler as scheduler_module
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import HabitEvent, Reminder, User
+from bot.database.engine import Base
+from bot.database.models import HabitEvent, User
 from bot.services.habit_reports import compute_habit_score
 from bot.services.retention_cleanup import (
     COMPLETED_REMINDER_RETENTION_DAYS,

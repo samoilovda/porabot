@@ -8,7 +8,8 @@ import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User as TgUser, Message, CallbackQuery
+from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import User as TgUser
 
 logger = logging.getLogger(__name__)
 

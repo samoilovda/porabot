@@ -22,7 +22,7 @@ RU: dict[str, Any] = {
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
     "btn_habits": "🫧 Привычки",
-    
+
     # Language Selection
     "choose_language": "Пожалуйста, выберите язык / Please choose a language:",
     "lang_ru": "🇷🇺 Русский",
@@ -92,7 +92,7 @@ RU: dict[str, Any] = {
     "btn_clear_all_cancel": "↩ Отмена",
     "clear_all_confirm_text": "⚠️ Это навсегда удалит **все** задачи, привычки и настройки.\n\nТочно продолжить?",
     "clear_all_done": "✅ Все данные удалены. Начинаем с нуля.",
-    
+
     # Custom Daily Briefs Settings
     "btn_briefs_setup": "📋 Настройка сводок",
     "btn_briefs_on": "🔔 Ежедневные сводки: ВКЛ",
@@ -162,7 +162,7 @@ RU: dict[str, Any] = {
     "choosing_time_retry": "🕒 Не нашёл время в этом сообщении. Попробуй ещё раз, например `18:30` или `завтра в 9`.",
     "forwarded_from": "Переслано от",
     "text_only_hint": "📝 Пока понимаю только текст. Пришли напоминание текстовым сообщением.",
-    
+
     # Confirmation logic -> Edit Logic
     "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Повтор:",
@@ -215,7 +215,7 @@ RU: dict[str, Any] = {
     "repeat_end_date_prompt": "До какой даты повторять? Отправь дату в формате ДД.ММ.ГГГГ.",
     "repeat_end_date_invalid": "❌ Введи будущую дату в формате ДД.ММ.ГГГГ.",
     "repeat_saved": "✅ Повтор обновлён.",
-    
+
     "main_menu_fallback": "Главное меню",
     "task_deleted": "❌ Задача удалена.",  # single definition — canonical value
     "btn_delete_undo": "↩ Отменить удаление",
@@ -385,7 +385,7 @@ RU: dict[str, Any] = {
     "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
     "habit_report_total": "**Итого:** ✅ {done} · ❌ {not_done} ({rate}%)",
     "weekday_names": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
-    
+
     # Error messages (SECURITY FIX: Added missing keys)
     "text_too_long": "❌ Текст слишком длинный ({length} символов). Максимум: {max_length} символов.",
     "schedule_error": "❌ Не удалось запланировать напоминание. Попробуйте снова.",

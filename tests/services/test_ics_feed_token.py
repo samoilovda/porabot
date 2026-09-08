@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.user import UserDAO
+from bot.database.engine import Base
 from bot.database.models import User
 from bot.handlers.settings import callback_ics_feed, callback_ics_feed_regenerate
 from bot.lexicon.ru import RU

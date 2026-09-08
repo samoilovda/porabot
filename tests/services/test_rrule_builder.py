@@ -14,7 +14,6 @@ from bot.handlers.reminders import (
     _rrule_end_label,
     _rrule_text,
     callback_rrb_end_none,
-    callback_rrb_endcount_prompt,
     callback_rrb_last_weekday,
     callback_rrb_monthly_prompt,
     callback_rrb_toggle_weekday,

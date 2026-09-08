@@ -4,11 +4,9 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
-from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.engine import Base
 from bot.database.models import User
-from bot.lexicon import get_l10n
 from bot.services.habit_reports import _aggregate, _process_user_reports
 
 
@@ -67,7 +65,6 @@ def test_monthly_window_is_first_of_month_to_send_day() -> None:
 
 async def test_no_events_in_window_sends_nothing(session) -> None:
     user, reminder = await _make_user_and_habit(session)
-    l10n = get_l10n("en")
     sent = []
 
     class FakeBot:

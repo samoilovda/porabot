@@ -15,13 +15,13 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import bot.handlers.reminders as reminders_module
 import bot.services.scheduler as scheduler_module
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.engine import Base
 from bot.database.dao.user import UserDAO
+from bot.database.engine import Base
 from bot.database.models import HabitEvent, User
-import bot.handlers.reminders as reminders_module
 from bot.handlers.reminders import callback_delete_task, callback_edit_delete
 from bot.handlers.settings import callback_clear_all_confirm
 from bot.lexicon import get_l10n

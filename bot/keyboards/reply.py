@@ -1,7 +1,8 @@
 """Reply keyboards (persistent bottom menu)."""
 
 from typing import Any
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 

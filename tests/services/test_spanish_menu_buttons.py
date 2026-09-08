@@ -3,7 +3,6 @@ from pathlib import Path
 
 from bot.lexicon import get_l10n
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -18,7 +17,7 @@ def _load_module(module_rel_path: str):
 
 def test_spanish_main_menu_labels_are_not_parsed_as_tasks() -> None:
     reminders_module = _load_module("bot/handlers/reminders.py")
-    menu_texts = set(getattr(reminders_module, "_MENU_TEXTS"))
+    menu_texts = set(reminders_module._MENU_TEXTS)
     es = get_l10n("es")
 
     assert es["btn_new_task"] in menu_texts

@@ -17,7 +17,9 @@ jobs:
         run: |
           pip install "setuptools<81" wheel
           pip install -r requirements.lock
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio ruff
+      - name: Lint (ruff check)
+        run: ruff check .
       - name: Run tests
         env:
           BOT_TOKEN: "test-token"

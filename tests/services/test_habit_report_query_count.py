@@ -16,9 +16,9 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
-from bot.database.engine import Base
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
+from bot.database.engine import Base
 from bot.database.models import User
 from bot.services.habit_reports import _process_user_reports
 

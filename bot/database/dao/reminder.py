@@ -15,11 +15,11 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
 import pytz
-
 from sqlalchemy import func, or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
+
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, is_habit_like
 
@@ -90,7 +90,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         # SECURITY FIX: Validate text length to prevent Telegram API errors
         # Telegram message limit is 4096 chars, but we need room for prefix/formatting
         MAX_TEXT_LENGTH = 3000
-        
+
         if len(text) > MAX_TEXT_LENGTH:
             raise ValueError(
                 f"Reminder text too long ({len(text)} chars). "
@@ -157,23 +157,23 @@ class ReminderDAO(BaseDAO[Reminder]):
     async def get_user_reminders(self, user_id: int) -> Sequence[Reminder]:
         """
         Get all PENDING reminders for a user, ordered by execution_time ASC.
-        
+
         This is the primary method for displaying the task list to users.
         It filters by status='pending' so completed tasks don't appear in the list.
-        
+
         Args:
             user_id: Telegram user ID (foreign key)
-            
+
         Returns:
             Sequence[Reminder]: List of pending reminders ordered by execution time
-            
+
         Side Effects:
           None - read-only operation
-        
+
         Example:
             >>> tasks = await dao.get_user_reminders(123456)
             # Returns list like [Reminder(id=1, ...), Reminder(id=2, ...)]
-            
+
             for task in tasks:
                 print(f"🔔 {task.reminder_text} at {task.execution_time}")
         """
@@ -202,23 +202,23 @@ class ReminderDAO(BaseDAO[Reminder]):
     async def mark_done(self, reminder_id: int) -> None:
         """
         Mark a reminder as done.
-        
+
         For one-time tasks, sets status='completed'.
         For recurring tasks, keeps status='pending' but marks the current execution
         slot as completed so active lists can hide it until next cycle.
-        
+
         Args:
             reminder_id: Primary key of reminder to mark as done
-            
+
         Returns:
             None
-            
+
         Side Effects:
           Updates status/completion fields
-        
+
         BUG FIX EDGE-5: Timezone-aware datetime handling
           Previously used deprecated datetime.utcnow(). Now uses pytz.UTC for clarity.
-        
+
         Example:
             >>> await dao.mark_done(456)  # Marks reminder #456 as done
         """
@@ -241,14 +241,14 @@ class ReminderDAO(BaseDAO[Reminder]):
             else:
                 reminder.status = "completed"
                 reminder.completed_for_execution_time = reminder.execution_time
-            
+
             # Store naive UTC datetime for consistency with execution_time field
             # and local-day boundary queries converted to naive UTC.
             reminder.completed_at = now_utc_naive
             reminder.last_completion_note = None
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
-            
+
             await self.session.flush()
 
     async def apply_habit_streak_completion(
@@ -384,25 +384,25 @@ class ReminderDAO(BaseDAO[Reminder]):
     ) -> Sequence[Reminder]:
         """
         Fetch tasks for 'today' based on the user's local timezone.
-        
+
         This method is used by daily briefs to show morning/evening summaries.
         It converts the user's local day boundaries to UTC before querying,
         ensuring correct results regardless of user timezone.
-        
+
         Args:
             user_id: Telegram user ID (foreign key)
             user_tz_str: User's timezone string (e.g., "Europe/Moscow")
             status: Filter by 'pending' or 'completed'
-            
+
         Returns:
             Sequence[Reminder]: List of tasks for today ordered by execution time
-            
+
         BUG FIX CRIT-6: Timezone-aware day boundary calculation
           Previously compared naive local timestamps against potentially-UTC DB values,
           causing wrong results for non-UTC users (tasks appeared on wrong day).
-          
+
           Now converts start/end of user's local day to UTC before querying.
-        
+
         Example:
             >>> today_pending = await dao.get_today_tasks_by_status(
             ...     user_id=123456,
@@ -413,12 +413,12 @@ class ReminderDAO(BaseDAO[Reminder]):
         # FIX CRIT-6: Convert start/end of user's local day to UTC before querying.
         # Comparing naive local timestamps against potentially-UTC DB values was causing
         # wrong results for non-UTC users (tasks would appear on the wrong day).
-        
+
         try:
             tz = pytz.timezone(user_tz_str)  # Parse timezone string
         except Exception:
             tz = pytz.UTC  # Fallback to UTC if invalid timezone
-        
+
         now_local = datetime.now(tz)  # Current time in user's local timezone
         start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day_local = start_of_day_local + timedelta(days=1)
@@ -467,16 +467,16 @@ class ReminderDAO(BaseDAO[Reminder]):
     async def get_today_pending_tasks(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
         """
         Get today's pending tasks for daily briefs.
-        
+
         Convenience wrapper around get_today_tasks_by_status(status='pending').
-        
+
         Args:
             user_id: Telegram user ID (foreign key)
             user_tz_str: User's timezone string (e.g., "Europe/Moscow")
-            
+
         Returns:
             Sequence[Reminder]: List of pending tasks for today
-            
+
         Example:
             >>> pending = await dao.get_today_pending_tasks(123456, "Europe/Moscow")
         """
@@ -485,16 +485,16 @@ class ReminderDAO(BaseDAO[Reminder]):
     async def get_today_completed_tasks(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
         """
         Get today's completed tasks for daily briefs.
-        
+
         Convenience wrapper around get_today_tasks_by_status(status='completed').
-        
+
         Args:
             user_id: Telegram user ID (foreign key)
             user_tz_str: User's timezone string (e.g., "Europe/Moscow")
-            
+
         Returns:
             Sequence[Reminder]: List of completed tasks for today
-            
+
         Example:
             >>> completed = await dao.get_today_completed_tasks(123456, "Europe/Moscow")
         """
@@ -899,20 +899,20 @@ class ReminderDAO(BaseDAO[Reminder]):
     ) -> None:
         """
         Update execution_time for a reminder.
-        
+
         Used by recurring task reschedule logic - when APScheduler calculates
         the next occurrence, we update this field and re-schedule the job.
-        
+
         Args:
             reminder_id: Primary key of reminder to update
             new_time: New execution time (timezone-aware datetime)
-            
+
         Returns:
             None
-            
+
         Side Effects:
           Updates execution_time field in database
-        
+
         Example:
             >>> await dao.update_execution_time(456, datetime(2024, 3, 27, 10, 0))
         """

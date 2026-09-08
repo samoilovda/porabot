@@ -17,7 +17,8 @@ from collections import defaultdict, deque
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
+from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import User as TgUser
 
 logger = logging.getLogger(__name__)
 

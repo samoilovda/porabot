@@ -4,8 +4,8 @@ from bot.database.engine import (
     Base,
     create_engine,
     create_session_maker,
-    init_db,
     dispose_engine,
+    init_db,
 )
 
 __all__ = [

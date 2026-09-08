@@ -1,14 +1,14 @@
 """Inline keyboards for Porabot."""
 
 from typing import Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytz
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.utils.time_ext import format_time
+from bot.utils.time_ext import format_time, local_time_today_or_tomorrow
 
 # fix(3.3): single source of truth for the task-list page size — used both
 # to slice which tasks get rendered as buttons here and, in
@@ -70,13 +70,6 @@ def get_time_selection_keyboard(
     )
 
     # Row 2-3: Time-of-day slots (morning, day, evening, night)
-    try:
-        tz = pytz.timezone(user_timezone)
-    except pytz.UnknownTimeZoneError:
-        tz = pytz.UTC
-
-    now = datetime.now(tz)
-
     times = [
         (l10n["time_morning"], 9),
         (l10n["time_day"], 14),
@@ -86,9 +79,9 @@ def get_time_selection_keyboard(
 
     buttons: list[InlineKeyboardButton] = []
     for label, hour in times:
-        target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-        if target_time <= now:
-            target_time += timedelta(days=1)
+        # 1.3: DST-safe — see local_time_today_or_tomorrow's docstring for
+        # why this replaced a plain now.replace(hour=...) + timedelta(days=1).
+        target_time = local_time_today_or_tomorrow(user_timezone, hour)
 
         callback_val = target_time.isoformat()
         time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")

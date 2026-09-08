@@ -27,7 +27,13 @@ from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_k
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
-from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import (
+    format_time,
+    local_time_today_strict,
+    next_occurrence_utc,
+    to_utc_aware,
+    to_utc_naive,
+)
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -110,11 +116,13 @@ async def _schedule_fluid_habit_for_today(
 
     now_local = datetime.now(user_tz)
     hour, minute = hhmm.split(":", 1)
-    target_local = now_local.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
-    if target_local <= now_local:
+    # 1.3: DST-safe — see local_time_today_strict's docstring for why this
+    # replaced a plain now_local.replace(hour=..., minute=...).
+    target_utc_aware = local_time_today_strict(user.timezone, int(hour), int(minute))
+    if target_utc_aware is None:
         raise ValueError("past_time")
 
-    target_utc_naive = to_utc_naive(target_local)
+    target_utc_naive = to_utc_naive(target_utc_aware)
     reminder.execution_time = target_utc_naive
     reminder.completed_for_execution_time = None
     reminder.fluid_planned_date = now_local.date().isoformat()

@@ -49,7 +49,14 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.tags import extract_tags_and_priority, format_tags, priority_glyph
-from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
+from bot.utils.time_ext import (
+    format_time,
+    local_time_today_or_tomorrow,
+    local_time_tomorrow,
+    next_occurrence_utc,
+    to_utc_aware,
+    to_utc_naive,
+)
 
 router = Router(name="reminders")
 parser = InputParser()
@@ -644,7 +651,9 @@ async def callback_time_selected(
     elif "fixed" in data_str:
         execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
     elif "tomorrow" in data_str:
-        execution_time = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        # 1.3: DST-safe — see local_time_tomorrow's docstring for why this
+        # replaced a plain now.replace(hour=9, ...) + timedelta(days=1).
+        execution_time = local_time_tomorrow(user.timezone, 9)
     elif "manual" in data_str:
         # REWORK_PLAN_3 2.2: used to state.clear() here, discarding the task
         # text and (for an edit/snooze) edit_reminder_id, and prompting the
@@ -2244,9 +2253,9 @@ async def callback_snooze_act(
     if action in delta_map:
         new_time = now + delta_map[action]
     elif action in hour_map:
-        new_time = now.replace(hour=hour_map[action], minute=0, second=0, microsecond=0)
-        if new_time <= now:
-            new_time += timedelta(days=1)
+        # 1.3: DST-safe — see local_time_today_or_tomorrow's docstring for
+        # why this replaced a plain now.replace(hour=...) + timedelta(days=1).
+        new_time = local_time_today_or_tomorrow(user.timezone, hour_map[action])
     else:
         await callback.answer(l10n.get("unknown_snooze", "❌ Unknown action"), show_alert=True)
         return

@@ -40,6 +40,7 @@ from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.habit_reports import setup_habit_reports
 from bot.services.delete_cleanup import setup_delete_cleanup
+from bot.services.retention_cleanup import setup_retention_cleanup
 from bot.services.webserver import create_app, start_web_server
 from bot.services.fsm_storage import SQLAlchemyFSMStorage, cleanup_stale_fsm_state
 from bot.handlers.reminders import _cleanup_stale_timers
@@ -202,6 +203,7 @@ async def main() -> None:
     setup_habit_sweeper(scheduler)
     setup_habit_reports(scheduler)
     setup_delete_cleanup(scheduler)
+    setup_retention_cleanup(scheduler)
     scheduler.add_job(
         _cleanup_stale_timers,
         "interval",

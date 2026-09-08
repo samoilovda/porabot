@@ -4,7 +4,7 @@ migrate-all / pick / leave-as-is choice, and each path updates execution_time
 (and reschedules the job) only for the habits actually selected."""
 
 import importlib.util
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +12,19 @@ from unittest.mock import AsyncMock, MagicMock
 from bot.lexicon import get_l10n
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Anchored two days out from whenever the suite actually runs, not a fixed
+# calendar date — a hardcoded past date used to sail past apply_migration's
+# 1.4 past-guard by accident once real time caught up with it (Moscow ->
+# New York always shifts the UTC instant *later*, so this stays safely in
+# the future no matter which of the fixed hour_utc values below is used).
+_FUTURE_ANCHOR_UTC = (datetime.now(timezone.utc) + timedelta(days=2)).replace(
+    minute=0, second=0, microsecond=0, tzinfo=None
+)
+
+
+def _anchor(hour_utc: int) -> datetime:
+    return _FUTURE_ANCHOR_UTC.replace(hour=hour_utc)
 
 
 def _load_settings_module():
@@ -27,7 +40,7 @@ def _habit(reminder_id: int, text: str, hour_utc: int) -> SimpleNamespace:
     return SimpleNamespace(
         id=reminder_id,
         reminder_text=text,
-        execution_time=datetime(2026, 1, 15, hour_utc, 0),
+        execution_time=_anchor(hour_utc),
         is_fluid_habit=False,
         fluid_planned_date=None,
         fluid_planned_time=None,
@@ -35,6 +48,9 @@ def _habit(reminder_id: int, text: str, hour_utc: int) -> SimpleNamespace:
         habit_active_due_at=None,
         is_nagging=False,
         pending_delete_at=None,
+        # Matches how habits.py actually creates a fixed-time habit.
+        is_recurring=True,
+        rrule_string="FREQ=DAILY",
     )
 
 
@@ -106,7 +122,7 @@ async def test_tzmig_all_migrates_every_candidate_and_reschedules() -> None:
     l10n = get_l10n("en")
 
     user = SimpleNamespace(id=1)
-    habit = _habit(1, "Zaryadka", 6)  # 09:00 Moscow / 01:00 New York in January
+    habit = _habit(1, "Zaryadka", 6)  # 09:00 Moscow (Moscow has no DST, always UTC+3)
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[habit]), get_by_id=AsyncMock(return_value=habit))
     scheduler_service = SimpleNamespace(schedule_reminder=MagicMock())
     state = _state_with({"tzmig_old_tz": "Europe/Moscow", "tzmig_new_tz": "America/New_York"})
@@ -120,7 +136,7 @@ async def test_tzmig_all_migrates_every_candidate_and_reschedules() -> None:
     scheduler_service.schedule_reminder.assert_called_once()
     assert scheduler_service.schedule_reminder.call_args.args[0] == 1
     # 09:00 local preserved: execution_time moved off its original 06:00 UTC.
-    assert habit.execution_time != datetime(2026, 1, 15, 6, 0)
+    assert habit.execution_time != _anchor(6)
     message.edit_text.assert_awaited_once()
     summary_text = message.edit_text.await_args.args[0]
     assert "Zaryadka" in summary_text
@@ -140,7 +156,7 @@ async def test_tzmig_none_leaves_execution_time_untouched() -> None:
 
     await settings.callback_tzmig_none(callback=callback, user=user, reminder_dao=reminder_dao, state=state, l10n=l10n)
 
-    assert habit.execution_time == datetime(2026, 1, 15, 6, 0)
+    assert habit.execution_time == _anchor(6)
     summary_text = message.edit_text.await_args.args[0]
     assert "Zaryadka" in summary_text
 
@@ -179,5 +195,5 @@ async def test_tzmig_toggle_flips_selection_and_apply_migrates_only_selected() -
 
     scheduler_service.schedule_reminder.assert_called_once()
     assert scheduler_service.schedule_reminder.call_args.args[0] == 1
-    assert habit_a.execution_time != datetime(2026, 1, 15, 6, 0)
-    assert habit_b.execution_time == datetime(2026, 1, 15, 7, 0)
+    assert habit_a.execution_time != _anchor(6)
+    assert habit_b.execution_time == _anchor(7)

@@ -276,7 +276,7 @@ async def callback_tzmig_all(
 
     items = await _load_tzmig_plan(user, reminder_dao, old_tz, new_tz)
     selected_ids = {item.reminder_id for item in items}
-    migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service)
+    migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service, new_tz)
     await state.update_data(tzmig_old_tz=None, tzmig_new_tz=None, tzmig_selected=None)
     await callback.message.edit_text(_render_tz_migration_summary(migrated, kept, new_tz, l10n), reply_markup=None)
     await callback.answer()
@@ -403,7 +403,7 @@ async def callback_tzmig_apply(
 
     items = await _load_tzmig_plan(user, reminder_dao, old_tz, new_tz)
     selected_ids = set(data.get("tzmig_selected") or [])
-    migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service)
+    migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service, new_tz)
     await state.update_data(tzmig_old_tz=None, tzmig_new_tz=None, tzmig_selected=None)
     await callback.message.edit_text(_render_tz_migration_summary(migrated, kept, new_tz, l10n), reply_markup=None)
     await callback.answer()

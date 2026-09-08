@@ -12,7 +12,7 @@ under the *new* zone, so "09:00" stays "09:00".
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence
 
 import pytz
@@ -20,7 +20,7 @@ import pytz
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import Reminder
 from bot.services.scheduler import SchedulerService
-from bot.utils.time_ext import to_utc_aware, to_utc_naive
+from bot.utils.time_ext import next_occurrence_utc, to_utc_aware, to_utc_naive
 
 
 @dataclass(frozen=True)
@@ -95,12 +95,26 @@ async def apply_migration(
     selected_ids: set[int],
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
+    new_tz_str: str,
 ) -> tuple[list[HabitTzMigrationItem], list[HabitTzMigrationItem]]:
     """Apply the chosen subset of a migration plan.
 
     Returns (migrated, kept_as_is) — both lists are subsets of *items*, in
     the same order, so a caller can render a summary from either.
+
+    1.4: *new_execution_time_utc* re-localizes the OLD wall-clock time
+    under the NEW zone — for an eastward move that can land in the past
+    (e.g. 2h left until a habit fires, then the user switches to a zone
+    3h further east). `job_defaults={"misfire_grace_time": 3600}` means
+    APScheduler wouldn't drop that job, it would run it immediately, so
+    the user gets an unexpected notification right after changing their
+    timezone and the habit's cycle tracking jumps a day early. For a
+    recurring fixed-time habit, advance to the next real occurrence
+    instead (same "roll forward, don't fire now" rule schedule_reminder's
+    other callers already follow); a fluid habit or non-recurring row has
+    nothing meaningful to advance to, so it's left unmigrated instead.
     """
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     migrated: list[HabitTzMigrationItem] = []
     kept: list[HabitTzMigrationItem] = []
     for item in items:
@@ -113,21 +127,49 @@ async def apply_migration(
             # Deleted/soft-deleted mid-flow — nothing to migrate any more.
             continue
 
-        delta = item.delta
+        scheduled_execution_time_utc = item.new_execution_time_utc
+        if scheduled_execution_time_utc <= now_utc_naive:
+            if getattr(reminder, "is_recurring", False) and getattr(reminder, "rrule_string", None):
+                try:
+                    advanced = next_occurrence_utc(
+                        reminder.rrule_string,
+                        item.new_execution_time_utc,
+                        new_tz_str,
+                        now_utc_naive,
+                    )
+                except (ValueError, TypeError):
+                    advanced = None
+                if advanced is None:
+                    kept.append(item)
+                    continue
+                scheduled_execution_time_utc = advanced
+            else:
+                # Fluid or non-recurring — no next occurrence to advance
+                # to; migrating it would either fire immediately or need
+                # inventing a time nothing asked for. Leave it as-is.
+                kept.append(item)
+                continue
+
         prev_execution_time = reminder.execution_time
         prev_completed_for = reminder.completed_for_execution_time
         prev_active_due_at = reminder.habit_active_due_at
+        # The real shift execution_time is about to undergo — item.delta
+        # alone (the tz-reinterpretation amount) undercounts it when we
+        # also advanced past a now-in-the-past occurrence above; using the
+        # actual shift keeps completed_for_execution_time/
+        # habit_active_due_at consistent with the new execution_time either way.
+        effective_delta = scheduled_execution_time_utc - prev_execution_time
 
-        reminder.execution_time = item.new_execution_time_utc
+        reminder.execution_time = scheduled_execution_time_utc
         if reminder.completed_for_execution_time is not None:
-            reminder.completed_for_execution_time += delta
+            reminder.completed_for_execution_time += effective_delta
         if reminder.habit_active_due_at is not None:
-            reminder.habit_active_due_at += delta
+            reminder.habit_active_due_at += effective_delta
 
         try:
             scheduler_service.schedule_reminder(
                 reminder.id,
-                to_utc_aware(item.new_execution_time_utc),
+                to_utc_aware(scheduled_execution_time_utc),
                 is_nagging=reminder.is_nagging,
             )
         except Exception:

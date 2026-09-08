@@ -265,6 +265,18 @@ async def main() -> None:
 
     scheduler.start()
     await scheduler_service.reconcile_jobs_with_db()
+    # 2.5: the jobstore is a cache derived from the DB, not the source of
+    # truth — this is the symmetric "remove what shouldn't be there any
+    # more" counterpart to reconcile_jobs_with_db's "add what's missing",
+    # run once at startup and then hourly (see below).
+    await scheduler_service.remove_orphan_scheduler_jobs()
+    scheduler.add_job(
+        scheduler_service.remove_orphan_scheduler_jobs,
+        "interval",
+        hours=1,
+        id="remove_orphan_scheduler_jobs",
+        replace_existing=True,
+    )
 
     # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
     # configured) the Mini App — runs alongside long polling, not instead

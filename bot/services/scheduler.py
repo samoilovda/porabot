@@ -201,6 +201,71 @@ class SchedulerService:
 
         logger.info("Reconciled scheduler jobs with DB: restored %s job(s).", restored)
 
+    async def remove_orphan_scheduler_jobs(self) -> int:
+        """Remove scheduler jobs whose reminder no longer justifies one (2.5).
+
+        reconcile_jobs_with_db (above) only ever ADDS jobs missing from the
+        jobstore — nothing symmetrically removes a job left behind if a
+        reminder became deleted, completed, soft-deleted, or gave up after
+        repeated TelegramForbiddenError through some path that didn't also
+        call remove_reminder_job/remove_nagging_job. Today every such path
+        does, but the jobstore is a cache derived from the DB, not the
+        source of truth — this is the periodic safety net for a future
+        path that misses that call (or a jobstore restored from an older
+        backup than the DB), same spirit as reconcile_jobs_with_db itself.
+
+        Deliberately a separate method (not folded into reconcile_jobs_
+        with_db) so it can run on its own schedule and session, without
+        touching that function's already-narrow, carefully tested query
+        sequence.
+        """
+        job_ids: list[tuple[str, int]] = []
+        for job in self.scheduler.get_jobs():
+            job_id = job.id
+            if job_id.isdigit():
+                job_ids.append((job_id, int(job_id)))
+            elif job_id.startswith("nag_") and job_id[4:].isdigit():
+                job_ids.append((job_id, int(job_id[4:])))
+
+        if not job_ids:
+            return 0
+
+        reminder_ids = {reminder_id for _, reminder_id in job_ids}
+        async with self.session_pool() as session:
+            result = await session.execute(
+                select(
+                    Reminder.id, Reminder.status, Reminder.pending_delete_at, Reminder.forbidden_strikes
+                ).where(Reminder.id.in_(reminder_ids))
+            )
+            valid_rows = {
+                reminder_id: (status, pending_delete_at, forbidden_strikes)
+                for reminder_id, status, pending_delete_at, forbidden_strikes in result.all()
+            }
+
+        removed = 0
+        for job_id, reminder_id in job_ids:
+            row = valid_rows.get(reminder_id)
+            still_active = (
+                row is not None
+                and row[0] == "pending"
+                and row[1] is None
+                and row[2] < FORBIDDEN_STRIKES_LIMIT
+            )
+            if still_active:
+                continue
+            try:
+                self.scheduler.remove_job(job_id)
+                removed += 1
+                logger.info(
+                    "Removed orphan scheduler job %s (reminder %s no longer active).", job_id, reminder_id
+                )
+            except JobLookupError:
+                pass
+
+        if removed:
+            logger.info("Removed %s orphan scheduler job(s).", removed)
+        return removed
+
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job and any nagging job for *reminder_id*."""
         for job_id in (str(reminder_id), f"nag_{reminder_id}"):

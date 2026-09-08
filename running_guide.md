@@ -25,12 +25,20 @@
    путь для локальной разработки:
    ```bash
    pip install "setuptools<81" wheel docopt-ng
-   pip install --no-deps -r requirements.lock
+   grep -v '^docopt==' requirements.lock > /tmp/porabot-lock-no-docopt.txt
+   pip install --no-deps -r /tmp/porabot-lock-no-docopt.txt
    pip install pytest pytest-asyncio
    ```
-   (`docopt-ng` — обратно совместимый форк с современным `pyproject.toml`;
-   `--no-deps` пропускает попытку собрать `docopt` из `requirements.lock`
-   отдельно, раз он уже удовлетворён форком).
+   (`docopt-ng` — обратно совместимый форк с современным `pyproject.toml`,
+   удовлетворяющий ту же зависимость `docopt` объявляет natasha → yargy →
+   pymorphy2. **Просто `--no-deps -r requirements.lock` не работает** —
+   `docopt==0.6.2` в `requirements.lock` записан отдельной строкой
+   верхнего уровня, а не только транзитивной зависимостью, и `--no-deps`
+   подавляет разрешение только транзитивных зависимостей — сам `docopt`
+   всё равно будет собираться из этой строки и падать. Поэтому сначала
+   вычёркиваем строку `docopt==...` из файла, и только потом ставим
+   с `--no-deps` — тогда транзитивная потребность в `docopt` уже
+   удовлетворена форком, и сборки настоящего `docopt` не происходит вовсе).
 
 3. **Запуск**:
    ```bash

@@ -104,8 +104,18 @@ async def _run_once(conn, name: str, run) -> None:
     )
 
 
-async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> None:
-    """ALTER TABLE ADD COLUMN *col*, but only if it isn't already there.
+async def _add_column_if_missing(conn, table: str, column) -> None:
+    """ALTER TABLE ADD COLUMN *column* (a live SQLAlchemy Column from
+    Base.metadata), but only if the table doesn't already have it.
+
+    4.3: the type/NOT NULL/DEFAULT clause used to be a second copy of each
+    column's definition, hand-typed as an ALTER-TABLE-shaped string
+    alongside the Column already declared in models.py — the two had no
+    way to stay in sync automatically, so a soft-migrated column changed
+    in one place but not the other. CreateColumn(column).compile(...) asks
+    SQLAlchemy to render the exact same DDL fragment it would use for this
+    column inside CREATE TABLE, against the live connection's actual
+    dialect — models.py stays the only place a column's definition lives.
 
     P1-7: this used to just attempt the ALTER and swallow ANY
     OperationalError/ProgrammingError as "column already exists" — which
@@ -118,12 +128,14 @@ async def _add_column_if_missing(conn, table: str, col: str, col_type: str) -> N
     being masked forever.
     """
     from sqlalchemy import inspect, text
+    from sqlalchemy.schema import CreateColumn
 
     existing_columns = await conn.run_sync(lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns(table)})
-    if col in existing_columns:
+    if column.name in existing_columns:
         return
+    column_ddl = str(CreateColumn(column).compile(dialect=conn.dialect))
     async with conn.begin_nested():
-        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column_ddl}"))
 
 
 async def init_db(engine: AsyncEngine) -> None:
@@ -136,61 +148,20 @@ async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # Soft-migration for Custom Daily Briefs Feature
-        for col, col_type in [
-            ("briefs_enabled", "BOOLEAN DEFAULT 1"),
-            ("morning_brief_time", "VARCHAR DEFAULT '09:00'"),
-            ("evening_brief_time", "VARCHAR DEFAULT '23:00'"),
-            ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
-            ("quiet_hours_start", "VARCHAR DEFAULT '23:00'"),
-            ("quiet_hours_end", "VARCHAR DEFAULT '07:00'"),
-            ("quiet_hours_weekend_enabled", "BOOLEAN DEFAULT 0"),
-            ("quiet_hours_weekend_start", "VARCHAR DEFAULT '23:00'"),
-            ("quiet_hours_weekend_end", "VARCHAR DEFAULT '10:00'"),
-            ("quiet_hours_habits_exempt", "BOOLEAN DEFAULT 0"),
-            ("missed_recovery_enabled", "BOOLEAN DEFAULT 1"),
-            ("missed_recovery_time", "VARCHAR DEFAULT '10:00'"),
-            ("last_missed_recovery_date", "VARCHAR"),
-            ("last_morning_brief_date", "VARCHAR"),
-            ("last_evening_brief_date", "VARCHAR"),
-            ("pinned_brief_message_id", "INTEGER"),
-            ("habit_reports_enabled", "BOOLEAN DEFAULT 1"),
-            ("habit_report_weekday", "INTEGER DEFAULT 6"),
-            ("habit_report_time", "VARCHAR DEFAULT '23:50'"),
-            ("last_habit_report_date", "VARCHAR"),
-            ("ics_feed_token", "VARCHAR"),
-        ]:
-            await _add_column_if_missing(conn, "users", col, col_type)
-
-        # Soft-migration for nagging limits per reminder
-        for col, col_type in [
-            ("is_habit", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("is_fluid_habit", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("fluid_mode", "VARCHAR"),
-            ("nagging_max_repeats", "INTEGER NOT NULL DEFAULT 3"),
-            ("nagging_sent_count", "INTEGER NOT NULL DEFAULT 0"),
-            ("habit_streak_current", "INTEGER NOT NULL DEFAULT 0"),
-            ("habit_streak_best", "INTEGER NOT NULL DEFAULT 0"),
-            ("habit_active_due_at", "DATETIME"),
-            ("habit_last_completed_due_at", "DATETIME"),
-            ("fluid_streak_current", "INTEGER NOT NULL DEFAULT 0"),
-            ("fluid_streak_best", "INTEGER NOT NULL DEFAULT 0"),
-            ("fluid_last_completed_date", "VARCHAR"),
-            ("fluid_planned_date", "VARCHAR"),
-            ("fluid_planned_time", "VARCHAR"),
-            ("last_nag_chat_id", "BIGINT"),
-            ("last_nag_message_id", "INTEGER"),
-            ("completed_for_execution_time", "DATETIME"),
-            ("last_completion_note", "VARCHAR"),
-            ("forbidden_strikes", "INTEGER NOT NULL DEFAULT 0"),
-            ("last_fired_at", "DATETIME"),
-            ("send_retry_count", "INTEGER NOT NULL DEFAULT 0"),
-            ("pending_delete_at", "DATETIME"),
-            ("habit_undo_pending", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("tags", "VARCHAR"),
-            ("priority", "INTEGER"),
-        ]:
-            await _add_column_if_missing(conn, "reminders", col, col_type)
+        # Soft-migration: add any column models.py declares that an
+        # existing table doesn't have yet (4.3). create_all above only
+        # creates whole tables that don't exist at all — it never adds a
+        # column to a table it finds already there — so this is what
+        # actually carries an existing deployment's schema forward when a
+        # model gains a new column. Iterates every table/column in
+        # Base.metadata rather than hand-picking "the users columns" and
+        # "the reminders columns": _add_column_if_missing already no-ops
+        # for a column that exists, so this is exactly as safe for a
+        # table that's never needed a soft migration (habit_events,
+        # fsm_state) as for one that's had many.
+        for table in Base.metadata.tables.values():
+            for column in table.columns:
+                await _add_column_if_missing(conn, table.name, column)
 
         # Backfill legacy habits created before `is_habit` existed.
         # Heuristic: daily recurring + nagging reminders were produced by Habits

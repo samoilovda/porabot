@@ -131,7 +131,7 @@ async def callback_snooze_act(
 # ---------------------------------------------------------------------------
 # Catch-all: non-text messages outside any FSM flow
 # ---------------------------------------------------------------------------
-# REWORK_PLAN_3 2.7: nothing responded to a photo/voice/video/sticker/etc.
+# Without this, nothing responded to a photo/voice/video/sticker/etc.
 # sent with StateFilter(None) — the bot looked broken, silently swallowing
 # the update. Registered last so every more specific handler (forwarded
 # messages, FSM-state text handlers, callbacks) gets first refusal; ~F.text

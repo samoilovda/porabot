@@ -348,9 +348,9 @@ async def callback_recovery_done_all(
                     due_at_utc_naive=due_at,
                     completed_at_utc_naive=now_utc.replace(tzinfo=None),
                 )
-                # P1-5: without this, weekly/monthly habit reports (built
-                # from habit_events, not the streak counters) never see a
-                # habit completed via this bulk "Done all" recovery action.
+                # Without this, weekly/monthly habit reports (built from
+                # habit_events, not the streak counters) never see a habit
+                # completed via this bulk "Done all" recovery action.
                 if not streak_result.get("already_counted"):
                     await habit_event_dao.record(
                         reminder=task,

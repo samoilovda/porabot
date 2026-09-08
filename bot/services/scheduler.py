@@ -174,7 +174,7 @@ class SchedulerService:
                             reminder.execution_time = next_run_utc_naive
                             run_at_utc = to_utc_aware(next_run_utc_naive)
                         else:
-                            # P1-4: this cycle was NEVER delivered (the bot
+                            # This cycle was NEVER delivered (the bot
                             # was down through it) — schedule a near-term
                             # catch-up for the CURRENT missed cycle instead of
                             # silently jumping straight to the next

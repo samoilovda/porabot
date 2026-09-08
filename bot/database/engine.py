@@ -117,15 +117,14 @@ async def _add_column_if_missing(conn, table: str, column) -> None:
     column inside CREATE TABLE, against the live connection's actual
     dialect — models.py stays the only place a column's definition lives.
 
-    P1-7: this used to just attempt the ALTER and swallow ANY
+    This used to just attempt the ALTER and swallow ANY
     OperationalError/ProgrammingError as "column already exists" — which
     also silently hides a permissions error, a locked/corrupt database, a
     typo'd column type, or any other genuine failure, on every single
     startup. Checking the inspector first means the ALTER is only even
     attempted when the column is actually missing, so an error from that
-    point on is real and gets to propagate (and fail startup loudly,
-    matching P1-7's "startup schema-version check" spirit) instead of
-    being masked forever.
+    point on is real and gets to propagate and fail startup loudly
+    instead of being masked forever.
     """
     from sqlalchemy import inspect, text
     from sqlalchemy.schema import CreateColumn
@@ -222,7 +221,7 @@ async def init_db(engine: AsyncEngine) -> None:
 
         await _run_once(conn, "backfill_last_fired_at_v1", _backfill_last_fired_at)
 
-        # P1-7: PRAGMA foreign_keys=ON (see create_engine) only enforces
+        # PRAGMA foreign_keys=ON (see create_engine) only enforces
         # constraints on future writes — it never retroactively validates
         # rows that already exist. Surface any pre-existing orphan here as a
         # loud warning instead of leaving it to fail mysteriously the first

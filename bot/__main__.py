@@ -233,8 +233,8 @@ async def main() -> None:
     logger.info("Scheduler configured.")
 
     # Middleware — whitelist intentionally disabled (open access is a
-    # deliberate product choice), but P1-10: open access with literally no
-    # cap meant one user could flood the DB and the CPU-heavy, globally
+    # deliberate product choice), but open access with literally no cap
+    # meant one user could flood the DB and the CPU-heavy, globally
     # locked NLP parser. RateLimitMiddleware goes first so a throttled
     # update never reaches the DB or the parser.
     # To re-enable the whitelist, restore WhitelistMiddleware registration

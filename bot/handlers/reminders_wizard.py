@@ -51,8 +51,8 @@ async def handle_forwarded_task(
     """Extract text from a forwarded message and route it through the wizard."""
     text = message.text or message.caption
     if not text:
-        # REWORK_PLAN_3 2.7: a forwarded photo/video/voice with no caption
-        # used to get silently dropped here — no error, no hint, nothing.
+        # A forwarded photo/video/voice with no caption used to get
+        # silently dropped here — no error, no hint, nothing.
         await message.answer(l10n.get("text_only_hint", "📝 I can only understand text right now. Send your reminder as a text message."))
         return
 
@@ -107,7 +107,7 @@ async def handle_task_text(
 
     try:
         result = await parser.parse(message.text, user.timezone)
-        # P1-11: reminder text can carry medical/personal/otherwise sensitive
+        # Reminder text can carry medical/personal/otherwise sensitive
         # content — never log the raw or cleaned text itself at INFO level.
         # Length and whether a datetime/how confidently it was found is
         # enough to debug the parser without exposing what the user wrote.
@@ -143,10 +143,10 @@ async def state_choosing_time_text_input(
     reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
 ) -> None:
     """Accept a typed time expression while the time-selection keyboard is
-    showing (REWORK_PLAN_3 2.1). Without this, a user who types instead of
-    tapping a button — including after tapping "⌨️ Enter manually", whose
-    only purpose is to invite exactly that — got no response at all: no
-    error, no retry prompt, nothing.
+    showing. Without this, a user who types instead of tapping a button —
+    including after tapping "⌨️ Enter manually", whose only purpose is to
+    invite exactly that — got no response at all: no error, no retry
+    prompt, nothing.
 
     The task description is already fixed in `state` from the step that led
     here (_handle_parsed_result or callback_edit_edit / callback_snooze_act);
@@ -201,9 +201,9 @@ async def callback_time_selected(
         # replaced a plain now.replace(hour=9, ...) + timedelta(days=1).
         execution_time = local_time_tomorrow(user.timezone, 9)
     elif "manual" in data_str:
-        # REWORK_PLAN_3 2.2: used to state.clear() here, discarding the task
-        # text and (for an edit/snooze) edit_reminder_id, and prompting the
-        # user to "try again" with no working way to actually enter a time —
+        # Used to state.clear() here, discarding the task text and (for an
+        # edit/snooze) edit_reminder_id, and prompting the user to "try
+        # again" with no working way to actually enter a time —
         # state_choosing_time_text_input didn't exist yet. Now that it does,
         # stay in choosing_time: the state data survives, and the next thing
         # the user types is picked up as a time expression by that handler.

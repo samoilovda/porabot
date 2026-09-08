@@ -191,7 +191,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
             )
-            # P1-12: .id as a tiebreaker makes the order fully stable across
+            # .id as a tiebreaker makes the order fully stable across
             # requests (two tasks with the identical execution_time could
             # otherwise swap positions between page loads, which would
             # shuffle pagination).
@@ -216,8 +216,9 @@ class ReminderDAO(BaseDAO[Reminder]):
         Side Effects:
           Updates status/completion fields
 
-        BUG FIX EDGE-5: Timezone-aware datetime handling
-          Previously used deprecated datetime.utcnow(). Now uses pytz.UTC for clarity.
+        "Now" below is computed via pytz.UTC rather than the deprecated
+        datetime.utcnow(), then stripped to naive UTC — see this module's
+        timezone invariant.
 
         Example:
             >>> await dao.mark_done(456)  # Marks reminder #456 as done
@@ -397,11 +398,10 @@ class ReminderDAO(BaseDAO[Reminder]):
         Returns:
             Sequence[Reminder]: List of tasks for today ordered by execution time
 
-        BUG FIX CRIT-6: Timezone-aware day boundary calculation
-          Previously compared naive local timestamps against potentially-UTC DB values,
-          causing wrong results for non-UTC users (tasks appeared on wrong day).
-
-          Now converts start/end of user's local day to UTC before querying.
+        Comparing naive local timestamps directly against execution_time
+        (stored UTC) would put tasks on the wrong day for any non-UTC
+        user, so the day boundary below is computed in the user's local
+        timezone and converted to UTC before querying.
 
         Example:
             >>> today_pending = await dao.get_today_tasks_by_status(
@@ -410,10 +410,6 @@ class ReminderDAO(BaseDAO[Reminder]):
             ...     status="pending"
             ... )
         """
-        # FIX CRIT-6: Convert start/end of user's local day to UTC before querying.
-        # Comparing naive local timestamps against potentially-UTC DB values was causing
-        # wrong results for non-UTC users (tasks would appear on the wrong day).
-
         try:
             tz = pytz.timezone(user_tz_str)  # Parse timezone string
         except Exception:

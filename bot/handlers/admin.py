@@ -45,7 +45,7 @@ async def cmd_debug(
     # 3. Scheduler status
     job_count = len(scheduler_service.scheduler.get_jobs())
 
-    # 4. Server time (FIX EDGE-5: use timezone-aware now, utcnow() is deprecated in 3.12)
+    # 4. Server time (timezone-aware now — datetime.utcnow() is deprecated since 3.12)
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     text_msg = (

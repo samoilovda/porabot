@@ -72,11 +72,11 @@ def _is_habit_entry(reminder) -> bool:
 
     Deliberately does NOT match on "daily recurring + nagging" alone — those
     are ordinary edit-keyboard toggles any plain task can have turned on,
-    and matching on them showed such a task in the habits list (REWORK_PLAN_3
-    1.2). `is_habit` (set only by the Habits creation flow, or by the
-    one-time legacy backfill in bot/database/engine.py) is the source of
-    truth; the remaining checks catch rows that lived as a habit before
-    is_habit existed.
+    and matching on them showed such a task in the habits list. `is_habit`
+    (set only by the Habits creation flow, or by the one-time legacy
+    backfill in bot/database/engine.py) is the source of truth; the
+    remaining checks catch rows that lived as a habit before is_habit
+    existed.
     """
     return bool(
         getattr(reminder, "is_habit", False)
@@ -730,7 +730,7 @@ async def cb_del_habit(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    """Soft-delete a habit with an undo window (REWORK_PLAN_3 2.4).
+    """Soft-delete a habit with an undo window.
 
     Used to hard-delete the reminder AND its whole habit_events history
     (streaks, weekly/monthly report data) immediately, with no confirmation

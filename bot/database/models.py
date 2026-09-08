@@ -28,7 +28,7 @@ from bot.database.engine import Base
 
 
 def _utcnow_naive() -> datetime:
-    """Python-side default for created_at — UTC regardless of DB dialect (W6)."""
+    """Python-side default for created_at — UTC regardless of DB dialect."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -374,7 +374,7 @@ class Reminder(Base):
 
     # When reminder was added to database (for analytics/debugging).
     # See User.created_at above — Python-side default keeps this UTC on both
-    # SQLite and Postgres; habit_sweeper relies on that (W6).
+    # SQLite and Postgres; habit_sweeper relies on that.
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=_utcnow_naive,

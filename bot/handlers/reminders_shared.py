@@ -247,7 +247,7 @@ def _paginate_tasks_for_list(tasks: list, page: int = 0) -> tuple[list, int, int
     (execution_time, id) ordering) into pages of _TASKS_PAGE_SIZE, both so
     the message text and its per-task keyboard buttons stay within
     Telegram's limits, and so tasks beyond the first page are actually
-    reachable (P1-12) instead of just listed as "...and N more".
+    reachable instead of just listed as "...and N more".
 
     *page* is clamped into range. Returns (shown_tasks, clamped_page,
     total_pages) — total_pages is always >= 1.
@@ -304,7 +304,7 @@ def _reset_auto_delete(message: Message) -> None:
 
 
 def _cleanup_stale_timers() -> None:
-    """Drop finished tasks from active_auto_delete_tasks (W5).
+    """Drop finished tasks from active_auto_delete_tasks.
 
     _remove_keyboard_after_delay already pops its own entry in a finally
     block, but a task cancelled via _reset_auto_delete before it starts

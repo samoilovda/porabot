@@ -1,4 +1,4 @@
-"""Per-user rate limiting — P1-10.
+"""Per-user rate limiting.
 
 The bot has open access (WhitelistMiddleware is disabled — see
 bot/__main__.py) with no cap on how fast a single user can send updates.

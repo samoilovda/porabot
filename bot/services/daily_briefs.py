@@ -33,9 +33,8 @@ logger = logging.getLogger(__name__)
 # see Reminder.mark_done). Without also picking up recently-completed rows
 # here, a user whose only tasks today were one-offs they finished drops out
 # of the candidate list entirely and never gets an evening brief showing
-# what they accomplished (1.3). Bounded to a short recent window rather than
-# "ever completed" — that's what BUG-C1 originally fixed (an unbounded
-# every-past-user scan on every tick).
+# what they accomplished. Bounded to a short recent window rather than "ever
+# completed" — an unbounded every-past-user scan on every tick doesn't scale.
 _RECENT_COMPLETION_WINDOW = timedelta(days=2)
 
 # Telegram caps messages at 4096 chars and inline keyboards at well under 100
@@ -162,7 +161,7 @@ async def _claim_brief_slot(session, *, user, column, today_str: str) -> bool:
 async def _release_brief_claim(session, *, user, column, today_str: str) -> None:
     """Undo a claim from _claim_brief_slot after a retryable send failure.
 
-    P1-3: claiming the slot and delivering the message are different
+    Claiming the slot and delivering the message are different
     things. Without this, a claim that outlives a failed send (timeout,
     network error) makes the brief silently vanish for the rest of the
     day/week instead of retrying on the next tick — the atomic claim
@@ -260,14 +259,14 @@ async def _unpin_brief_message(bot: Bot, session, user) -> None:
 async def get_users_needing_brief_check(session) -> list[int]:
     """User ids with briefs enabled that are worth checking this tick.
 
-    BUG-C1 FIX: only users who have briefs enabled AND either an active
-    pending reminder or something completed recently — previously this
-    only looked at 'pending', so a user who finished every task today
-    (their only reminders being one-offs, which flip to status='completed'
-    on mark_done — recurring ones stay 'pending') dropped out entirely and
-    never got tonight's "here's what you got done" evening brief (1.3).
-    Bounded to _RECENT_COMPLETION_WINDOW, not "ever completed" — unbounded
-    was BUG-C1's original bug (every past user scanned every tick).
+    Only users who have briefs enabled AND either an active pending
+    reminder or something completed recently — looking at 'pending' alone
+    would drop a user who finished every task today (their only reminders
+    being one-offs, which flip to status='completed' on mark_done —
+    recurring ones stay 'pending') out entirely, losing tonight's "here's
+    what you got done" evening brief. Bounded to
+    _RECENT_COMPLETION_WINDOW, not "ever completed" — that would scan
+    every past user on every tick.
     """
     recent_completed_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - _RECENT_COMPLETION_WINDOW
     result = await session.execute(
@@ -322,15 +321,15 @@ async def process_daily_briefs() -> None:
 
         for user in candidates:
             async with session_pool_factory() as session:
-                # BUG-D1 FIX: isolate each user in its own try/except (mirroring
-                # habit_reports.py). Previously the whole batch shared a single
-                # try/except at the function level, so an error anywhere in one
-                # user's processing (e.g. a transient SQLite "database is locked"
-                # during commit — likely here since several per-minute cron jobs
-                # share one sqlite file) aborted the rest of the batch, and left
-                # that user's last_morning/evening_brief_date uncommitted even
-                # though the brief had already been sent — causing the identical
-                # brief to resend on the next tick.
+                # Each user is isolated in its own try/except (mirroring
+                # habit_reports.py) — a single try/except at the function level
+                # would let an error anywhere in one user's processing (e.g. a
+                # transient SQLite "database is locked" during commit — likely
+                # here since several per-minute cron jobs share one sqlite
+                # file) abort the rest of the batch, leaving that user's
+                # last_morning/evening_brief_date uncommitted even though the
+                # brief had already been sent — causing the identical brief to
+                # resend on the next tick.
                 try:
                     try:
                         tz = pytz.timezone(user.timezone)
@@ -339,7 +338,7 @@ async def process_daily_briefs() -> None:
                         tz = pytz.UTC
 
                     local_time_str = datetime.now(tz).strftime("%H:%M")
-                    # W1: the morning/evening brief itself is exempt from quiet hours —
+                    # The morning/evening brief itself is exempt from quiet hours —
                     # it fires exactly at the time the user configured, so suppressing
                     # it (e.g. default evening_brief_time == default quiet_hours_start)
                     # would silently make the brief unreachable. Quiet hours still
@@ -460,9 +459,9 @@ async def process_daily_briefs() -> None:
                                     logger.error("Error sending fluid-habit morning extras for user %s: %s", user.id, e, exc_info=True)
 
                     elif evening_due:
-                        # Also reset in habit_sweeper.sweep_habit_cycles every minute
-                        # (W3) — briefs_enabled=False or a suppressed brief must not
-                        # leave a stale streak stuck until the user reopens the app.
+                        # Also reset in habit_sweeper.sweep_habit_cycles every minute —
+                        # briefs_enabled=False or a suppressed brief must not leave a
+                        # stale streak stuck until the user reopens the app.
                         # Kept here too so the reset isn't delayed until evening_due
                         # for users who do get briefs.
                         for h in fluid_habits:

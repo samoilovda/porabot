@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Half/quarter-hour UTC offsets mapped to a real IANA zone that actually uses
 # that offset today, so users in these regions get correct DST behavior
 # instead of a frozen fixed offset. Not exhaustive — offsets with no matching
-# well-known zone are rejected rather than silently approximated (W8).
+# well-known zone are rejected rather than silently approximated.
 _HALF_HOUR_TZ_MAP: dict[str, str] = {
     "+3:30": "Asia/Tehran",
     "+4:30": "Asia/Kabul",
@@ -803,7 +803,7 @@ async def callback_briefs_setup(callback: CallbackQuery, user: User, l10n: dict[
 
 @router.callback_query(F.data == "briefs_toggle")
 async def callback_briefs_toggle(callback: CallbackQuery, user: User, user_dao: UserDAO, l10n: dict[str, Any], state: FSMContext) -> None:
-    await state.clear()  # BUG-H3 FIX: clear any pending FSM state so next message isn't swallowed
+    await state.clear()  # clear any pending FSM state so the next message isn't swallowed
     from bot.keyboards.inline import get_briefs_setup_keyboard
     enabled = not getattr(user, 'briefs_enabled', True)
     await user_dao.update_briefs_settings(user.id, briefs_enabled=enabled)
@@ -831,7 +831,7 @@ async def state_briefs_set_time(message: Message, state: FSMContext, user: User,
     if not message.text:
         return
 
-    # BUG-H4 FIX: Strict HH:MM validation — the InputParser is designed for full
+    # Strict HH:MM validation — the InputParser is designed for full
     # reminder phrases, not time-only config. Freeform inputs like "in 30 minutes"
     # would produce the wrong brief time with no feedback to the user.
     import re
@@ -1008,7 +1008,7 @@ async def state_habit_report_set_time(
     message: Message, state: FSMContext, user: User, user_dao: UserDAO, l10n: dict[str, Any]
 ) -> None:
     # Same strict HH:MM validation as briefs/quiet-hours time input — InputParser
-    # is for freeform reminder phrases, not config values (BUG-H4).
+    # is for freeform reminder phrases, not config values.
     raw = message.text.strip()
     match = re.match(r'^(\d{1,2}):(\d{2})$', raw)
     if not match:

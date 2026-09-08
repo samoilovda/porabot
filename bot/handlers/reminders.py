@@ -48,6 +48,7 @@ from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
+from bot.utils.pagination import limit_items, preview_line
 from bot.utils.tags import extract_tags_and_priority, format_tags, priority_glyph
 from bot.utils.time_ext import (
     format_time,
@@ -72,6 +73,9 @@ _MAX_INPUT = 3000
 _NAG_LIMIT_MIN = 0
 _NAG_LIMIT_MAX = 20
 _COMPLETED_HISTORY_DAYS = 7
+# 1.5: caps the "recently completed" screen's item count — see limit_items'
+# module docstring (bot/utils/pagination.py) for why this is needed at all.
+_COMPLETED_HISTORY_LIMIT = 20
 _PARSE_CONFIDENCE_THRESHOLD = 0.7
 # Telegram caps inline keyboards well below 100 buttons and messages at 4096
 # chars. get_tasks_list_keyboard adds up to 3 buttons per task, so an
@@ -1723,15 +1727,29 @@ async def callback_show_completed(
         await callback.answer(l10n["no_completed_tasks"], show_alert=True)
         return
 
+    # 1.5: bound both item COUNT and per-item text length — an unbounded
+    # history (recurring tasks completed daily over _COMPLETED_HISTORY_DAYS)
+    # could otherwise exceed Telegram's 4096-char message limit and make
+    # edit_text raise, dropping the whole screen. Same shape daily_briefs
+    # already uses for the morning/evening brief.
+    shown_completed, hidden_completed = limit_items(completed, _COMPLETED_HISTORY_LIMIT)
     lines = [l10n["completed_header"]]
-    for task in completed:
+    for task in shown_completed:
         completed_dt = task.completed_at or task.execution_time
         dt_str = escape_markdown_v2(format_time(completed_dt, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
-        note_suffix = f" — {escape_markdown_v2(task.last_completion_note)}" if task.last_completion_note else ""
-        lines.append(f"✅ `{dt_str}`: ~{escape_markdown_v2(task.reminder_text)}~{note_suffix}")
+        note = preview_line(task.last_completion_note) if task.last_completion_note else None
+        note_suffix = f" — {escape_markdown_v2(note)}" if note else ""
+        lines.append(f"✅ `{dt_str}`: ~{escape_markdown_v2(preview_line(task.reminder_text))}~{note_suffix}")
+    if hidden_completed:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_completed))
 
     safe_text = "\n".join(lines)
-    await callback.message.edit_text(safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="MarkdownV2")
+    try:
+        await callback.message.edit_text(
+            safe_text, reply_markup=get_completed_tasks_keyboard(l10n), parse_mode="MarkdownV2"
+        )
+    except TelegramBadRequest:
+        pass  # Concurrent tap or an edge case the length bound above didn't fully catch — safe to ignore.
     await callback.answer()
 
 

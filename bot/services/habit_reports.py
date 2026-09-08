@@ -19,8 +19,15 @@ from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
 from bot.utils.markdown import escape_markdown
+from bot.utils.pagination import limit_items, preview_line
 
 logger = logging.getLogger(__name__)
+
+# 1.5: caps the per-habit rows rendered in a weekly/monthly report — at
+# ReminderDAO.MAX_ACTIVE_HABITS (50), an unbounded report could exceed
+# Telegram's 4096-char message limit. The "Итого" total below still sums
+# ALL rows, shown or not — only the per-habit listing is capped.
+_REPORT_ROWS_LIMIT = 30
 
 
 async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
@@ -127,6 +134,9 @@ def _build_report_text(
     for row in rows:
         total_done += row["done"]
         total_not_today += row["not_today"]
+
+    shown_rows, hidden_rows = limit_items(rows, _REPORT_ROWS_LIMIT)
+    for row in shown_rows:
         streak = _current_streak_label(reminders_by_id.get(row["reminder_id"]))
         streak_suffix = f" · 🔥 {streak}" if streak > 0 else ""
         # 3.2: EMA score next to the streak — computed from the habit's full
@@ -135,7 +145,7 @@ def _build_report_text(
         score_suffix = f" · 💪 {score}%" if score is not None else ""
         lines.append(
             l10n.get("habit_report_line", "🫧 {habit} — {done}/{total} ({rate}%){streak}").format(
-                habit=escape_markdown(row["habit_text"]),
+                habit=escape_markdown(preview_line(row["habit_text"])),
                 done=row["done"],
                 total=row["total"],
                 rate=row["rate"],
@@ -143,6 +153,8 @@ def _build_report_text(
             + streak_suffix
             + score_suffix
         )
+    if hidden_rows:
+        lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_rows))
 
     total_all = total_done + total_not_today
     total_rate = round(total_done / total_all * 100) if total_all else 0

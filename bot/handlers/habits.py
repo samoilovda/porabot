@@ -27,6 +27,7 @@ from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_k
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
+from bot.utils.pagination import limit_items, preview_line
 from bot.utils.time_ext import (
     format_time,
     local_time_today_strict,
@@ -37,6 +38,11 @@ from bot.utils.time_ext import (
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
+
+# 1.5: caps the "My Habits" list — at ReminderDAO.MAX_ACTIVE_HABITS (50),
+# unbounded rendering could exceed both Telegram's ~4096-char message
+# limit and its ~100-button-per-keyboard limit (2 buttons/habit here).
+_HABIT_LIST_LIMIT = 25
 
 class HabitState(StatesGroup):
     waiting_for_name = State()
@@ -399,7 +405,11 @@ async def cb_habit_list(
     except Exception:
         today_str = datetime.now(pytz.UTC).date().isoformat()
 
-    for i, h in enumerate(habits, start=1):
+    # 1.5: bound both message length and keyboard button count — see
+    # _HABIT_LIST_LIMIT's comment above.
+    shown_habits, hidden_habits = limit_items(habits, _HABIT_LIST_LIMIT)
+
+    for i, h in enumerate(shown_habits, start=1):
         streak, best = _habit_streak_labels(h)
         # 3.2: EMA score alongside the streak — additive, doesn't zero out
         # on a single missed cycle the way the streak does.
@@ -420,7 +430,7 @@ async def cb_habit_list(
         text_lines.append(
             l10n["habit_list_item"].format(
                 index=i,
-                habit=escape_markdown(h.reminder_text),
+                habit=escape_markdown(preview_line(h.reminder_text)),
                 time=time_str,
                 streak=streak,
                 best=best,
@@ -449,13 +459,19 @@ async def cb_habit_list(
         )
         builder.row(*row)
 
+    if hidden_habits:
+        text_lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_habits))
+
     builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_back_dash"))
-    
-    await callback.message.edit_text(
-        "\n".join(text_lines), 
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
+
+    try:
+        await callback.message.edit_text(
+            "\n".join(text_lines),
+            parse_mode="Markdown",
+            reply_markup=builder.as_markup()
+        )
+    except TelegramBadRequest:
+        pass  # Concurrent tap or an edge case the length bound above didn't fully catch — safe to ignore.
     await callback.answer()
 
 @router.callback_query(F.data == "habit_back_dash")

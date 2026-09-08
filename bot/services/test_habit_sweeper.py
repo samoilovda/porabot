@@ -32,7 +32,7 @@ async def _make_user(session, *, created_at=None) -> User:
 
 
 async def test_fixed_habit_missed_after_grace_creates_event(session) -> None:
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     due = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
     reminder = await reminder_dao.create_reminder(
@@ -48,7 +48,7 @@ async def test_fixed_habit_missed_after_grace_creates_event(session) -> None:
     reminder.created_at = due - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -58,7 +58,7 @@ async def test_fixed_habit_missed_after_grace_creates_event(session) -> None:
 
 
 async def test_fixed_habit_already_done_creates_no_event(session) -> None:
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     due = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
     reminder = await reminder_dao.create_reminder(
@@ -75,7 +75,7 @@ async def test_fixed_habit_already_done_creates_no_event(session) -> None:
     reminder.created_at = due - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -83,7 +83,7 @@ async def test_fixed_habit_already_done_creates_no_event(session) -> None:
 
 
 async def test_fixed_habit_beyond_retrospection_window_creates_no_event(session) -> None:
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     due = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=10)
     reminder = await reminder_dao.create_reminder(
@@ -99,7 +99,7 @@ async def test_fixed_habit_beyond_retrospection_window_creates_no_event(session)
     reminder.created_at = due - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -107,7 +107,7 @@ async def test_fixed_habit_beyond_retrospection_window_creates_no_event(session)
 
 
 async def test_fluid_habit_not_marked_yesterday_creates_missed_event(session) -> None:
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     reminder = await reminder_dao.create_reminder(
         user_id=1,
@@ -122,7 +122,7 @@ async def test_fluid_habit_not_marked_yesterday_creates_missed_event(session) ->
     reminder.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -148,7 +148,7 @@ async def test_fluid_habit_marked_yesterday_creates_no_event(session) -> None:
     reminder.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -156,7 +156,7 @@ async def test_fluid_habit_marked_yesterday_creates_no_event(session) -> None:
 
 
 async def test_habit_created_today_does_not_close_yesterday(session) -> None:
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     reminder = await reminder_dao.create_reminder(
@@ -172,7 +172,7 @@ async def test_habit_created_today_does_not_close_yesterday(session) -> None:
     reminder.created_at = now  # created today — "yesterday" isn't a real cycle
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     habit_event_dao = HabitEventDAO(session)
     events = await habit_event_dao.get_events_in_range(1, "2000-01-01", "2100-01-01")
@@ -182,7 +182,7 @@ async def test_habit_created_today_does_not_close_yesterday(session) -> None:
 async def test_fluid_streak_resets_even_without_briefs(session) -> None:
     # W3: streak reset must not depend on process_daily_briefs ever running for
     # this user (briefs disabled, or the evening brief lands in quiet hours).
-    await _make_user(session)
+    user = await _make_user(session)
     reminder_dao = ReminderDAO(session)
     reminder = await reminder_dao.create_reminder(
         user_id=1,
@@ -200,6 +200,6 @@ async def test_fluid_streak_resets_even_without_briefs(session) -> None:
     reminder.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
     await session.flush()
 
-    await _sweep_user(session, 1)
+    await _sweep_user(session, user)
 
     assert reminder.fluid_streak_current == 0

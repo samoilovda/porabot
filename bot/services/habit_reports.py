@@ -16,7 +16,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO
-from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
 from bot.utils.markdown import escape_markdown
 from bot.utils.pagination import limit_items, preview_line
@@ -254,9 +253,21 @@ async def process_habit_reports() -> None:
     session_pool_factory = _instance.session_pool
 
     try:
+        # 2.3: fetch full User rows in ONE query instead of one query per
+        # candidate (`select(User.id)` + per-id `get_by_id` session,
+        # below) — same fix as 2.3's missed_recovery.py/habit_sweeper.py
+        # changes. The tz/time/weekday/claim-date checks are cheap
+        # in-memory comparisons; a per-user session is now only opened for
+        # users that pass all of them, the subset that actually touches
+        # the DB again (the claim UPDATE, report generation, the send).
+        # Nothing here mutates `user` directly and relies on ORM
+        # dirty-tracking to persist it — every write goes through an
+        # explicit `update(User)...` statement keyed by user.id, so a
+        # detached row (from this closed session) is safe to read from
+        # for the rest of this function.
         async with session_pool_factory() as session:
             result = await session.execute(
-                select(User.id)
+                select(User)
                 .distinct()
                 .join(Reminder)
                 .where(
@@ -264,45 +275,45 @@ async def process_habit_reports() -> None:
                     Reminder.is_habit.is_(True),
                 )
             )
-            user_ids = result.scalars().all()
+            candidates = result.scalars().all()
 
-        for uid in user_ids:
+        eligible_users = []
+        for user in candidates:
+            try:
+                tz = pytz.timezone(user.timezone)
+            except Exception:
+                tz = pytz.UTC
+            now_local = datetime.now(tz)
+
+            # Habit reports intentionally ignore quiet hours: the default
+            # report time (23:50) falls inside the default quiet window
+            # (23:00-07:00), so honoring it would mean a user who enabled
+            # quiet hours never receives the report they explicitly set up.
+            #
+            # 1.5: "time has passed" (<), not "time matches exactly" (!=)
+            # — an exact-minute match means any downtime spanning that one
+            # minute (deploy, restart, a slow prior iteration of this same
+            # loop over many users) loses the report for a full week/month,
+            # same class of bug daily_briefs's morning/evening window fixed.
+            # The persisted last_habit_report_date claim below is what
+            # actually prevents a resend, same as daily_briefs — the time
+            # check only decides whether it's time to look at all.
+            if now_local.strftime("%H:%M") < getattr(user, "habit_report_time", "23:50"):
+                continue
+            if now_local.weekday() != int(getattr(user, "habit_report_weekday", 6)):
+                continue
+
+            # Atomic claim before sending — mirrors daily_briefs's
+            # _claim_brief_slot.
+            today_key = now_local.date().isoformat()
+            if getattr(user, "last_habit_report_date", None) == today_key:
+                continue
+
+            eligible_users.append((user, now_local, today_key))
+
+        for user, now_local, today_key in eligible_users:
             async with session_pool_factory() as session:
                 try:
-                    user_dao = UserDAO(session)
-                    user = await user_dao.get_by_id(uid)
-                    if not user:
-                        continue
-
-                    try:
-                        tz = pytz.timezone(user.timezone)
-                    except Exception:
-                        tz = pytz.UTC
-                    now_local = datetime.now(tz)
-
-                    # Habit reports intentionally ignore quiet hours: the default
-                    # report time (23:50) falls inside the default quiet window
-                    # (23:00-07:00), so honoring it would mean a user who enabled
-                    # quiet hours never receives the report they explicitly set up.
-                    #
-                    # 1.5: "time has passed" (<), not "time matches exactly" (!=)
-                    # — an exact-minute match means any downtime spanning that one
-                    # minute (deploy, restart, a slow prior iteration of this same
-                    # loop over many users) loses the report for a full week/month,
-                    # same class of bug daily_briefs's morning/evening window fixed.
-                    # The persisted last_habit_report_date claim below is what
-                    # actually prevents a resend, same as daily_briefs — the time
-                    # check only decides whether it's time to look at all.
-                    if now_local.strftime("%H:%M") < getattr(user, "habit_report_time", "23:50"):
-                        continue
-                    if now_local.weekday() != int(getattr(user, "habit_report_weekday", 6)):
-                        continue
-
-                    # Atomic claim before sending — mirrors daily_briefs's
-                    # _claim_brief_slot.
-                    today_key = now_local.date().isoformat()
-                    if getattr(user, "last_habit_report_date", None) == today_key:
-                        continue
                     claim = await session.execute(
                         update(User)
                         .where(
@@ -331,7 +342,7 @@ async def process_habit_reports() -> None:
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    logger.error("Error building habit report for user %s: %s", uid, e, exc_info=True)
+                    logger.error("Error building habit report for user %s: %s", user.id, e, exc_info=True)
 
     except Exception as e:
         logger.error("Error in habit reports job: %s", e, exc_info=True)

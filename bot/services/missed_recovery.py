@@ -9,7 +9,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy import or_, select, update
 
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
@@ -68,33 +67,44 @@ async def process_missed_task_recovery() -> None:
     session_pool_factory = _instance.session_pool
 
     try:
+        # 2.3: fetch every enabled user's row in ONE query instead of one
+        # query per candidate (`select(User.id)` + per-id `get_by_id`
+        # session, below). The timezone/time-window/claim-already-set
+        # checks are cheap in-memory comparisons — every one of them used
+        # to cost a full session-open-and-SELECT round trip against SQLite
+        # even for the overwhelming majority of users this tick has
+        # nothing to do for. A per-user session is now only opened for
+        # users that pass every filter, exactly the subset that actually
+        # touches the DB again (get_overdue_pending_tasks, the claim
+        # UPDATE, the send). Detached rows from an expire_on_commit=False
+        # session keep their already-loaded scalar attributes, so `user`
+        # below stays fully usable after this session closes.
         async with session_pool_factory() as session:
             result = await session.execute(
-                select(User.id).where(User.missed_recovery_enabled.is_(True))
+                select(User).where(User.missed_recovery_enabled.is_(True))
             )
-            user_ids = result.scalars().all()
+            candidates = result.scalars().all()
 
-        for uid in user_ids:
+        eligible_users = []
+        for user in candidates:
+            try:
+                tz = pytz.timezone(user.timezone)
+            except Exception:
+                tz = pytz.UTC
+            now_local = datetime.now(tz)
+            if now_local.strftime("%H:%M") < getattr(user, "missed_recovery_time", RECOVERY_LOCAL_TIME):
+                continue
+            if is_quiet_hours(user, now_local):
+                continue
+
+            today_key = now_local.strftime("%Y-%m-%d")
+            if getattr(user, "last_missed_recovery_date", None) == today_key:
+                continue
+
+            eligible_users.append((user, now_local, today_key))
+
+        for user, now_local, today_key in eligible_users:
             async with session_pool_factory() as session:
-                user_dao = UserDAO(session)
-                user = await user_dao.get_by_id(uid)
-                if not user:
-                    continue
-
-                try:
-                    tz = pytz.timezone(user.timezone)
-                except Exception:
-                    tz = pytz.UTC
-                now_local = datetime.now(tz)
-                if now_local.strftime("%H:%M") < getattr(user, "missed_recovery_time", RECOVERY_LOCAL_TIME):
-                    continue
-                if is_quiet_hours(user, now_local):
-                    continue
-
-                today_key = now_local.strftime("%Y-%m-%d")
-                if getattr(user, "last_missed_recovery_date", None) == today_key:
-                    continue
-
                 reminder_dao = ReminderDAO(session)
                 overdue = await reminder_dao.get_overdue_pending_tasks(
                     user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT

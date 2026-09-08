@@ -19,12 +19,13 @@ def _load_module(module_rel_path: str):
 
 
 class _FakeSession:
-    def __init__(self):
+    def __init__(self, candidate_user):
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._candidate_user = candidate_user
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]), rowcount=1)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self._candidate_user]), rowcount=1)
 
     async def __aenter__(self):
         return self
@@ -93,7 +94,7 @@ async def test_morning_brief_merges_fluid_habits_into_one_message_and_pins_it(mo
         async def has_event_for_cycle(self, reminder_id, cycle_key):
             return False
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     sent_message = MagicMock(spec=daily_briefs.Message, message_id=555)
     send_message = AsyncMock(return_value=sent_message)
     pin_chat_message = AsyncMock()
@@ -175,7 +176,7 @@ async def test_evening_brief_unpins_stored_morning_brief_message(monkeypatch) ->
         async def has_event_for_cycle(self, reminder_id, cycle_key):
             return False
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     send_message = AsyncMock(return_value=MagicMock(spec=daily_briefs.Message, message_id=777))
     unpin_chat_message = AsyncMock()
     daily_briefs.ReminderDAO = _FakeReminderDAO

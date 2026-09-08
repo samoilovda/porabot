@@ -19,12 +19,13 @@ def _load_module(module_rel_path: str):
 
 
 class _FakeSession:
-    def __init__(self):
+    def __init__(self, candidate_user):
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._candidate_user = candidate_user
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]), rowcount=1)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self._candidate_user]), rowcount=1)
 
     async def __aenter__(self):
         return self
@@ -72,7 +73,7 @@ async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatc
         async def get_by_id(self, uid):
             return fake_user
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     send_message = AsyncMock()
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO

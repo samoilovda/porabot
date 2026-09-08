@@ -19,12 +19,13 @@ def _load_module(module_rel_path: str):
 
 
 class _FakeSession:
-    def __init__(self):
+    def __init__(self, candidate_user):
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._candidate_user = candidate_user
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]), rowcount=1)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self._candidate_user]), rowcount=1)
 
     async def __aenter__(self):
         return self
@@ -61,20 +62,12 @@ async def test_report_still_fires_a_few_minutes_after_configured_time() -> None:
         def now(cls, tz=None):
             return report_weekday_now.replace(tzinfo=tz)
 
-    class _FakeUserDAO:
-        def __init__(self, session):
-            self.session = session
-
-        async def get_by_id(self, uid):
-            return fake_user
-
     process_called = AsyncMock(return_value=True)
 
-    habit_reports.UserDAO = _FakeUserDAO
     habit_reports.datetime = _FrozenDatetime
     habit_reports._process_user_reports = process_called
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     real_scheduler_module._instance = SimpleNamespace(
         bot=SimpleNamespace(),
         session_pool=lambda: session,
@@ -111,20 +104,12 @@ async def test_report_not_sent_before_configured_time() -> None:
         def now(cls, tz=None):
             return before_report_time.replace(tzinfo=tz)
 
-    class _FakeUserDAO:
-        def __init__(self, session):
-            self.session = session
-
-        async def get_by_id(self, uid):
-            return fake_user
-
     process_called = AsyncMock(return_value=True)
 
-    habit_reports.UserDAO = _FakeUserDAO
     habit_reports.datetime = _FrozenDatetime
     habit_reports._process_user_reports = process_called
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     real_scheduler_module._instance = SimpleNamespace(
         bot=SimpleNamespace(),
         session_pool=lambda: session,

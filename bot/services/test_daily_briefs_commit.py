@@ -19,12 +19,13 @@ def _load_module(module_rel_path: str):
 
 
 class _FakeSession:
-    def __init__(self):
+    def __init__(self, candidate_user):
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._candidate_user = candidate_user
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [7]), rowcount=1)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [self._candidate_user]), rowcount=1)
 
     async def __aenter__(self):
         return self
@@ -98,7 +99,7 @@ async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
         async def has_event_for_cycle(self, reminder_id, cycle_key):
             return False
 
-    session = _FakeSession()
+    session = _FakeSession(fake_user)
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.HabitEventDAO = _FakeHabitEventDAO

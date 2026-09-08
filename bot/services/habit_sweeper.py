@@ -16,7 +16,6 @@ from sqlalchemy import select
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
 
 logger = logging.getLogger(__name__)
@@ -104,12 +103,7 @@ async def _sweep_fluid_habits(session, reminder_dao: ReminderDAO, habit_event_da
         )
 
 
-async def _sweep_user(session, user_id: int) -> None:
-    user_dao = UserDAO(session)
-    user = await user_dao.get_by_id(user_id)
-    if not user:
-        return
-
+async def _sweep_user(session, user) -> None:
     reminder_dao = ReminderDAO(session)
     habit_event_dao = HabitEventDAO(session)
 
@@ -127,9 +121,16 @@ async def sweep_habit_cycles() -> None:
     session_pool_factory = _instance.session_pool
 
     try:
+        # 2.3: fetch full User rows in the same broad query that already
+        # narrows candidates to "has a pending habit" — _sweep_user used to
+        # re-fetch the same row via UserDAO.get_by_id inside its own
+        # session, an extra SELECT per candidate for data already sitting
+        # in this result set. Detached rows from an expire_on_commit=False
+        # session keep their loaded scalar attributes (id, timezone, ...),
+        # which is all _sweep_fixed_habits/_sweep_fluid_habits ever read.
         async with session_pool_factory() as session:
             result = await session.execute(
-                select(User.id)
+                select(User)
                 .distinct()
                 .join(Reminder)
                 .where(
@@ -137,16 +138,16 @@ async def sweep_habit_cycles() -> None:
                     Reminder.status == "pending",
                 )
             )
-            user_ids = result.scalars().all()
+            candidates = result.scalars().all()
 
-        for uid in user_ids:
+        for user in candidates:
             async with session_pool_factory() as session:
                 try:
-                    await _sweep_user(session, uid)
+                    await _sweep_user(session, user)
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    logger.error("Error sweeping habits for user %s: %s", uid, e, exc_info=True)
+                    logger.error("Error sweeping habits for user %s: %s", user.id, e, exc_info=True)
 
     except Exception as e:
         logger.error("Error in habit sweeper job: %s", e, exc_info=True)

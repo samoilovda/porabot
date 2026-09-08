@@ -17,7 +17,6 @@ from sqlalchemy import and_, or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User
 from bot.keyboards.inline import (
     get_evening_wrapup_keyboard,
@@ -304,13 +303,23 @@ async def process_daily_briefs() -> None:
         async with session_pool_factory() as session:
             user_ids = await get_users_needing_brief_check(session)
 
-        for uid in user_ids:
+        # 2.3: one batch query for every candidate's full User row instead
+        # of a per-candidate session-open-and-get_by_id (below, previously)
+        # — same fix as missed_recovery.py/habit_sweeper.py/
+        # habit_reports.py. Safe to use a detached row throughout this
+        # function's body: every user-state write here goes through an
+        # explicit `update(User)...` statement keyed by user.id (see the
+        # comment above the one place that used to rely on dirty-tracking
+        # instead), never on `user` being attached to the session that
+        # eventually commits.
+        candidates: list[User] = []
+        if user_ids:
             async with session_pool_factory() as session:
-                user_dao = UserDAO(session)
-                user = await user_dao.get_by_id(uid)
-                if not user:
-                    continue
+                result = await session.execute(select(User).where(User.id.in_(user_ids)))
+                candidates = result.scalars().all()
 
+        for user in candidates:
+            async with session_pool_factory() as session:
                 # BUG-D1 FIX: isolate each user in its own try/except (mirroring
                 # habit_reports.py). Previously the whole batch shared a single
                 # try/except at the function level, so an error anywhere in one
@@ -370,7 +379,20 @@ async def process_daily_briefs() -> None:
                         # briefs got enabled after evening_brief_time. Sending a
                         # "good morning" brief this late would be confusing; mark
                         # it as handled instead of sending a stale one.
+                        #
+                        # 2.3: explicit UPDATE alongside the attribute set — every
+                        # other user-state write in this function already does
+                        # both (see _claim_brief_slot/_pin_brief_message/etc.), so
+                        # persistence never depends on `user` being the specific
+                        # ORM-tracked instance this session happened to load; this
+                        # was the one exception, relying on dirty-tracking plus the
+                        # eventual commit() below. Making it explicit is what lets
+                        # `user` safely be a batch-prefetched (and here, detached)
+                        # row instead of a fresh per-candidate get_by_id fetch.
                         user.last_morning_brief_date = today_str
+                        await session.execute(
+                            update(User).where(User.id == user.id).values(last_morning_brief_date=today_str)
+                        )
 
                     if morning_due:
                         # Atomically claim today's morning slot before sending —
@@ -525,7 +547,7 @@ async def process_daily_briefs() -> None:
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    logger.error("Error processing daily brief for user %s: %s", uid, e, exc_info=True)
+                    logger.error("Error processing daily brief for user %s: %s", user.id, e, exc_info=True)
 
     except Exception as e:
         logger.error("Error in daily briefs job: %s", e, exc_info=True)

@@ -65,7 +65,10 @@ async def test_habit_list_shows_both_fixed_and_fluid_habits() -> None:
         get_user_reminders=AsyncMock(return_value=[fixed]),
         get_active_fluid_habits=AsyncMock(return_value=[fluid]),
     )
-    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
+    habit_event_dao = SimpleNamespace(
+        get_events_for_reminder=AsyncMock(return_value=[]),
+        get_events_for_reminders=AsyncMock(return_value={}),
+    )
     user = SimpleNamespace(id=99, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(edit_text=AsyncMock())
@@ -99,7 +102,10 @@ async def test_habit_list_shows_only_fluid_habit_when_no_fixed_habits_exist() ->
         get_user_reminders=AsyncMock(return_value=[]),
         get_active_fluid_habits=AsyncMock(return_value=[fluid]),
     )
-    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
+    habit_event_dao = SimpleNamespace(
+        get_events_for_reminder=AsyncMock(return_value=[]),
+        get_events_for_reminders=AsyncMock(return_value={}),
+    )
     user = SimpleNamespace(id=99, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(edit_text=AsyncMock())

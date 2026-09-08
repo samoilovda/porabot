@@ -57,7 +57,10 @@ async def _run_habit_list(habit) -> str:
         get_user_reminders=AsyncMock(return_value=fixed),
         get_active_fluid_habits=AsyncMock(return_value=fluid),
     )
-    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
+    habit_event_dao = SimpleNamespace(
+        get_events_for_reminder=AsyncMock(return_value=[]),
+        get_events_for_reminders=AsyncMock(return_value={}),
+    )
     message = SimpleNamespace(edit_text=AsyncMock())
     callback = SimpleNamespace(data="habit_list", message=message, answer=AsyncMock())
 

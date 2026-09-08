@@ -24,6 +24,7 @@ from bot.handlers.reminders import (
     active_auto_delete_tasks,
 )
 from bot.keyboards.inline import get_fluid_pick_time_keyboard, get_undo_delete_keyboard
+from bot.services.habit_reports import compute_habit_score
 from bot.services.scheduler import SchedulerService
 from bot.services.parser import InputParser
 from bot.utils.markdown import escape_markdown
@@ -409,14 +410,18 @@ async def cb_habit_list(
     # _HABIT_LIST_LIMIT's comment above.
     shown_habits, hidden_habits = limit_items(habits, _HABIT_LIST_LIMIT)
 
+    # fix(2.1): one query for every shown habit's events instead of one
+    # query per habit (was N+1 — up to _HABIT_LIST_LIMIT round trips per
+    # "My Habits" open). Only fetched for the habits actually rendered,
+    # same as get_events_for_reminders' other call site
+    # (bot/services/webserver.py's handle_miniapp_scores).
+    events_by_reminder = await habit_event_dao.get_events_for_reminders([h.id for h in shown_habits])
+
     for i, h in enumerate(shown_habits, start=1):
         streak, best = _habit_streak_labels(h)
         # 3.2: EMA score alongside the streak — additive, doesn't zero out
         # on a single missed cycle the way the streak does.
-        from bot.services.habit_reports import compute_habit_score
-
-        habit_events = await habit_event_dao.get_events_for_reminder(h.id)
-        score = compute_habit_score(habit_events)
+        score = compute_habit_score(events_by_reminder.get(h.id, []))
         if h.is_fluid_habit:
             # fluid_planned_time is only meaningful for today's cycle — a stale
             # value from a previous day must not be displayed as if still valid.

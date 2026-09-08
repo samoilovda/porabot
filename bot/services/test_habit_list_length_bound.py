@@ -49,7 +49,10 @@ async def test_habit_list_caps_rendered_items_and_notes_the_rest() -> None:
         get_user_reminders=AsyncMock(return_value=many_habits),
         get_active_fluid_habits=AsyncMock(return_value=[]),
     )
-    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
+    habit_event_dao = SimpleNamespace(
+        get_events_for_reminder=AsyncMock(return_value=[]),
+        get_events_for_reminders=AsyncMock(return_value={}),
+    )
     user = SimpleNamespace(id=99, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(edit_text=AsyncMock())
@@ -79,7 +82,10 @@ async def test_habit_list_truncates_a_very_long_habit_text() -> None:
         get_user_reminders=AsyncMock(return_value=[_fixed_habit(1, text=long_text)]),
         get_active_fluid_habits=AsyncMock(return_value=[]),
     )
-    habit_event_dao = SimpleNamespace(get_events_for_reminder=AsyncMock(return_value=[]))
+    habit_event_dao = SimpleNamespace(
+        get_events_for_reminder=AsyncMock(return_value=[]),
+        get_events_for_reminders=AsyncMock(return_value={}),
+    )
     user = SimpleNamespace(id=99, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(edit_text=AsyncMock())

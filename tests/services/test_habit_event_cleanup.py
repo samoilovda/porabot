@@ -113,7 +113,12 @@ async def _run_cleanup_sweep(session_factory) -> None:
 
 async def test_del_task_path_removes_habit_events(session, session_factory, monkeypatch) -> None:
     # Fixed habits appear in "My Tasks", whose rows carry a del_task_ button.
-    monkeypatch.setattr(reminders_module, "_UNDO_DELETE_WINDOW", 0)
+    # 4.1: callback_delete_task/callback_edit_delete now live in separate
+    # reminders_listing.py/reminders_repeat.py modules, but both read
+    # _UNDO_DELETE_WINDOW via a module-qualified reminders_shared reference
+    # (not a static "from x import name" copy) specifically so a single
+    # patch here reaches both.
+    monkeypatch.setattr(reminders_module.reminders_shared, "_UNDO_DELETE_WINDOW", 0)
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
     user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1
@@ -135,7 +140,12 @@ async def test_del_task_path_removes_habit_events(session, session_factory, monk
 
 async def test_edit_delete_path_removes_habit_events(session, session_factory, monkeypatch) -> None:
     # Habits reach this path through the ⚙️ button in the habits list.
-    monkeypatch.setattr(reminders_module, "_UNDO_DELETE_WINDOW", 0)
+    # 4.1: callback_delete_task/callback_edit_delete now live in separate
+    # reminders_listing.py/reminders_repeat.py modules, but both read
+    # _UNDO_DELETE_WINDOW via a module-qualified reminders_shared reference
+    # (not a static "from x import name" copy) specifically so a single
+    # patch here reaches both.
+    monkeypatch.setattr(reminders_module.reminders_shared, "_UNDO_DELETE_WINDOW", 0)
     reminder_dao, habit_event_dao, reminder = await _seed_habit_with_event(session)
     user = await UserDAO(session).get_by_id(1)
     assert await _event_count(session) == 1

@@ -17,8 +17,11 @@ def _forwarded_task_state_filter():
     reminders_module = _load_module("bot/handlers/reminders.py")
     from aiogram.filters.state import StateFilter
 
+    # 4.1: handle_forwarded_task now lives on the reminders_wizard
+    # sub-router (included into the top-level composed router), not
+    # registered directly on reminders_module.router itself.
     handler = next(
-        h for h in reminders_module.router.message.handlers
+        h for h in reminders_module.reminders_wizard.router.message.handlers
         if h.callback.__name__ == "handle_forwarded_task"
     )
     state_filters = [f.callback for f in handler.filters if isinstance(f.callback, StateFilter)]

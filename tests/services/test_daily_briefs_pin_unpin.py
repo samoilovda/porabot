@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -101,7 +101,7 @@ async def test_morning_brief_merges_fluid_habits_into_one_message_and_pins_it(mo
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.HabitEventDAO = _FakeHabitEventDAO
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message, pin_chat_message=pin_chat_message),
         session_pool=lambda: session,
     )
@@ -119,7 +119,7 @@ async def test_morning_brief_merges_fluid_habits_into_one_message_and_pins_it(mo
         pin_chat_message.assert_awaited_once_with(chat_id=7, message_id=555, disable_notification=True)
         assert fake_user.pinned_brief_message_id == 555
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None
 
 
 async def test_evening_brief_unpins_stored_morning_brief_message(monkeypatch) -> None:
@@ -182,7 +182,7 @@ async def test_evening_brief_unpins_stored_morning_brief_message(monkeypatch) ->
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.HabitEventDAO = _FakeHabitEventDAO
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message, unpin_chat_message=unpin_chat_message),
         session_pool=lambda: session,
     )
@@ -193,4 +193,4 @@ async def test_evening_brief_unpins_stored_morning_brief_message(monkeypatch) ->
         unpin_chat_message.assert_awaited_once_with(chat_id=7, message_id=555)
         assert fake_user.pinned_brief_message_id is None
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None

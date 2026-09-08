@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -103,7 +103,7 @@ async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.HabitEventDAO = _FakeHabitEventDAO
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=AsyncMock()),
         session_pool=lambda: session,
     )
@@ -111,7 +111,7 @@ async def test_evening_brief_commits_fluid_streak_reset(monkeypatch) -> None:
     try:
         await daily_briefs.process_daily_briefs()
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None
 
     assert reset_calls == [(99, "UTC")]
     assert fluid_habit.fluid_streak_current == 0

@@ -113,12 +113,14 @@ async def _sweep_user(session, user) -> None:
 
 async def sweep_habit_cycles() -> None:
     """Detect and record auto-skipped habit cycles for every user."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to sweep habit cycles: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to sweep habit cycles: AppContext not set")
         return
 
-    session_pool_factory = _instance.session_pool
+    session_pool_factory = ctx.session_pool
 
     try:
         # 2.3: fetch full User rows in the same broad query that already

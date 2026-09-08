@@ -1,9 +1,10 @@
 """
 SchedulerService — APScheduler facade for reminder jobs.
 
-Job targets cannot hold unpicklable 'self' references, so a module-level
-``_instance`` singleton lets the free function ``execute_reminder_job``
-reach the service at call time. This is a known APScheduler tradeoff.
+Job targets cannot hold unpicklable 'self' references, so the module-level
+free function ``execute_reminder_job`` reaches the running service via
+bot.context.get_context() (4.2) instead of holding a reference itself. This
+is a known APScheduler tradeoff.
 """
 
 import logging
@@ -17,6 +18,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from bot.context import AppContext, set_context
+from bot.context import get_context as _get_context
 from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
@@ -35,9 +38,6 @@ FORBIDDEN_STRIKES_LIMIT = 3
 # stays unset) catches up on the next restart instead.
 SEND_RETRY_BACKOFF_MINUTES = [1, 5, 15, 60]
 
-# Module-level singleton — set by SchedulerService.__init__
-_instance = None
-
 
 # ---------------------------------------------------------------------------
 # APScheduler job target (must be a top-level function, not a bound method)
@@ -45,10 +45,12 @@ _instance = None
 
 async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
     """Called by APScheduler at the scheduled time to fire a reminder."""
-    if not _instance:
-        logger.error("Cannot execute reminder %s: SchedulerService not initialised.", reminder_id)
+    try:
+        ctx = _get_context()
+    except RuntimeError:
+        logger.error("Cannot execute reminder %s: AppContext not set.", reminder_id)
         return
-    await _instance._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
+    await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +70,7 @@ class SchedulerService:
         self.scheduler = scheduler
         self.bot = bot
         self.session_pool = session_pool
-        global _instance
-        _instance = self
+        set_context(AppContext(bot=bot, session_pool=session_pool, scheduler=self))
 
     # ------------------------------------------------------------------
     # Public API

@@ -244,13 +244,15 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
 
 async def process_habit_reports() -> None:
     """Send weekly/monthly habit reports to users whose scheduled slot is now."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to process habit reports: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to process habit reports: AppContext not set")
         return
 
-    bot = _instance.bot
-    session_pool_factory = _instance.session_pool
+    bot = ctx.bot
+    session_pool_factory = ctx.session_pool
 
     try:
         # 2.3: fetch full User rows in ONE query instead of one query per

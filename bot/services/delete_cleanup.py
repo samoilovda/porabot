@@ -22,12 +22,14 @@ logger = logging.getLogger(__name__)
 
 async def process_deferred_deletes() -> None:
     """Hard-delete every reminder whose undo window has elapsed."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to process deferred deletes: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to process deferred deletes: AppContext not set")
         return
 
-    session_pool_factory = _instance.session_pool
+    session_pool_factory = ctx.session_pool
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
 
     try:

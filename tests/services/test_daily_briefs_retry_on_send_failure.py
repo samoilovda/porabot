@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import bot.services.scheduler as scheduler_module
+import bot.context as context_module
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
 from bot.database.models import User
@@ -57,14 +57,14 @@ async def test_network_error_releases_claim_so_next_tick_retries(session_factory
     await _seed_user_with_task(session_factory, morning_time=morning_time)
 
     failing_send = AsyncMock(side_effect=TimeoutError("network hiccup"))
-    scheduler_module._instance = SimpleNamespace(
+    context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=failing_send),
         session_pool=session_factory,
     )
     try:
         await process_daily_briefs()
     finally:
-        scheduler_module._instance = None
+        context_module._context = None
 
     assert failing_send.await_count == 1
     async with session_factory() as session:
@@ -80,17 +80,17 @@ async def test_retry_after_release_succeeds_exactly_once(session_factory) -> Non
     await _seed_user_with_task(session_factory, morning_time=morning_time)
 
     failing_send = AsyncMock(side_effect=TimeoutError("network hiccup"))
-    scheduler_module._instance = SimpleNamespace(
+    context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=failing_send),
         session_pool=session_factory,
     )
     try:
         await process_daily_briefs()  # first tick: fails, releases claim
     finally:
-        scheduler_module._instance = None
+        context_module._context = None
 
     ok_send = AsyncMock(return_value=SimpleNamespace(message_id=1))
-    scheduler_module._instance = SimpleNamespace(
+    context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=ok_send),
         session_pool=session_factory,
     )
@@ -98,7 +98,7 @@ async def test_retry_after_release_succeeds_exactly_once(session_factory) -> Non
         await process_daily_briefs()  # second tick (retry): succeeds
         await process_daily_briefs()  # third tick: must not resend
     finally:
-        scheduler_module._instance = None
+        context_module._context = None
 
     assert ok_send.await_count == 1
     async with session_factory() as session:

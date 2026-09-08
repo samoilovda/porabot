@@ -58,13 +58,15 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
 
 async def process_missed_task_recovery() -> None:
     """Send a daily catch-up digest for overdue pending tasks (once per local day)."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to process missed-task recovery: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to process missed-task recovery: AppContext not set")
         return
 
-    bot = _instance.bot
-    session_pool_factory = _instance.session_pool
+    bot = ctx.bot
+    session_pool_factory = ctx.session_pool
 
     try:
         # 2.3: fetch every enabled user's row in ONE query instead of one

@@ -15,8 +15,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import bot.context as context_module
 import bot.handlers.reminders as reminders_module
-import bot.services.scheduler as scheduler_module
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
@@ -104,11 +104,11 @@ async def _run_cleanup_sweep(session_factory) -> None:
     Mirrors how other services' tests point the module-level scheduler
     singleton at a test session pool.
     """
-    scheduler_module._instance = SimpleNamespace(session_pool=session_factory)
+    context_module._context = SimpleNamespace(session_pool=session_factory)
     try:
         await process_deferred_deletes()
     finally:
-        scheduler_module._instance = None
+        context_module._context = None
 
 
 async def test_del_task_path_removes_habit_events(session, session_factory, monkeypatch) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -85,7 +85,7 @@ async def test_stale_morning_window_is_suppressed_only_evening_brief_sent(monkey
     send_message = AsyncMock()
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message),
         session_pool=lambda: session,
     )
@@ -102,7 +102,7 @@ async def test_stale_morning_window_is_suppressed_only_evening_brief_sent(monkey
         assert fake_user.last_morning_brief_date == today_str
         assert fake_user.last_evening_brief_date == today_str
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None
 
 
 async def test_morning_brief_still_sent_when_evening_time_misconfigured_before_morning(monkeypatch) -> None:
@@ -161,7 +161,7 @@ async def test_morning_brief_still_sent_when_evening_time_misconfigured_before_m
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.datetime = _FrozenDatetime
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message),
         session_pool=lambda: session,
     )
@@ -172,4 +172,4 @@ async def test_morning_brief_still_sent_when_evening_time_misconfigured_before_m
         assert send_message.await_count >= 1
         assert fake_user.last_morning_brief_date == "2026-05-01"
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None

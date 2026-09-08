@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,7 +77,7 @@ async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatc
     send_message = AsyncMock()
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message),
         session_pool=lambda: session,
     )
@@ -93,4 +93,4 @@ async def test_morning_brief_fires_once_per_day_even_if_job_runs_late(monkeypatc
         await daily_briefs.process_daily_briefs()
         assert send_message.await_count == 1
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None

@@ -164,10 +164,11 @@ async def test_habit_is_hard_deleted_with_its_history_once_undo_window_elapses(s
         reminder_id = await _make_habit_with_history(session)
 
     scheduler = AsyncIOScheduler()
+    # SchedulerService.__init__ sets the AppContext itself (4.2) — process_
+    # deferred_deletes reaches session_pool through it below.
     service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=session_factory)
-    from bot.services import scheduler as scheduler_module
+    from bot import context as context_module
 
-    scheduler_module._instance = service
     try:
         async with session_factory() as session:
             reminder_dao = ReminderDAO(session)
@@ -198,4 +199,4 @@ async def test_habit_is_hard_deleted_with_its_history_once_undo_window_elapses(s
             )
             assert events == []
     finally:
-        scheduler_module._instance = None
+        context_module._context = None

@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import bot.services.scheduler as scheduler_module
+import bot.context as context_module
 from bot.database import models  # noqa: F401
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
@@ -49,7 +49,7 @@ async def _run_cleanup(maker) -> None:
     fake_instance.session_pool = maker
     import unittest.mock as mock
 
-    with mock.patch.object(scheduler_module, "_instance", fake_instance):
+    with mock.patch.object(context_module, "_context", fake_instance):
         await process_retention_cleanup()
 
 

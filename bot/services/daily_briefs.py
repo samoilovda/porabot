@@ -290,13 +290,15 @@ async def get_users_needing_brief_check(session) -> list[int]:
 
 async def process_daily_briefs() -> None:
     """Process morning/evening briefs for all users with active tasks."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to process daily briefs: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to process daily briefs: AppContext not set")
         return
 
-    bot = _instance.bot
-    session_pool_factory = _instance.session_pool
+    bot = ctx.bot
+    session_pool_factory = ctx.session_pool
     logger.info("Starting hourly daily briefs check...")
 
     try:

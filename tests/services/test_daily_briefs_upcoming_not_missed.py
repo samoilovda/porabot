@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -102,7 +102,7 @@ async def test_evening_brief_does_not_mark_not_yet_due_task_as_missed() -> None:
     daily_briefs.ReminderDAO = _FakeReminderDAO
     daily_briefs.UserDAO = _FakeUserDAO
     daily_briefs.datetime = _FrozenDatetime
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(send_message=send_message),
         session_pool=lambda: session,
     )
@@ -125,4 +125,4 @@ async def test_evening_brief_does_not_mark_not_yet_due_task_as_missed() -> None:
         assert "wrap_done_1" in callback_data
         assert "wrap_done_2" not in callback_data
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None

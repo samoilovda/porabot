@@ -51,12 +51,14 @@ async def process_retention_cleanup() -> None:
     is_habit and is_fluid_habit rows are always is_recurring=True) are
     never touched here regardless of age; only a genuinely finished,
     never-revisited one-off task qualifies."""
-    from bot.services.scheduler import _instance
-    if not _instance:
-        logger.error("Failed to process retention cleanup: SchedulerService not initialized")
+    from bot.context import get_context
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to process retention cleanup: AppContext not set")
         return
 
-    session_pool_factory = _instance.session_pool
+    session_pool_factory = ctx.session_pool
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     habit_event_cutoff = now_utc_naive - timedelta(days=HABIT_EVENT_RETENTION_DAYS)
     reminder_cutoff = now_utc_naive - timedelta(days=COMPLETED_REMINDER_RETENTION_DAYS)

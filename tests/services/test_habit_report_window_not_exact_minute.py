@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import bot.services.scheduler as real_scheduler_module
+import bot.context as real_context_module
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,7 +68,7 @@ async def test_report_still_fires_a_few_minutes_after_configured_time() -> None:
     habit_reports._process_user_reports = process_called
 
     session = _FakeSession(fake_user)
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(),
         session_pool=lambda: session,
     )
@@ -80,7 +80,7 @@ async def test_report_still_fires_a_few_minutes_after_configured_time() -> None:
         # went on to build/send the report instead of `continue`-ing past it.
         process_called.assert_awaited_once()
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None
 
 
 async def test_report_not_sent_before_configured_time() -> None:
@@ -110,7 +110,7 @@ async def test_report_not_sent_before_configured_time() -> None:
     habit_reports._process_user_reports = process_called
 
     session = _FakeSession(fake_user)
-    real_scheduler_module._instance = SimpleNamespace(
+    real_context_module._context = SimpleNamespace(
         bot=SimpleNamespace(),
         session_pool=lambda: session,
     )
@@ -121,4 +121,4 @@ async def test_report_not_sent_before_configured_time() -> None:
         process_called.assert_not_awaited()
         assert fake_user.last_habit_report_date is None
     finally:
-        real_scheduler_module._instance = None
+        real_context_module._context = None

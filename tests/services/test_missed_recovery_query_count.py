@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import bot.services.scheduler as scheduler_module
+import bot.context as context_module
 from bot.database import models  # noqa: F401
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
@@ -81,7 +81,7 @@ async def test_only_one_select_on_users_regardless_of_candidate_count(session_po
     fake_instance = type("FakeInstance", (), {})()
     fake_instance.bot = fake_bot
     fake_instance.session_pool = maker
-    monkeypatch.setattr(scheduler_module, "_instance", fake_instance)
+    monkeypatch.setattr(context_module, "_context", fake_instance)
 
     select_count = 0
 
@@ -118,7 +118,7 @@ async def test_not_due_users_receive_nothing(session_pool, monkeypatch) -> None:
     fake_instance = type("FakeInstance", (), {})()
     fake_instance.bot = fake_bot
     fake_instance.session_pool = maker
-    monkeypatch.setattr(scheduler_module, "_instance", fake_instance)
+    monkeypatch.setattr(context_module, "_context", fake_instance)
 
     await process_missed_task_recovery()
 

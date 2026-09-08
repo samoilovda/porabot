@@ -11,13 +11,16 @@ Invariants that hold across this whole module:
   - A habit is a `Reminder` row with `is_habit=True` (fixed-time) or
     `is_fluid_habit=True` (day-based, no fixed time) — not a separate table.
     See `is_habit_like()` at the bottom of this module for the fixed-habit
-    detection used throughout the codebase.
+    detection used throughout the codebase, and `Reminder.kind` /
+    `ReminderKind` for the three-way task/fixed-habit/fluid-habit
+    classification built on top of it.
   - Soft-migrations for columns added after initial release live in
     `bot/database/engine.py`'s `init_db`, not here — this file is always the
     CURRENT schema, not a migration history.
 """
 
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Optional
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
@@ -25,6 +28,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 # Import Base from engine module (defines table metadata)
 from bot.database.engine import Base
+
+
+class ReminderKind(StrEnum):
+    """The three shapes a `Reminder` row can take — not a stored column,
+    just a name for the is_habit/is_fluid_habit/is_habit_like() combination
+    every consumer was already computing ad hoc (see `Reminder.kind`).
+    """
+
+    TASK = "task"
+    FIXED_HABIT = "fixed_habit"
+    FLUID_HABIT = "fluid_habit"
 
 
 def _utcnow_naive() -> datetime:
@@ -380,6 +394,21 @@ class Reminder(Base):
         default=_utcnow_naive,
         server_default=func.now(),
     )
+
+    @property
+    def kind(self) -> ReminderKind:
+        """This row's task/fixed-habit/fluid-habit classification.
+
+        Not a stored column — computed the same way every call site used to
+        compute it inline (`is_habit_like(reminder) or reminder.is_fluid_habit`,
+        or a bare `getattr(reminder, "is_fluid_habit", False)`): fluid habits
+        are checked first since is_habit_like() already excludes them.
+        """
+        if self.is_fluid_habit:
+            return ReminderKind.FLUID_HABIT
+        if is_habit_like(self):
+            return ReminderKind.FIXED_HABIT
+        return ReminderKind.TASK
 
     def __repr__(self) -> str:
         """String representation for debugging."""

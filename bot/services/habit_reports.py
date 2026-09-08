@@ -16,7 +16,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO
-from bot.database.models import Reminder, User
+from bot.database.models import Reminder, ReminderKind, User
 from bot.utils.markdown import escape_markdown
 from bot.utils.pagination import limit_items, preview_line
 
@@ -109,7 +109,7 @@ def _aggregate(events) -> list[dict]:
 def _current_streak_label(reminder: Reminder | None) -> int:
     if reminder is None:
         return 0  # habit was deleted since — no streak to show
-    if getattr(reminder, "is_fluid_habit", False):
+    if reminder.kind == ReminderKind.FLUID_HABIT:
         return max(0, int(reminder.fluid_streak_current or 0))
     return max(0, int(reminder.habit_streak_current or 0))
 

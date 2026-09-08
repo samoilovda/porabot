@@ -15,8 +15,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import User
-from bot.database.models import is_habit_like as _is_habit_like
+from bot.database.models import ReminderKind, User
+from bot.database.models import (
+    is_habit_like as _is_habit_like,  # noqa: F401 — re-exported; see test_is_habit_like_not_duplicated.py
+)
 from bot.handlers.reminders import (
     _UNDO_DELETE_WINDOW,
     _message_task_key,
@@ -680,8 +682,9 @@ async def cb_not_today(
             cycle_due_at_utc_naive = None
 
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
-    is_fluid = bool(reminder and getattr(reminder, "is_fluid_habit", False))
-    if not reminder or not (_is_habit_like(reminder) or is_fluid):
+    kind = reminder.kind if reminder else ReminderKind.TASK
+    is_fluid = kind == ReminderKind.FLUID_HABIT
+    if not reminder or kind == ReminderKind.TASK:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
 

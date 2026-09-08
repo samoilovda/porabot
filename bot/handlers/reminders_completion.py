@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed
 from bot.database.dao.reminder import ReminderDAO
-from bot.database.models import User
+from bot.database.models import ReminderKind, User
 from bot.database.models import is_habit_like as _is_habit_like
 from bot.handlers.reminders_shared import _pick_done_reply
 from bot.keyboards.inline import get_done_followup_keyboard
@@ -174,8 +174,9 @@ async def callback_wrapup_not_done(
         return
 
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
-    is_fluid = bool(reminder and getattr(reminder, "is_fluid_habit", False))
-    if reminder and (_is_habit_like(reminder) or is_fluid):
+    kind = reminder.kind if reminder else ReminderKind.TASK
+    is_fluid = kind == ReminderKind.FLUID_HABIT
+    if reminder and kind != ReminderKind.TASK:
         record_kwargs: dict[str, Any] = {}
         if is_fluid:
             try:
@@ -252,7 +253,7 @@ async def callback_task_done(
         await callback.answer(l10n.get("already_done", "Already done ✅"))
         return
 
-    if getattr(reminder, "is_fluid_habit", False):
+    if reminder.kind == ReminderKind.FLUID_HABIT:
         newly_done = await reminder_dao.mark_fluid_habit_done_today(reminder.id, user.timezone)
         scheduler_service.remove_nagging_job(reminder.id)
         if not newly_done:

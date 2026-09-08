@@ -21,7 +21,7 @@ from sqlalchemy import func, or_, select
 from bot.database.dao.base import BaseDAO
 
 # Import Reminder model for type hints and query construction
-from bot.database.models import Reminder, is_habit_like
+from bot.database.models import Reminder, ReminderKind, is_habit_like
 
 # fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
 # containing them (e.g. "скидка 50%") must be treated as a literal, not a
@@ -771,12 +771,12 @@ class ReminderDAO(BaseDAO[Reminder]):
         weekly_done = sum(1 for e in events if e.outcome == "done")
 
         def _current_streak(h) -> int:
-            if getattr(h, "is_fluid_habit", False):
+            if h.kind == ReminderKind.FLUID_HABIT:
                 return max(0, int(h.fluid_streak_current or 0))
             return max(0, int(h.habit_streak_current or 0))
 
         def _best_streak(h) -> int:
-            if getattr(h, "is_fluid_habit", False):
+            if h.kind == ReminderKind.FLUID_HABIT:
                 return max(0, int(h.fluid_streak_best or 0))
             return max(0, int(h.habit_streak_best or 0))
 

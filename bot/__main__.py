@@ -14,7 +14,7 @@ import time
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, ErrorEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -91,6 +91,45 @@ async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
         raise RuntimeError("Polling stopped unexpectedly without a shutdown signal.")
 
 
+async def handle_dispatcher_error(event: ErrorEvent) -> None:
+    """1.2: last-resort handler for exceptions no router/middleware caught.
+
+    Without this, a handler that raises (a malformed callback_data an
+    attacker crafted, a message too long for edit_text, ...) just logs and
+    goes silent from the user's point of view — for a CallbackQuery that
+    means Telegram shows a spinning "loading" state on the tapped button
+    until it times out, since callback.answer() was never reached.
+
+    DatabaseMiddleware already rolls back the session on the same
+    exception before it reaches here — nothing left to clean up on that
+    front, this is purely "tell the user something went wrong".
+    """
+    logger.error(
+        "Unhandled error processing update %s: %s",
+        event.update.update_id,
+        event.exception,
+        exc_info=event.exception,
+    )
+    from bot.lexicon import get_l10n
+
+    l10n = get_l10n(None)
+    text = l10n.get("generic_error", "❌ Something went wrong. Please try again.")
+    update = event.update
+    try:
+        if update.callback_query is not None:
+            try:
+                await update.callback_query.answer(text, show_alert=True)
+            except Exception as e:
+                logger.warning("Could not answer callback after error: %s", e)
+        elif update.message is not None:
+            try:
+                await update.message.answer(text)
+            except Exception as e:
+                logger.warning("Could not notify user after error: %s", e)
+    except Exception as e:
+        logger.error("Error handler itself failed: %s", e, exc_info=True)
+
+
 async def _set_bot_commands(bot: Bot) -> None:
     """Populate Telegram's command menu (N2) — otherwise /help and /cancel are
     invisible unless a user already knows to type them."""
@@ -143,6 +182,9 @@ async def main() -> None:
     # bot/services/fsm_storage.py's module docstring.
     fsm_storage = SQLAlchemyFSMStorage(session_pool)
     dp = Dispatcher(storage=fsm_storage)
+    # 1.2: without this, an exception a handler doesn't catch just logs and
+    # goes silent for the user — see handle_dispatcher_error's docstring.
+    dp.errors.register(handle_dispatcher_error)
     await _set_bot_commands(bot)
 
     # Scheduler

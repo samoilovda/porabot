@@ -308,6 +308,7 @@ ES.update(
         "snoozed_toast": "Pospuesto",
         "task_untitled": "Tarea sin título",
         "db_error": "❌ Error de base de datos. Inténtalo más tarde.",
+        "generic_error": "❌ Algo salió mal. Inténtalo de nuevo.",
         "habit_create_failed_long": "❌ No se pudo crear el hábito (texto demasiado largo).",
         "habit_create_failed_internal": "❌ Error interno al crear el hábito.",
         "text_too_long": "❌ Texto demasiado largo ({length} caracteres). Máximo: {max_length} caracteres.",

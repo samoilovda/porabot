@@ -390,4 +390,5 @@ EN: dict[str, Any] = {
     "text_too_long": "❌ Text too long ({length} chars). Maximum: {max_length} chars.",
     "schedule_error": "❌ Failed to schedule reminder. Please try again.",
     "db_error": "❌ Database error. Please try again later.",
+    "generic_error": "❌ Something went wrong. Please try again.",
 }

@@ -190,10 +190,14 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
     if weekly_events:
         rows = _aggregate(weekly_events)
         if rows:
+            # fix(2.2): one query for every row's full event history instead
+            # of one query per row (was N+1 — same shape fix(3.2)/fix(2.1)
+            # already closed for the Mini App and "My Habits").
+            events_by_id = await habit_event_dao.get_events_for_reminders(
+                [row["reminder_id"] for row in rows]
+            )
             scores_by_id = {
-                row["reminder_id"]: compute_habit_score(
-                    await habit_event_dao.get_events_for_reminder(row["reminder_id"])
-                )
+                row["reminder_id"]: compute_habit_score(events_by_id.get(row["reminder_id"], []))
                 for row in rows
             }
             text = _build_report_text(
@@ -218,10 +222,11 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
         if monthly_events:
             rows = _aggregate(monthly_events)
             if rows:
+                events_by_id = await habit_event_dao.get_events_for_reminders(
+                    [row["reminder_id"] for row in rows]
+                )
                 scores_by_id = {
-                    row["reminder_id"]: compute_habit_score(
-                        await habit_event_dao.get_events_for_reminder(row["reminder_id"])
-                    )
+                    row["reminder_id"]: compute_habit_score(events_by_id.get(row["reminder_id"], []))
                     for row in rows
                 }
                 text = _build_report_text(

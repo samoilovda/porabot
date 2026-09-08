@@ -432,6 +432,36 @@ class HabitEvent(Base):
         return f"<HabitEvent(reminder_id={self.reminder_id}, outcome={self.outcome}, local_date={self.local_date})>"
 
 
+class FsmState(Base):
+    """Durable aiogram FSM storage (1.1): survives a process restart, unlike
+    the default in-memory Dispatcher storage. Not domain data — just the
+    "what wizard step is this chat on" bookkeeping aiogram itself owns; see
+    bot/services/fsm_storage.py's SQLAlchemyFSMStorage, the only reader/
+    writer of this table. Primary key mirrors aiogram's StorageKey exactly
+    (bot_id/chat_id/user_id/destiny) so a stored row round-trips losslessly.
+    """
+
+    __tablename__ = "fsm_state"
+
+    bot_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    destiny: Mapped[str] = mapped_column(String, primary_key=True, default="default")
+    state: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # JSON-encoded dict — aiogram's own data contract (arbitrary
+    # JSON-serializable values), so no relational schema to model here.
+    data_json: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow_naive,
+        onupdate=_utcnow_naive,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<FsmState(chat_id={self.chat_id}, user_id={self.user_id}, state={self.state})>"
+
+
 def is_habit_like(reminder) -> bool:
     """Detect reminders that participate in fixed-time habit streak tracking.
 

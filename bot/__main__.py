@@ -41,6 +41,7 @@ from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.habit_reports import setup_habit_reports
 from bot.services.delete_cleanup import setup_delete_cleanup
 from bot.services.webserver import create_app, start_web_server
+from bot.services.fsm_storage import SQLAlchemyFSMStorage, cleanup_stale_fsm_state
 from bot.handlers.reminders import _cleanup_stale_timers
 
 
@@ -135,7 +136,13 @@ async def main() -> None:
         token=config.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
     )
-    dp = Dispatcher()
+    # 1.1: durable FSM storage — the default MemoryStorage silently drops
+    # every in-progress wizard (time picker, timezone entry, nag-limit
+    # prompt) on restart, and docker-compose's `restart: always` plus a
+    # deploy recreating the container means that happens routinely. See
+    # bot/services/fsm_storage.py's module docstring.
+    fsm_storage = SQLAlchemyFSMStorage(session_pool)
+    dp = Dispatcher(storage=fsm_storage)
     await _set_bot_commands(bot)
 
     # Scheduler
@@ -158,6 +165,16 @@ async def main() -> None:
         "interval",
         minutes=10,
         id="cleanup_stale_timers",
+        replace_existing=True,
+    )
+    # 1.1: drop abandoned FSM rows (see fsm_storage.cleanup_stale_fsm_state) —
+    # same reasoning as cleanup_stale_timers/cleanup_rate_limit_hits below.
+    scheduler.add_job(
+        cleanup_stale_fsm_state,
+        "interval",
+        hours=1,
+        args=[session_pool],
+        id="cleanup_stale_fsm_state",
         replace_existing=True,
     )
     # 4.4: written now so the healthcheck doesn't see a stale/missing file

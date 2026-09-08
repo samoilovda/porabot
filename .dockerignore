@@ -1,0 +1,42 @@
+# 3.2: the production image only needs the `bot` package, requirements.lock
+# and the Dockerfile's own setup — not the test suite, docs, or dev tooling.
+tests/
+.github/
+*.md
+.git/
+.gitignore
+.dockerignore
+running_guide.md
+pytest.ini
+conftest.py
+requirements.txt
+docker-compose.yml
+
+# System / editor / VCS cruft — never useful inside the image.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local dev artifacts that shouldn't leak into the build context.
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+venv/
+.venv
+env/
+ENV/
+.env
+*.db
+*.sqlite
+data/
+*.log
+nohup.out

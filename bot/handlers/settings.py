@@ -162,6 +162,7 @@ _MAX_TZMIG_SUMMARY_LINES = 30
 
 async def _render_tz_migration_offer(
     edit_fn,
+    resend_menu_fn,
     *,
     user: User,
     old_tz: str,
@@ -171,15 +172,25 @@ async def _render_tz_migration_offer(
     l10n: dict[str, Any],
 ) -> None:
     """Show either the plain tz-success text (nothing to migrate, or the
-    timezone didn't actually change) or the migrate-all/pick/skip prompt."""
+    timezone didn't actually change) or the migrate-all/pick/skip prompt.
+
+    The two "nothing to migrate" branches are dead ends — no more buttons,
+    the flow is over — and edit_fn is always an edit_text (or, for the
+    manual-entry caller, a plain answer with no reply_markup): neither can
+    attach a ReplyKeyboardMarkup. If the user collapsed the persistent
+    bottom menu to type a timezone offset, nothing would ever bring it
+    back without resend_menu_fn re-sending it as a small separate message.
+    """
     if old_tz == new_tz:
         await edit_fn(l10n["tz_success"].format(tz=_format_tz_display_label(new_tz)), None)
+        await resend_menu_fn()
         return
 
     habits = await reminder_dao.get_active_habits(user.id)
     candidates = migratable_habits(habits, old_tz)
     if not candidates:
         await edit_fn(l10n["tz_success"].format(tz=_format_tz_display_label(new_tz)), None)
+        await resend_menu_fn()
         return
 
     sample = build_migration_plan(candidates[:1], old_tz, new_tz)[0]
@@ -280,6 +291,10 @@ async def callback_tzmig_all(
     migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service, new_tz)
     await state.update_data(tzmig_old_tz=None, tzmig_new_tz=None, tzmig_selected=None)
     await callback.message.edit_text(_render_tz_migration_summary(migrated, kept, new_tz, l10n), reply_markup=None)
+    # Terminal screen — edit_text can't carry a ReplyKeyboardMarkup, so
+    # resend the persistent bottom menu as its own small message in case
+    # the user collapsed it while typing the timezone.
+    await callback.message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
 
 
@@ -300,6 +315,7 @@ async def callback_tzmig_none(
     items = await _load_tzmig_plan(user, reminder_dao, old_tz, new_tz)
     await state.update_data(tzmig_old_tz=None, tzmig_new_tz=None, tzmig_selected=None)
     await callback.message.edit_text(_render_tz_migration_summary([], items, new_tz, l10n), reply_markup=None)
+    await callback.message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
 
 
@@ -381,8 +397,11 @@ async def callback_tzmig_back(
     async def _editor(text: str, markup) -> None:
         await callback.message.edit_text(text, reply_markup=markup)
 
+    async def _resend_menu() -> None:
+        await callback.message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
+
     await _render_tz_migration_offer(
-        _editor, user=user, old_tz=old_tz, new_tz=new_tz, reminder_dao=reminder_dao, state=state, l10n=l10n
+        _editor, _resend_menu, user=user, old_tz=old_tz, new_tz=new_tz, reminder_dao=reminder_dao, state=state, l10n=l10n
     )
     await callback.answer()
 
@@ -407,6 +426,7 @@ async def callback_tzmig_apply(
     migrated, kept = await apply_migration(items, selected_ids, reminder_dao, scheduler_service, new_tz)
     await state.update_data(tzmig_old_tz=None, tzmig_new_tz=None, tzmig_selected=None)
     await callback.message.edit_text(_render_tz_migration_summary(migrated, kept, new_tz, l10n), reply_markup=None)
+    await callback.message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
 
 
@@ -644,8 +664,11 @@ async def callback_set_tz(
     async def _editor(text: str, markup) -> None:
         await callback.message.edit_text(text, reply_markup=markup)
 
+    async def _resend_menu() -> None:
+        await callback.message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
+
     await _render_tz_migration_offer(
-        _editor, user=user, old_tz=old_tz, new_tz=action, reminder_dao=reminder_dao, state=state, l10n=l10n
+        _editor, _resend_menu, user=user, old_tz=old_tz, new_tz=action, reminder_dao=reminder_dao, state=state, l10n=l10n
     )
     await callback.answer()
 
@@ -692,8 +715,11 @@ async def state_set_manual_timezone(
     async def _editor(text: str, markup) -> None:
         await message.answer(text, reply_markup=markup)
 
+    async def _resend_menu() -> None:
+        await message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
+
     await _render_tz_migration_offer(
-        _editor, user=user, old_tz=old_tz, new_tz=resolved_tz, reminder_dao=reminder_dao, state=state, l10n=l10n
+        _editor, _resend_menu, user=user, old_tz=old_tz, new_tz=resolved_tz, reminder_dao=reminder_dao, state=state, l10n=l10n
     )
 
 @router.callback_query(F.data == "settings_back")
@@ -867,6 +893,11 @@ async def state_briefs_set_time(message: Message, state: FSMContext, user: User,
     from bot.keyboards.inline import get_briefs_setup_keyboard
     text = _render_settings_text(user, l10n)
     await message.answer(text, reply_markup=get_briefs_setup_keyboard(l10n, enabled, morning, evening), parse_mode="Markdown")
+    # Unlike its quiet-hours/habit-report/missed-recovery siblings, this
+    # flow only ever sends the one inline-keyboard message above — nothing
+    # in it carries the persistent bottom menu back after the user typed
+    # free text, so resend it as a small separate message.
+    await message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
 
 
 @router.message(SettingsState.waiting_for_quiet_time)
@@ -909,8 +940,12 @@ async def state_set_quiet_time(
 
     from bot.keyboards.inline import get_quiet_hours_setup_keyboard
 
+    # Re-attach the persistent bottom menu here — the user just typed free
+    # text, the moment they're most likely to have collapsed it, and every
+    # message after this one in this flow only carries an inline keyboard.
     await message.answer(
         l10n.get("quiet_time_saved", "✅ Quiet hours updated: {time}").format(time=value),
+        reply_markup=get_main_menu_keyboard(l10n),
         parse_mode="Markdown",
     )
     await message.answer(
@@ -1029,6 +1064,7 @@ async def state_habit_report_set_time(
 
     await message.answer(
         l10n.get("habit_report_time_saved", "✅ Habit report time updated: {time}").format(time=value),
+        reply_markup=get_main_menu_keyboard(l10n),
         parse_mode="Markdown",
     )
     await message.answer(
@@ -1110,6 +1146,7 @@ async def state_missed_recovery_set_time(
 
     await message.answer(
         l10n.get("missed_recovery_time_saved", "✅ Missed-task digest time updated: {time}").format(time=value),
+        reply_markup=get_main_menu_keyboard(l10n),
         parse_mode="Markdown",
     )
     await message.answer(

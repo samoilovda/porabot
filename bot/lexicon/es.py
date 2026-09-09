@@ -58,6 +58,7 @@ ES.update(
         "tz_manual_button": "⌨️ Introducir manualmente",
         "tz_success": "✅ Zona horaria: `{tz}`\n\nLas tareas existentes no se recalculan — sonarán a su hora anterior. Ajústalas manualmente si es necesario.",
         "tz_invalid": "❌ Desfase inválido. Envía `+5`, `0` o `-6` (rango: -12 a +14).",
+        "main_menu_hint": "👇 Menú abajo",
 
         # Migración de hábitos al cambiar de zona horaria
         "tz_migrate_prompt": "✅ Zona horaria: `{tz}`\n\nTienes hábitos con hora fija ({count}). Si no los migras, sonarán a otra hora del día — por ejemplo, {old} pasaría a ser {drift}.\n\n¿Migrar los hábitos a la nueva zona horaria?",

@@ -102,7 +102,7 @@ async def test_set_tz_skips_offer_when_no_habits() -> None:
     user_dao = SimpleNamespace(update_timezone=AsyncMock())
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[]))
     state = _state_with({})
-    message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(
         data="set_tz_America/New_York", message=message, from_user=SimpleNamespace(first_name="Bob"), answer=AsyncMock()
     )
@@ -115,6 +115,10 @@ async def test_set_tz_skips_offer_when_no_habits() -> None:
         l10n["tz_success"].format(tz=settings._format_tz_display_label("America/New_York")), reply_markup=None
     )
     assert "tzmig_old_tz" not in state._store
+    # Dead end for this flow — edit_text can't carry a ReplyKeyboardMarkup,
+    # so the persistent bottom menu must come back via a separate message.
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.kwargs["reply_markup"] is not None
 
 
 async def test_tzmig_all_migrates_every_candidate_and_reschedules() -> None:
@@ -126,7 +130,7 @@ async def test_tzmig_all_migrates_every_candidate_and_reschedules() -> None:
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[habit]), get_by_id=AsyncMock(return_value=habit))
     scheduler_service = SimpleNamespace(schedule_reminder=MagicMock())
     state = _state_with({"tzmig_old_tz": "Europe/Moscow", "tzmig_new_tz": "America/New_York"})
-    message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(data="tzmig_all", message=message, answer=AsyncMock())
 
     await settings.callback_tzmig_all(
@@ -151,7 +155,7 @@ async def test_tzmig_none_leaves_execution_time_untouched() -> None:
     habit = _habit(1, "Zaryadka", 6)
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[habit]))
     state = _state_with({"tzmig_old_tz": "Europe/Moscow", "tzmig_new_tz": "America/New_York"})
-    message = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(data="tzmig_none", message=message, answer=AsyncMock())
 
     await settings.callback_tzmig_none(callback=callback, user=user, reminder_dao=reminder_dao, state=state, l10n=l10n)
@@ -175,7 +179,7 @@ async def test_tzmig_toggle_flips_selection_and_apply_migrates_only_selected() -
     )
     scheduler_service = SimpleNamespace(schedule_reminder=MagicMock())
     state = _state_with({"tzmig_old_tz": "Europe/Moscow", "tzmig_new_tz": "America/New_York"})
-    message = SimpleNamespace(edit_reply_markup=AsyncMock(), edit_text=AsyncMock())
+    message = SimpleNamespace(edit_reply_markup=AsyncMock(), edit_text=AsyncMock(), answer=AsyncMock())
 
     # Enter the pick screen: both selected by default.
     callback_pick = SimpleNamespace(data="tzmig_pick", message=message, answer=AsyncMock())

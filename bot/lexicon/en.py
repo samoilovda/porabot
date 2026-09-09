@@ -54,6 +54,7 @@ EN: dict[str, Any] = {
     "tz_manual_button": "⌨️ Enter manually",
     "tz_success": "✅ Timezone: `{tz}`\n\nExisting tasks aren't recalculated — they'll still fire at their previous time. Adjust them manually if needed.",
     "tz_invalid": "❌ Invalid offset. Please send `+5`, `0`, or `-6` (range: -12 to +14).",
+    "main_menu_hint": "👇 Menu below",
 
     # Habit timezone migration — offered after a timezone change
     "tz_migrate_prompt": "✅ Timezone: `{tz}`\n\nYou have habit(s) with a fixed time ({count}). Left as is, they'll fire at a different local time of day — e.g. {old} would become {drift}.\n\nMigrate them to the new timezone?",

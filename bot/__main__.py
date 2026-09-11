@@ -215,7 +215,6 @@ async def main() -> None:
         cleanup_stale_fsm_state,
         "interval",
         hours=1,
-        args=[session_pool],
         id="cleanup_stale_fsm_state",
         replace_existing=True,
     )

@@ -15,6 +15,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from bot.context import AppContext, clear_context, set_context
 from bot.database.engine import Base, create_engine
 from bot.services.fsm_storage import SQLAlchemyFSMStorage, cleanup_stale_fsm_state
 
@@ -115,7 +116,11 @@ async def test_cleanup_drops_only_stale_rows(tmp_path) -> None:
         )
         await session.commit()
 
-    await cleanup_stale_fsm_state(session_pool)
+    set_context(AppContext(bot=None, session_pool=session_pool, scheduler=None))
+    try:
+        await cleanup_stale_fsm_state()
+    finally:
+        clear_context()
 
     assert await storage.get_state(fresh_key) == "Wizard:step"
     assert await storage.get_state(stale_key) is None

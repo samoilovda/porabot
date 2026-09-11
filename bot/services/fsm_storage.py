@@ -119,14 +119,28 @@ class SQLAlchemyFSMStorage(BaseStorage):
         pass
 
 
-async def cleanup_stale_fsm_state(session_pool: async_sessionmaker) -> None:
+async def cleanup_stale_fsm_state() -> None:
     """Drop FSM rows untouched for STALE_STATE_AGE (1.1).
 
     Registered as a periodic job in bot/__main__.py, same cadence family as
     cleanup_stale_timers/cleanup_expired — an abandoned wizard must not pin
     a row in this table forever.
+
+    Takes no args: APScheduler's SQLAlchemyJobStore pickles every job's
+    args/kwargs to persist it, and a bound async_sessionmaker drags in its
+    engine's connection-pool creator (an unpicklable local closure), which
+    crashed scheduler.start() on every startup. Reads session_pool from the
+    process AppContext instead, same as process_daily_briefs and friends.
     """
+    from bot.context import get_context
+
+    try:
+        ctx = get_context()
+    except RuntimeError:
+        logger.error("Failed to clean up stale FSM state: AppContext not set")
+        return
+
     cutoff = _utcnow_naive() - STALE_STATE_AGE
-    async with session_pool() as session:
+    async with ctx.session_pool() as session:
         await session.execute(delete(FsmState).where(FsmState.updated_at < cutoff))
         await session.commit()

@@ -53,6 +53,27 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
 
 
+async def remove_orphan_scheduler_jobs_job() -> None:
+    """Periodic-job wrapper for SchedulerService.remove_orphan_scheduler_jobs.
+
+    __main__.py used to register the bound method itself
+    (``scheduler_service.remove_orphan_scheduler_jobs``) directly with
+    ``scheduler.add_job``. SQLAlchemyJobStore persists a job by pickling it,
+    which for a bound method means pickling ``__self__`` — here, the
+    SchedulerService instance, whose own ``self.scheduler`` IS the running
+    AsyncIOScheduler. APScheduler's BaseScheduler.__getstate__ explicitly
+    refuses to be pickled, so every startup crashed with "Schedulers cannot
+    be serialized" the moment this job was (re-)registered. Route through
+    this module-level function instead, same as execute_reminder_job above.
+    """
+    try:
+        ctx = _get_context()
+    except RuntimeError:
+        logger.error("Cannot remove orphan scheduler jobs: AppContext not set.")
+        return
+    await ctx.scheduler.remove_orphan_scheduler_jobs()
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------

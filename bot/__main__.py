@@ -40,7 +40,7 @@ from bot.services.habit_reports import setup_habit_reports
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.retention_cleanup import setup_retention_cleanup
-from bot.services.scheduler import SchedulerService
+from bot.services.scheduler import SchedulerService, remove_orphan_scheduler_jobs_job
 from bot.services.webserver import create_app, start_web_server
 
 
@@ -284,7 +284,7 @@ async def main() -> None:
     # run once at startup and then hourly (see below).
     await scheduler_service.remove_orphan_scheduler_jobs()
     scheduler.add_job(
-        scheduler_service.remove_orphan_scheduler_jobs,
+        remove_orphan_scheduler_jobs_job,
         "interval",
         hours=1,
         id="remove_orphan_scheduler_jobs",

@@ -131,7 +131,20 @@ async def handle_dispatcher_error(event: ErrorEvent) -> None:
 
 async def _set_bot_commands(bot: Bot) -> None:
     """Populate Telegram's command menu (N2) — otherwise /help and /cancel are
-    invisible unless a user already knows to type them."""
+    invisible unless a user already knows to type them.
+
+    Cosmetic, not load-bearing: polling must start whether or not this
+    succeeds. A crash-restart loop (of any cause) hammers SetMyCommands on
+    every boot, and that method has a tight per-bot flood-control window —
+    Telegram then makes every subsequent boot's call raise
+    TelegramRetryAfter for several minutes. Letting that propagate used to
+    take the whole process down with it (main() has nothing catching this),
+    which turned one transient rate limit into an indefinite outage. Catch
+    TelegramAPIError per language and move on; the menu just stays stale
+    for that language until a future successful boot.
+    """
+    from aiogram.exceptions import TelegramAPIError
+
     from bot.lexicon import get_l10n
 
     for lang in (None, "en", "ru", "es"):
@@ -143,7 +156,10 @@ async def _set_bot_commands(bot: Bot) -> None:
             BotCommand(command="find", description=l10n.get("cmd_desc_find", "Search your tasks")),
             BotCommand(command="donate", description=l10n.get("cmd_desc_donate", "Support Porabot")),
         ]
-        await bot.set_my_commands(commands, language_code=lang)
+        try:
+            await bot.set_my_commands(commands, language_code=lang)
+        except TelegramAPIError as e:
+            logger.warning("Failed to set bot commands for lang=%s: %s", lang, e)
 
 
 async def _start_web_server_if_enabled(session_pool):

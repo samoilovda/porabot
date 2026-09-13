@@ -116,7 +116,7 @@ ES.update(
         "btn_next_page": "▶️",
         "btn_delete_prefix": "🗑 Eliminar:",
         "btn_refresh": "🔄 Actualizar",
-        "btn_close": "❌ Cerrar",
+        "btn_close": "🔼 Ocultar",
 
         # Búsqueda y filtros — 3.4
         "btn_filter_today": "📅 Hoy",

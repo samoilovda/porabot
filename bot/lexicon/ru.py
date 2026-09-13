@@ -113,7 +113,7 @@ RU: dict[str, Any] = {
     "btn_next_page": "▶️",
     "btn_delete_prefix": "🗑 Удалить:",
     "btn_refresh": "🔄 Обновить",
-    "btn_close": "❌ Закрыть",
+    "btn_close": "🔼 Скрыть",
 
     # Поиск и фильтры — 3.4
     "btn_filter_today": "📅 Сегодня",

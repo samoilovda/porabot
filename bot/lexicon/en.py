@@ -113,7 +113,7 @@ EN: dict[str, Any] = {
     "btn_next_page": "▶️",
     "btn_delete_prefix": "🗑 Delete:",
     "btn_refresh": "🔄 Refresh",
-    "btn_close": "❌ Close",
+    "btn_close": "🔼 Hide",
 
     # Search and filters — 3.4
     "btn_filter_today": "📅 Today",

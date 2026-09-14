@@ -148,3 +148,38 @@ async def test_reconcile_staggers_catchup_sends_instead_of_bursting_at_once() ->
     assert len(set(run_dates)) == len(run_dates)  # every one distinct, not a pile-up
     # Still all within a reasonably short catch-up window, not spread hours apart.
     assert run_dates[-1] - run_dates[0] < timedelta(minutes=1)
+
+
+async def test_reconcile_calls_get_jobs_once_not_get_job_per_reminder() -> None:
+    """3.4: SQLAlchemyJobStore is SYNCHRONOUS — every get_job()/get_jobs()
+    call blocks the event loop on a SQLite query. reconcile_jobs_with_db
+    used to call get_job() once per candidate reminder; with hundreds
+    pending after downtime, that's hundreds of blocking round trips where
+    one get_jobs() suffices."""
+    scheduler = AsyncIOScheduler()
+    reminders = [_make_reminder(id=i) for i in range(1, 11)]
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory(reminders))
+
+    original_get_jobs = scheduler.get_jobs
+    get_jobs_calls = []
+    get_job_calls = []
+
+    def _tracked_get_jobs(*args, **kwargs):
+        get_jobs_calls.append(1)
+        return original_get_jobs(*args, **kwargs)
+
+    def _tracked_get_job(*args, **kwargs):
+        get_job_calls.append(args)
+        return None
+
+    scheduler.get_jobs = _tracked_get_jobs
+    scheduler.get_job = _tracked_get_job
+
+    await service.reconcile_jobs_with_db()
+
+    assert len(get_jobs_calls) == 1
+    assert get_job_calls == []
+    # All 10 reminders still actually got jobs scheduled (using the
+    # original, un-patched get_jobs so this check doesn't itself count
+    # toward get_jobs_calls).
+    assert len(original_get_jobs()) == 10

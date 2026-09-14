@@ -212,8 +212,22 @@ class SchedulerService:
             user_tz_result = await session.execute(select(User.id, User.timezone))
             user_tz_map = {uid: tz for uid, tz in user_tz_result.all()}
 
+            # 3.4: one get_jobs() call for the whole reconcile pass, not one
+            # get_job() per candidate reminder. SQLAlchemyJobStore is
+            # SYNCHRONOUS — every get_job()/get_jobs() call blocks THIS
+            # event loop on a SQLite query — so with hundreds of pending
+            # reminders after downtime, that was hundreds of blocking round
+            # trips where one suffices. Job ids are either a bare digit
+            # string (a reminder id) or "nag_<digit>" (2.5's helper never
+            # produces anything else — see schedule_reminder/
+            # _schedule_send_retry/schedule_execution_retry), so a service
+            # job's id (a descriptive string like "cleanup_stale_timers",
+            # now all on the separate "memory" jobstore per 1.4 anyway)
+            # can never collide with a reminder id here.
+            existing_job_ids = {job.id for job in self.scheduler.get_jobs()}
+
             for reminder in reminders:
-                if self.scheduler.get_job(str(reminder.id)) is not None:
+                if str(reminder.id) in existing_job_ids:
                     continue
 
                 run_at_utc = to_utc_aware(reminder.execution_time)

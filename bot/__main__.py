@@ -53,14 +53,76 @@ def _write_heartbeat() -> None:
     docker-compose's `restart: always` only reacts to the process exiting —
     a polling loop that's alive but hung (deadlocked, stuck on a network
     call that never times out) looks identical to a healthy container from
-    the outside. Written at startup and then every minute by a scheduler
-    job; docker-compose's healthcheck fails once this file goes stale.
+    the outside. Written once directly at startup (main()) and then, IF a
+    live Telegram connectivity check passes, every minute by
+    HeartbeatMonitor.check_and_write (3.2) — this function itself never
+    checks connectivity, it just does the file write half of that.
+    docker-compose's healthcheck fails once this file goes stale.
     """
     try:
         with open(config.HEARTBEAT_FILE, "w") as f:
             f.write(str(int(time.time())))
     except OSError as e:
         logger.warning("Failed to write heartbeat file %s: %s", config.HEARTBEAT_FILE, e)
+
+
+class HeartbeatMonitor:
+    """3.2: "the process is alive and scheduling jobs" is not the same
+    claim as "the process can actually talk to Telegram" — a polling loop
+    stuck on a hung network call (no timeout ever fires) used to keep
+    _write_heartbeat touching the file every minute like nothing was
+    wrong, so the healthcheck stayed green and `restart: always` never
+    triggered. That's the exact "alive but dead" scenario this file
+    exists to catch in the first place.
+
+    A class (not a closure inside main()) so this is unit-testable on its
+    own — construct one with a fake bot/stop_event, call check_and_write()
+    directly, and assert on consecutive_failures / stop_event.is_set()
+    without needing to run all of main().
+
+    Registered as a periodic job on the "memory" jobstore (1.4 moved every
+    service/cron job there) — a bound method is only unsafe to schedule
+    when it gets PICKLED (the persistent SQLAlchemyJobStore's problem, see
+    1.4), and MemoryJobStore never pickles anything.
+    """
+
+    def __init__(
+        self,
+        bot: Bot,
+        stop_event: asyncio.Event,
+        *,
+        failure_limit: int = 3,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self.bot = bot
+        self.stop_event = stop_event
+        self.failure_limit = failure_limit
+        self.timeout_seconds = timeout_seconds
+        self.consecutive_failures = 0
+
+    async def check_and_write(self) -> None:
+        try:
+            await asyncio.wait_for(self.bot.get_me(), timeout=self.timeout_seconds)
+        except Exception as e:
+            self.consecutive_failures += 1
+            logger.warning(
+                "Heartbeat: Telegram connectivity check failed (%d/%d): %s",
+                self.consecutive_failures,
+                self.failure_limit,
+                e,
+            )
+            if self.consecutive_failures >= self.failure_limit:
+                logger.critical(
+                    "Heartbeat: Telegram connectivity failed %d times in a row — "
+                    "triggering shutdown so restart: always can recover.",
+                    self.consecutive_failures,
+                )
+                # Same graceful path a real SIGTERM takes (see 1.1) — not a
+                # hard kill, so an in-flight send still gets to finish.
+                self.stop_event.set()
+            return
+        self.consecutive_failures = 0
+        _write_heartbeat()
 
 
 def _start_polling_coro(dp: Dispatcher, bot: Bot):
@@ -257,6 +319,32 @@ async def main() -> None:
         token=config.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
     )
+
+    # 3.2: stop_event/signal handlers, moved up from just before polling
+    # used to start — the heartbeat job below (registered further down,
+    # before scheduler.start()) needs to reference stop_event in its
+    # closure, and doing that before this existed relied on the job's
+    # first 1-minute tick landing after this assignment purely by timing.
+    # Registering the signal handlers this early is also a genuine fix on
+    # its own: previously, a SIGTERM arriving during the (potentially
+    # slow) DB-init/scheduler-setup window below fell through to Python's
+    # default disposition — an immediate hard kill, no graceful shutdown
+    # at all — since the handler wasn't registered yet. Docker sends
+    # SIGTERM on `docker compose up -d --build` recreate / `stop`; without
+    # converting it to a normal asyncio shutdown, there's no chance to
+    # finish an in-flight brief/reminder send before its "already sent"
+    # flag is committed, deploy or not.
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            # add_signal_handler isn't supported on Windows event loops —
+            # Ctrl+C there still falls through to the KeyboardInterrupt
+            # handler at the bottom of this file.
+            pass
+
     # 1.1: durable FSM storage — the default MemoryStorage silently drops
     # every in-progress wizard (time picker, timezone entry, nag-limit
     # prompt) on restart, and docker-compose's `restart: always` plus a
@@ -327,10 +415,13 @@ async def main() -> None:
     )
     # 4.4: written now so the healthcheck doesn't see a stale/missing file
     # during startup (Dockerfile's schema init, etc.), then kept fresh by
-    # the periodic job below.
+    # the periodic job below, but ONLY while a live Telegram connectivity
+    # check keeps passing — see HeartbeatMonitor's docstring for why a
+    # plain "still scheduling jobs" touch (the old behavior) isn't enough.
     _write_heartbeat()
+    heartbeat_monitor = HeartbeatMonitor(bot, stop_event)
     scheduler.add_job(
-        _write_heartbeat,
+        heartbeat_monitor.check_and_write,
         "interval",
         minutes=1,
         id="write_heartbeat",
@@ -413,23 +504,6 @@ async def main() -> None:
         )
 
     logger.info("Starting polling…")
-
-    # Docker sends SIGTERM on `docker compose up -d --build` recreate / `stop`.
-    # Python's default disposition for SIGTERM terminates the process
-    # immediately — no `finally` blocks, no chance to finish an in-flight
-    # brief/reminder send before its "already sent" flag is committed. Convert
-    # it into a normal asyncio shutdown instead, so a deploy landing mid-tick
-    # can't race with the next tick and send a duplicate.
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            # add_signal_handler isn't supported on Windows event loops —
-            # Ctrl+C there still falls through to the KeyboardInterrupt
-            # handler at the bottom of this file.
-            pass
 
     try:
         # See _start_polling_coro's docstring for why handle_signals=False

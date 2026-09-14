@@ -138,6 +138,23 @@ async def callback_undo_delete(
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
 
+    # 2.2: commit BEFORE replying — see _save_and_show_edit's comment for
+    # why an implicit commit failing after the job was already (re)created
+    # above would otherwise mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit undo-delete for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        # pending_delete_at is back to its original (still-set) value after
+        # rollback — the reminder is still logically soft-deleted, so the
+        # job _reschedule_current_execution just created above must not
+        # survive (every reminder with pending_delete_at set must have no
+        # active job — see reminders_shared.py's module docstring).
+        scheduler_service.remove_reminder_job(reminder.id)
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
+
     date_str = format_time(reminder.execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
     safe_preview = l10n["preview"].format(
         text=escape_markdown_v2(reminder.reminder_text),
@@ -405,6 +422,30 @@ async def callback_recovery_done_all(
             scheduler_service.remove_reminder_job(task.id)
         scheduler_service.remove_nagging_job(task.id)
 
+    # 2.2: commit BEFORE replying "done" — see _save_and_show_edit's
+    # comment. On failure, every task in the loop above already had its
+    # job (re)scheduled/removed ahead of the DB write describing it;
+    # restore each one to match the actual (rolled-back) DB state instead
+    # of leaving a job pointing somewhere the row doesn't back up.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit recovery 'done all' for user %s: %s", user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        for task in overdue:
+            try:
+                await reminder_dao.session.refresh(task)
+                scheduler_service.schedule_reminder(task.id, to_utc_aware(task.execution_time), is_nagging=task.is_nagging)
+            except Exception as restore_e:
+                logger.error(
+                    "Failed to restore prior job for reminder %s after commit failure: %s",
+                    task.id, restore_e, exc_info=True,
+                )
+                scheduler_service.remove_reminder_job(task.id)
+        return await callback.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True
+        )
+
     await callback.message.edit_text(
         l10n.get("recovery_done_all_done", "✅ Marked {count} overdue tasks as done.").format(count=len(overdue)),
         reply_markup=None,
@@ -441,6 +482,27 @@ async def callback_recovery_snooze_all(
         except Exception:
             await reminder_dao.session.rollback()
             return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
+
+    # 2.2: commit BEFORE replying "snoozed" — same reasoning as
+    # callback_recovery_done_all above.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit recovery 'snooze all' for user %s: %s", user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        for task in overdue:
+            try:
+                await reminder_dao.session.refresh(task)
+                scheduler_service.schedule_reminder(task.id, to_utc_aware(task.execution_time), is_nagging=task.is_nagging)
+            except Exception as restore_e:
+                logger.error(
+                    "Failed to restore prior job for reminder %s after commit failure: %s",
+                    task.id, restore_e, exc_info=True,
+                )
+                scheduler_service.remove_reminder_job(task.id)
+        return await callback.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True
+        )
 
     await callback.message.edit_text(
         l10n.get("recovery_snooze_all_done", "⏰ Snoozed {count} overdue tasks by 1 hour.").format(count=len(overdue)),

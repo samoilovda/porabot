@@ -179,7 +179,10 @@ async def _apply_repeat_change(
     rrule_string: Optional[str],
 ) -> bool:
     """Persist a new repeat rule and reschedule. Returns False (and rolls
-    back) if scheduling fails."""
+    back) if scheduling OR the commit fails — the single choke point every
+    rrb_* repeat-builder callback in reminders_repeat.py goes through via
+    _apply_and_refresh, so fixing commit-before-reply here covers all of
+    them at once (2.2)."""
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
     await reminder_dao.session.flush()
@@ -187,6 +190,30 @@ async def _apply_repeat_change(
         _reschedule_current_execution(reminder, user, scheduler_service)
     except Exception:
         await reminder_dao.session.rollback()
+        return False
+
+    # 2.2: commit BEFORE the caller re-renders the repeat-builder screen —
+    # see _save_and_show_edit's comment for why an implicit commit failing
+    # after the job was already (re)scheduled above would otherwise
+    # mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit repeat change for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        try:
+            # is_recurring/rrule_string are back to their pre-change values
+            # after rollback + refresh — re-running the exact same
+            # reschedule call with those reverted values is what puts the
+            # job back in sync.
+            await reminder_dao.session.refresh(reminder)
+            _reschedule_current_execution(reminder, user, scheduler_service)
+        except Exception as restore_e:
+            logger.error(
+                "Failed to restore prior job for reminder %s after commit failure: %s",
+                reminder.id, restore_e, exc_info=True,
+            )
+            scheduler_service.remove_reminder_job(reminder.id)
         return False
     return True
 

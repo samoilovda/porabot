@@ -50,7 +50,33 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     except RuntimeError:
         logger.error("Cannot execute reminder %s: AppContext not set.", reminder_id)
         return
-    await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
+    job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+    try:
+        await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
+        # Ran without crashing — a PREVIOUS crash-retry streak on this
+        # exact job id (if any) is over; don't let it count against a
+        # future, unrelated crash.
+        ctx.scheduler._crash_retry_counts.pop(job_id, None)
+    except Exception:
+        # 1.2: _execute_reminder already rolled back its session and removed
+        # any job it half-created before re-raising — but this is a
+        # one-shot "date" trigger, so letting the exception just propagate
+        # up to APScheduler means the reminder never fires again until the
+        # next restart's reconcile_jobs_with_db happens to catch it (hours
+        # or days later for a daily/weekly reminder). A transient failure
+        # here (SQLite "database is locked" colliding with one of the
+        # per-minute cron jobs, a dropped DB connection, ...) shouldn't
+        # cost the user a notification. Retry with the same backoff
+        # schedule used for a failed SEND (SEND_RETRY_BACKOFF_MINUTES) —
+        # this is a different failure class (the code/DB layer, not
+        # Telegram delivery) but the same "don't hammer, don't give up
+        # silently" shape applies.
+        logger.exception(
+            "Reminder %s: unexpected failure executing job (nagging=%s) — scheduling retry.",
+            reminder_id,
+            is_nagging_execution,
+        )
+        ctx.scheduler.schedule_execution_retry(reminder_id, is_nagging_execution)
 
 
 async def remove_orphan_scheduler_jobs_job() -> None:
@@ -91,6 +117,14 @@ class SchedulerService:
         self.scheduler = scheduler
         self.bot = bot
         self.session_pool = session_pool
+        # 1.2: in-memory-only consecutive-crash counter, keyed by job id
+        # (str(reminder_id) or "nag_{reminder_id}") — deliberately NOT
+        # persisted. A restart clears it, but a restart is also exactly
+        # when reconcile_jobs_with_db re-derives everything from DB state
+        # anyway, so losing this counter on restart is harmless; the point
+        # of this dict is only to stop retrying a job that's crashing
+        # every attempt WITHIN one process's uptime.
+        self._crash_retry_counts: dict[str, int] = {}
         set_context(AppContext(bot=bot, session_pool=session_pool, scheduler=self))
 
     # ------------------------------------------------------------------
@@ -334,6 +368,52 @@ class SchedulerService:
         )
         logger.info(
             "Reminder %s: send failed (attempt %s), retrying at %s.", reminder_id, attempt_number, run_date
+        )
+
+    def schedule_execution_retry(self, reminder_id: int, is_nagging_execution: bool) -> None:
+        """1.2: retry a job whose _execute_reminder call raised an
+        unexpected exception (DB error, code bug, ...) — NOT a Telegram
+        send failure, which _schedule_send_retry above already covers.
+        Called from execute_reminder_job's except clause.
+
+        Reuses SEND_RETRY_BACKOFF_MINUTES/job-id-keying/replace_existing
+        shape, but tracks its own attempt count in
+        self._crash_retry_counts (in-memory — see its docstring) rather
+        than a DB column, since a crash this early means _execute_reminder
+        never got as far as loading (or safely mutating) the Reminder row.
+        """
+        job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+        attempt_number = self._crash_retry_counts.get(job_id, 0) + 1
+        self._crash_retry_counts[job_id] = attempt_number
+
+        backoff = SEND_RETRY_BACKOFF_MINUTES
+        if attempt_number > len(backoff):
+            logger.warning(
+                "Reminder %s: %s consecutive execution crashes (job %s) — exhausted "
+                "retry backoff, leaving it for reconcile_jobs_with_db on next restart.",
+                reminder_id,
+                attempt_number,
+                job_id,
+            )
+            self._crash_retry_counts.pop(job_id, None)
+            return
+
+        delay_minutes = backoff[attempt_number - 1]
+        run_date = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        self.scheduler.add_job(
+            execute_reminder_job,
+            "date",
+            run_date=run_date,
+            args=[reminder_id, is_nagging_execution],
+            id=job_id,
+            replace_existing=True,
+        )
+        logger.info(
+            "Reminder %s: execution crashed (attempt %s), retrying job %s at %s.",
+            reminder_id,
+            attempt_number,
+            job_id,
+            run_date,
         )
 
     def resume_nagging_if_stalled(self, reminder: Reminder) -> bool:

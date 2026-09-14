@@ -14,6 +14,7 @@ from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy.exc import OperationalError
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
@@ -86,6 +87,10 @@ async def handle_forwarded_task(
     except ValueError as ve:
         await message.answer(str(ve))
         return
+    except OperationalError as e:
+        logger.error("DB locked parsing forwarded text for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
+        return
     except Exception as e:
         logger.error(
             "Parser raised %s on forwarded text for user %s (input_len=%d)",
@@ -99,6 +104,9 @@ async def handle_forwarded_task(
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
         await message.answer(str(ve))
+    except OperationalError as e:
+        logger.error("DB locked handling forwarded text for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
     except Exception as e:
         logger.error(
             "_handle_parsed_result raised %s on forwarded text for user %s",
@@ -125,6 +133,14 @@ async def handle_task_text(
         result = await parser.parse(message.text, user.timezone)
     except ValueError as ve:
         await message.answer(str(ve))
+        return
+    except OperationalError as e:
+        # A locked sqlite file (several per-minute cron jobs share it — see
+        # bot/database/engine.py's WAL/busy_timeout comment) has nothing to
+        # do with what the user typed; "check the format" would be actively
+        # misleading here.
+        logger.error("DB locked parsing message for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
         return
     except Exception as e:
         # Reminder text can carry medical/personal/otherwise sensitive
@@ -153,6 +169,9 @@ async def handle_task_text(
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
         await message.answer(str(ve))
+    except OperationalError as e:
+        logger.error("DB locked handling message for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
     except Exception as e:
         logger.error(
             "_handle_parsed_result raised %s for user %s (input_len=%d)",
@@ -189,6 +208,10 @@ async def state_choosing_time_text_input(
 
     try:
         result = await parser.parse(message.text, user.timezone)
+    except OperationalError as e:
+        logger.error("DB locked parsing time input for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
+        return
     except Exception as e:
         logger.error(
             "Parser raised %s on time input for user %s (input_len=%d)",

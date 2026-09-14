@@ -157,6 +157,7 @@ EN: dict[str, Any] = {
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",
     "parse_error": "Error parsing text. Check the format.",
+    "db_busy": "⏳ The bot is busy right now — the database is locked. Please try sending your message again in a few seconds.",
     "ask_time": "Ok, task: \"{text}\".\nWhen to remind?",
     "try_again_manual": "🕒 Type the time, e.g. `18:30` or `tomorrow at 9`.",
     "time_in_past": "⏰ This time has already passed. Please choose a future time.",

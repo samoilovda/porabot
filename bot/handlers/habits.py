@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy.exc import OperationalError
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
@@ -313,6 +314,10 @@ async def state_habit_time(
     parser = InputParser()
     try:
         result = await parser.parse(message.text, user.timezone)
+    except OperationalError as e:
+        logger.error("DB locked parsing habit time input for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
+        return
     except Exception as e:
         logger.error(
             "Parser raised %s on habit time input for user %s (input_len=%d)",

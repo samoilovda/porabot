@@ -392,4 +392,6 @@ EN: dict[str, Any] = {
     "schedule_error": "❌ Failed to schedule reminder. Please try again.",
     "db_error": "❌ Database error. Please try again later.",
     "generic_error": "❌ Something went wrong. Please try again.",
+    "rate_limited_message": "⏳ Too many messages — please slow down and try again in a few seconds.",
+    "rate_limited_callback": "⏳ Too many requests — slow down.",
 }

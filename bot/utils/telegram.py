@@ -13,11 +13,29 @@ point of view, nothing going wrong at all.
 """
 
 import logging
+from typing import Optional, Union
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message, Update
 
 logger = logging.getLogger(__name__)
+
+
+def inner_event(update: Update) -> Optional[Union[Message, CallbackQuery]]:
+    """2.3: the Message or CallbackQuery INSIDE an Update.
+
+    Middleware registered via ``dp.update.middleware(...)`` (as
+    RateLimitMiddleware and DatabaseMiddleware are, in bot/__main__.py, so
+    a throttled/DB-erroring update never reaches a handler at all) runs at
+    the Update level: its ``event`` argument is always an
+    ``aiogram.types.Update``, never the ``Message``/``CallbackQuery``
+    inside it, regardless of what kind of update actually arrived.
+    ``isinstance(event, Message)`` there is consequently always False —
+    the exact bug this helper exists to stop being repeated. Returns None
+    for an update kind this bot doesn't otherwise act on (a poll answer,
+    a chat-member update, ...).
+    """
+    return update.message or update.callback_query
 
 _NOT_MODIFIED_MARKER = "message is not modified"
 

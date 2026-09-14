@@ -31,6 +31,7 @@ from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.utils.markdown import escape_markdown
 from bot.utils.pagination import limit_items, preview_line
+from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import (
     format_time,
     local_time_today_strict,
@@ -520,7 +521,10 @@ async def cb_habit_back_dash(
     text = l10n["habits_dashboard"]
     if motivation.strip():
         text = f"{text}\n\n{motivation}"
-    await callback.message.edit_text(
+    # 2.1: "Back to dashboard" landing on the identical dashboard content
+    # (no habit activity since it was last shown) is the ordinary case.
+    await safe_edit_text(
+        callback.message,
         text,
         reply_markup=get_habits_keyboard(l10n).as_markup(),
         parse_mode="Markdown"

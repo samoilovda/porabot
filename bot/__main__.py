@@ -14,6 +14,7 @@ import time
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BotCommand, ErrorEvent
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -119,7 +120,28 @@ async def handle_dispatcher_error(event: ErrorEvent) -> None:
     DatabaseMiddleware already rolls back the session on the same
     exception before it reaches here — nothing left to clean up on that
     front, this is purely "tell the user something went wrong".
+
+    2.1: a "message is not modified" TelegramBadRequest is not a failure
+    from the user's point of view — it means they tapped Refresh, a
+    filter, or a Back button that happened to land on a screen identical
+    to the one already showing. bot/utils/telegram.py's safe_edit_text/
+    safe_edit_reply_markup already swallow this at the handful of call
+    sites most likely to hit it, but with ~60 edit_text call sites across
+    the handlers, this is the backstop for everywhere else: no alert, no
+    error log, just acknowledge the tap so the button stops spinning.
     """
+    if isinstance(event.exception, TelegramBadRequest) and "message is not modified" in str(event.exception).lower():
+        logger.debug(
+            "Update %s: edit_text/edit_reply_markup was a no-op (unchanged content).", event.update.update_id
+        )
+        callback_query = event.update.callback_query
+        if callback_query is not None:
+            try:
+                await callback_query.answer()
+            except Exception as e:
+                logger.warning("Could not answer callback after a not-modified no-op: %s", e)
+        return
+
     logger.error(
         "Unhandled error processing update %s: %s",
         event.update.update_id,

@@ -52,6 +52,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.pagination import limit_items, preview_line
+from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
 
 router = Router(name="reminders_listing")
@@ -191,7 +192,10 @@ async def callback_tasks_page(
 
     shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=requested_page)
     safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
-    await callback.message.edit_text(
+    # 2.1: this doubles as Refresh (see this function's docstring) — tapping
+    # it when nothing changed is the ordinary case, not an error.
+    await safe_edit_text(
+        callback.message,
         safe_text,
         reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
         parse_mode="MarkdownV2",
@@ -244,11 +248,16 @@ async def _show_filtered_tasks(
     callback: CallbackQuery, tasks: list, user: User, l10n: dict[str, Any], header_key: str, header_default: str
 ) -> None:
     if not tasks:
-        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await safe_edit_text(
+            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
+        )
         await callback.answer()
         return
     header = l10n.get(header_key, header_default)
-    await callback.message.edit_text(
+    # 2.1: re-tapping the same filter (or a Back into an unchanged filter
+    # result) is an ordinary, expected no-op, not an error.
+    await safe_edit_text(
+        callback.message,
         _render_filtered_tasks_text(tasks, user, l10n, header),
         reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
         parse_mode="MarkdownV2",
@@ -297,7 +306,10 @@ async def callback_tasks_tags_menu(
     if not tags:
         await callback.answer(l10n.get("no_tags_yet", "You have no tags yet."), show_alert=True)
         return
-    await callback.message.edit_text(
+    # 2.1: re-opening the tags menu from a Back button can land on the
+    # identical tag list twice in a row.
+    await safe_edit_text(
+        callback.message,
         l10n.get("tags_menu_title", "🏷 Pick a tag:"),
         reply_markup=get_tags_menu_keyboard(list(tags), l10n),
     )
@@ -312,11 +324,15 @@ async def callback_tasks_filter_by_tag(
     tag = callback.data.split("tasks_tag:", 1)[1]
     tasks = await reminder_dao.get_reminders_by_tag(user.id, tag)
     if not tasks:
-        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await safe_edit_text(
+            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
+        )
         await callback.answer()
         return
     header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag))
-    await callback.message.edit_text(
+    # 2.1: re-tapping the same tag is an ordinary, expected no-op.
+    await safe_edit_text(
+        callback.message,
         _render_filtered_tasks_text(tasks, user, l10n, header),
         reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
         parse_mode="MarkdownV2",

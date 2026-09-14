@@ -96,7 +96,7 @@ async def test_undo_delete_commit_failure_removes_job_not_leaves_it_dangling() -
     callback.answer.assert_awaited()
 
 
-async def test_recovery_done_all_commit_failure_restores_every_task_job() -> None:
+async def test_recovery_done_all_commit_failure_never_touches_the_scheduler() -> None:
     now = datetime.now(timezone.utc)
     tasks = [
         SimpleNamespace(
@@ -128,15 +128,16 @@ async def test_recovery_done_all_commit_failure_restores_every_task_job() -> Non
 
     await callback_recovery_done_all(callback, reminder_dao, habit_event_dao, scheduler_service, user, l10n)
 
-    # Both non-recurring tasks had their job removed by the main loop
-    # (no next occurrence); the commit-failure branch must restore a job
-    # for each, matching the rolled-back (still-pending) row.
-    restored_ids = [rid for rid, _dt in scheduled_calls]
-    assert restored_ids == [1, 2]
+    # 3.5: DB mutations happen first, and the scheduler is only touched
+    # AFTER a successful commit — on a commit failure here, nothing has
+    # been sent to the scheduler yet, so there's nothing to restore or
+    # remove either.
+    assert scheduled_calls == []
+    assert removed_ids == []
     callback.answer.assert_awaited()
 
 
-async def test_recovery_snooze_all_commit_failure_restores_every_task_job() -> None:
+async def test_recovery_snooze_all_commit_failure_never_touches_the_scheduler() -> None:
     now = datetime.now(timezone.utc)
     tasks = [
         SimpleNamespace(
@@ -165,8 +166,7 @@ async def test_recovery_snooze_all_commit_failure_restores_every_task_job() -> N
 
     await callback_recovery_snooze_all(callback, reminder_dao, scheduler_service, user, l10n)
 
-    # Each task is scheduled once by the main loop (now rolled back), once
-    # more by the commit-failure recovery below — never just abandoned.
-    non_removed = [rid for rid, dt in scheduled_calls if dt != "REMOVED"]
-    assert non_removed == [5, 6, 5, 6]
+    # 3.5: same reasoning as callback_recovery_done_all's test above — the
+    # scheduler is only touched after a successful commit.
+    assert scheduled_calls == []
     callback.answer.assert_awaited()

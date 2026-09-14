@@ -60,6 +60,22 @@ def _write_heartbeat() -> None:
         logger.warning("Failed to write heartbeat file %s: %s", config.HEARTBEAT_FILE, e)
 
 
+def _start_polling_coro(dp: Dispatcher, bot: Bot):
+    """dp.start_polling(...), broken out to a top-level function so a test
+    can assert on the call without exercising the rest of main() (DB
+    engine, real Bot/scheduler setup, ...).
+
+    handle_signals=False is load-bearing, not cosmetic: aiogram's own
+    start_polling() calls loop.add_signal_handler(SIGTERM/SIGINT, ...) by
+    default, which REPLACES (not chains) the handlers main() registers
+    itself just before this call — see 1.1's fix note at the call site in
+    main(). Without this, stop_event is never set by a real shutdown
+    signal, and _run_until_stopped sees polling end on its own and raises
+    "Polling stopped unexpectedly" on every single deploy/`docker stop`.
+    """
+    return dp.start_polling(bot, handle_signals=False)
+
+
 async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
     """Run *polling_coro* until either *stop_event* is set or it ends on its own.
 
@@ -330,8 +346,19 @@ async def main() -> None:
             pass
 
     try:
-        await _run_until_stopped(dp.start_polling(bot), stop_event)
+        # See _start_polling_coro's docstring for why handle_signals=False
+        # is required here, not optional.
+        await _run_until_stopped(_start_polling_coro(dp, bot), stop_event)
     finally:
+        # Stop the scheduler BEFORE closing the bot session/engine: a job
+        # mid-send (a reminder, a brief) that races past this point would
+        # otherwise hit a closed aiohttp session or a disposed engine.
+        # wait=False still lets an in-flight async job coroutine that's
+        # already running continue to completion (APScheduler cancels
+        # only pending/scheduled runs, not one already executing) — it
+        # just stops issuing NEW ones.
+        scheduler.shutdown(wait=False)
+
         try:
             await bot.session.close()
         except Exception as e:
@@ -342,8 +369,6 @@ async def main() -> None:
                 await web_runner.cleanup()
             except Exception as e:
                 logger.warning("Error shutting down web server: %s", e)
-
-        scheduler.shutdown(wait=False)
 
         try:
             await dispose_engine(engine)

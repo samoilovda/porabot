@@ -149,3 +149,44 @@ async def test_retry_backoff_is_exhausted_after_max_attempts() -> None:
     # Backoff exhausted — no further retry job scheduled. reconcile_jobs_with_db
     # (last_fired_at still unset) is the safety net on next restart instead.
     assert scheduler.get_job("42") is None
+
+
+def _flood_control_bot(retry_after_seconds: int):
+    from aiogram.exceptions import TelegramRetryAfter
+
+    async def _raise(*args, **kwargs):
+        raise TelegramRetryAfter(method=SimpleNamespace(), message="Too Many Requests", retry_after=retry_after_seconds)
+
+    return SimpleNamespace(send_message=_raise, delete_message=AsyncMock())
+
+
+async def test_flood_control_retry_honors_telegrams_own_cooldown() -> None:
+    """2.8: SEND_RETRY_BACKOFF_MINUTES's first step (1 minute = 60s) is
+    shorter than Telegram's reported cooldown here (600s) — the retry must
+    not fire before that window elapses, or it fails the identical way
+    again."""
+    reminder = _make_reminder(is_recurring=False)
+    session = _FakeSession(reminder, _make_user())
+    scheduler = AsyncIOScheduler()
+    service = SchedulerService(scheduler, bot=_flood_control_bot(600), session_pool=lambda: session)
+
+    await service._execute_reminder(reminder.id, is_nagging_execution=False)
+
+    retry_job = scheduler.get_job("42")
+    assert retry_job is not None
+    assert retry_job.trigger.run_date >= datetime.now(timezone.utc) + timedelta(seconds=600)
+
+
+async def test_flood_control_retry_does_not_shrink_below_the_normal_backoff() -> None:
+    """A short retry_after (e.g. 3s) must not make the retry fire sooner
+    than the caller's own backoff schedule would otherwise dictate."""
+    reminder = _make_reminder(is_recurring=False, send_retry_count=3)  # about to be attempt 4 -> 60 min step
+    session = _FakeSession(reminder, _make_user())
+    scheduler = AsyncIOScheduler()
+    service = SchedulerService(scheduler, bot=_flood_control_bot(3), session_pool=lambda: session)
+
+    await service._execute_reminder(reminder.id, is_nagging_execution=False)
+
+    retry_job = scheduler.get_job("42")
+    assert retry_job is not None
+    assert retry_job.trigger.run_date >= datetime.now(timezone.utc) + timedelta(minutes=55)

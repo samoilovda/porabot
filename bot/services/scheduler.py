@@ -9,10 +9,11 @@ is a known APScheduler tradeoff.
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import pytz
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -184,6 +185,13 @@ class SchedulerService:
         now_utc = datetime.now(timezone.utc)
         now_utc_naive = now_utc.replace(tzinfo=None)
         restored = 0
+        # 2.8: catch-up sends are staggered by this many seconds each,
+        # incremented once per catch-up job below — without it, downtime
+        # spanning hundreds of users' reminders means ALL of them land on
+        # the identical now+1min run_date, firing as a burst that trips
+        # Telegram's own flood control (TelegramRetryAfter) on top of
+        # whatever this reconcile already had to catch up on.
+        catchup_stagger_seconds = 0
         async with self.session_pool() as session:
             result = await session.execute(
                 select(Reminder)
@@ -252,13 +260,15 @@ class SchedulerService:
                             # the chain self-corrects — only the single oldest
                             # missed cycle is (late) delivered, not a full
                             # backfill of every cycle downtime spanned.
-                            run_at_utc = now_utc + timedelta(minutes=1)
+                            run_at_utc = now_utc + timedelta(minutes=1, seconds=catchup_stagger_seconds)
+                            catchup_stagger_seconds += 2
                     else:
                         if already_delivered:
                             # Notification already reached the user; they just
                             # haven't tapped Done yet — don't resend it.
                             continue
-                        run_at_utc = now_utc + timedelta(minutes=1)
+                        run_at_utc = now_utc + timedelta(minutes=1, seconds=catchup_stagger_seconds)
+                        catchup_stagger_seconds += 2
 
                 self.schedule_reminder(reminder.id, run_at_utc, is_nagging=reminder.is_nagging)
                 restored += 1
@@ -348,13 +358,28 @@ class SchedulerService:
         except JobLookupError:
             logger.debug("Nagging job nag_%s not found.", reminder_id)
 
-    def _schedule_send_retry(self, reminder_id: int, attempt_number: int, is_nagging_execution: bool) -> None:
+    def _schedule_send_retry(
+        self,
+        reminder_id: int,
+        attempt_number: int,
+        is_nagging_execution: bool,
+        *,
+        min_delay_seconds: Optional[int] = None,
+    ) -> None:
         """Schedule a retry for a send that failed with a retryable/permanent error.
 
         *attempt_number* is 1-based (the count of consecutive failures
         including this one). Once it exceeds SEND_RETRY_BACKOFF_MINUTES, no
         further retry job is scheduled — see the module-level docstring on
         SEND_RETRY_BACKOFF_MINUTES for why that's not a lost notification.
+
+        2.8: *min_delay_seconds* is Telegram's own TelegramRetryAfter.retry_after
+        when the failure was flood control, None otherwise. The caller's
+        fixed backoff schedule is a floor, not a ceiling — a flood-control
+        window Telegram itself imposed can be longer (this bot's own
+        traffic pattern colliding with per-chat/global rate limits after a
+        big reconcile catch-up, for instance), and firing the retry before
+        it elapses would just fail the identical way again.
         """
         backoff = SEND_RETRY_BACKOFF_MINUTES
         if attempt_number > len(backoff):
@@ -366,7 +391,10 @@ class SchedulerService:
             )
             return
         delay_minutes = backoff[attempt_number - 1]
-        run_date = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        delay = timedelta(minutes=delay_minutes)
+        if min_delay_seconds is not None:
+            delay = max(delay, timedelta(seconds=min_delay_seconds + 1))
+        run_date = datetime.now(timezone.utc) + delay
         job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
         self.scheduler.add_job(
             execute_reminder_job,
@@ -590,7 +618,7 @@ class SchedulerService:
                     cycle_due_ts=cycle_due_ts,
                     show_not_today=is_habit_like(reminder) or reminder.is_fluid_habit,
                 )
-                send_outcome = await self._send_or_replace_nag_message(
+                send_outcome, retry_after_seconds = await self._send_or_replace_nag_message(
                     reminder=reminder,
                     l10n=l10n,
                     keyboard=keyboard,
@@ -634,7 +662,12 @@ class SchedulerService:
                     # already gave up on this reminder entirely.
                     reminder.send_retry_count = int(reminder.send_retry_count or 0) + 1
                     if not gave_up:
-                        self._schedule_send_retry(reminder_id, reminder.send_retry_count, is_nagging_execution)
+                        self._schedule_send_retry(
+                            reminder_id,
+                            reminder.send_retry_count,
+                            is_nagging_execution,
+                            min_delay_seconds=retry_after_seconds,
+                        )
                     await session.commit()
                     return
 
@@ -717,16 +750,24 @@ class SchedulerService:
     ):
         """Send a reminder notification, suppressing bot-blocked and bad-request errors.
 
-        Returns a (message, outcome) tuple: message is the Telegram Message
-        object on success (otherwise None); outcome is one of:
+        Returns a (message, outcome, retry_after_seconds) tuple: message is
+        the Telegram Message object on success (otherwise None); outcome is
+        one of:
           "ok"               — delivered successfully.
           "forbidden"        — the user has blocked the bot.
           "permanent_error"  — Telegram rejected this specific payload (bad
                                 request) even after retrying without the
                                 keyboard — retrying the identical payload
                                 again would fail the same way.
-          "retryable_error"  — some other failure (timeout, network, etc.)
-                                that may well succeed if retried.
+          "retryable_error"  — some other failure (timeout, network, flood
+                                control, ...) that may well succeed if
+                                retried.
+        retry_after_seconds is only ever set (to Telegram's own reported
+        cooldown) alongside "retryable_error" from a TelegramRetryAfter —
+        None in every other case. 2.8: without honoring it, a retry fired
+        on the caller's own fixed backoff can land BEFORE the flood-control
+        window Telegram itself imposed has even elapsed, failing the exact
+        same way again.
         Neither error outcome is the user's fault, so callers must not treat
         them the same as "forbidden" (see forbidden_strikes), and must not
         treat them as delivered (see last_fired_at).
@@ -738,10 +779,13 @@ class SchedulerService:
                 reply_markup=reply_markup,
                 parse_mode=None,
             )
-            return message, "ok"
+            return message, "ok", None
         except TelegramForbiddenError:
             logger.warning("User %s has blocked the bot.", user_id)
-            return None, "forbidden"
+            return None, "forbidden", None
+        except TelegramRetryAfter as e:
+            logger.warning("Flood control sending to %s: retry after %ss.", user_id, e.retry_after)
+            return None, "retryable_error", e.retry_after
         except TelegramBadRequest as e:
             logger.error("Bad request sending to %s: %s — retrying without keyboard.", user_id, e)
             try:
@@ -750,13 +794,18 @@ class SchedulerService:
                     text=f"{l10n['reminder_prefix']}{text}",
                     parse_mode=None,
                 )
-                return message, "ok"
+                return message, "ok", None
+            except TelegramRetryAfter as retry_e:
+                logger.warning(
+                    "Flood control on keyboard-less retry to %s: retry after %ss.", user_id, retry_e.retry_after
+                )
+                return None, "retryable_error", retry_e.retry_after
             except Exception as retry_e:
                 logger.error("Retry without keyboard also failed for %s: %s", user_id, retry_e, exc_info=True)
-                return None, "permanent_error"
+                return None, "permanent_error", None
         except Exception as e:
             logger.error("Failed to send message to %s: %s", user_id, e, exc_info=True)
-            return None, "retryable_error"
+            return None, "retryable_error", None
 
     async def _delete_telegram_message(self, chat_id: int, message_id: int) -> None:
         """Best-effort Telegram message deletion helper."""
@@ -787,10 +836,10 @@ class SchedulerService:
         l10n: dict,
         keyboard,
         is_nagging_execution: bool,
-    ) -> str:
+    ) -> tuple[str, Optional[int]]:
         """For nagging reminders, keep only one active reminder message visible.
 
-        Returns the send outcome — see _send_telegram_message.
+        Returns (outcome, retry_after_seconds) — see _send_telegram_message.
         """
         if (
             is_nagging_execution
@@ -802,7 +851,7 @@ class SchedulerService:
                 message_id=int(reminder.last_nag_message_id),
             )
 
-        sent_message, outcome = await self._send_telegram_message(
+        sent_message, outcome, retry_after = await self._send_telegram_message(
             reminder.user_id,
             reminder.reminder_text,
             l10n,
@@ -811,10 +860,10 @@ class SchedulerService:
 
         if not reminder.is_nagging:
             self._clear_nag_tracking(reminder)
-            return outcome
+            return outcome, retry_after
 
         if sent_message is not None:
             reminder.last_nag_chat_id = int(sent_message.chat.id)
             reminder.last_nag_message_id = int(sent_message.message_id)
 
-        return outcome
+        return outcome, retry_after

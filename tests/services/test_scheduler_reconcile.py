@@ -128,3 +128,23 @@ async def test_reconcile_skips_reminder_that_already_has_a_job() -> None:
     await service.reconcile_jobs_with_db()
 
     scheduler.add_job.assert_not_called()
+
+
+async def test_reconcile_staggers_catchup_sends_instead_of_bursting_at_once() -> None:
+    """2.8: downtime spanning many users' overdue reminders used to land
+    ALL of them on the identical now+1min run_date — a send burst that
+    trips Telegram's own flood control on top of whatever reconcile
+    already had to catch up on. Consecutive never-delivered catch-ups
+    must get distinct, increasing run_dates."""
+    scheduler = AsyncIOScheduler()
+    past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
+    reminders = [_make_reminder(id=i, execution_time=past) for i in range(1, 6)]
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=_session_pool_factory(reminders))
+
+    await service.reconcile_jobs_with_db()
+
+    run_dates = [scheduler.get_job(str(i)).trigger.run_date for i in range(1, 6)]
+    assert run_dates == sorted(run_dates)
+    assert len(set(run_dates)) == len(run_dates)  # every one distinct, not a pile-up
+    # Still all within a reasonably short catch-up window, not spread hours apart.
+    assert run_dates[-1] - run_dates[0] < timedelta(minutes=1)

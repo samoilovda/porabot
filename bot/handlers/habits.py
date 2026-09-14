@@ -311,7 +311,15 @@ async def state_habit_time(
     habit_text = data.get("habit_text", l10n["habit_default_name"])
 
     parser = InputParser()
-    result = await parser.parse(message.text, user.timezone)
+    try:
+        result = await parser.parse(message.text, user.timezone)
+    except Exception as e:
+        logger.error(
+            "Parser raised %s on habit time input for user %s (input_len=%d)",
+            type(e).__name__, user.id, len(message.text), exc_info=True,
+        )
+        await message.answer(l10n["parse_error"])
+        return
 
     if not result.parsed_datetime:
         await message.answer(l10n["habit_time_retry"])

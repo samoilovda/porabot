@@ -121,6 +121,28 @@ async def handle_dispatcher_error(event: ErrorEvent) -> None:
     exception before it reaches here — nothing left to clean up on that
     front, this is purely "tell the user something went wrong".
 
+    2.4: this used to always answer in Russian (get_l10n(None)) regardless
+    of the user's actual language. The fix is NOT "accept l10n as a
+    parameter and let aiogram's DI fill it from data['l10n']" — verified
+    empirically that this does not work: ErrorsMiddleware re-dispatches to
+    the "error" event type via `self.router.propagate_event(..., **data)`,
+    but that *data* is ErrorsMiddleware's own outer-middleware-chain
+    snapshot from BEFORE the inner "message"/"callback_query" observer's
+    own middleware chain (where DatabaseMiddleware actually runs and sets
+    data["l10n"]) — TelegramEventObserver.trigger's `**kwargs` unpacking
+    creates a fresh dict at that boundary, so a later middleware's
+    mutation of ITS OWN data dict never propagates back up to
+    ErrorsMiddleware's copy. A parameter named `l10n` on this function is
+    consequently always None from aiogram's DI, silently.
+    Instead, read the language straight off the Update's own embedded
+    user — every update type that can reach a handler carries a
+    from_user with a language_code Telegram itself reports (the client's
+    UI language) — via inner_event(event.update).from_user. Not the same
+    as the user's saved in-bot language preference (which only
+    DatabaseMiddleware's User row has, out of reach here — see above),
+    but a solid, always-available signal, same trick 2.3 already uses for
+    RateLimitMiddleware's notice, which runs under the same constraint.
+
     2.1: a "message is not modified" TelegramBadRequest is not a failure
     from the user's point of view — it means they tapped Refresh, a
     filter, or a Back button that happened to land on a screen identical
@@ -149,8 +171,11 @@ async def handle_dispatcher_error(event: ErrorEvent) -> None:
         exc_info=event.exception,
     )
     from bot.lexicon import get_l10n
+    from bot.utils.telegram import inner_event
 
-    l10n = get_l10n(None)
+    target_for_lang = inner_event(event.update)
+    from_user = getattr(target_for_lang, "from_user", None) if target_for_lang is not None else None
+    l10n = get_l10n(getattr(from_user, "language_code", None))
     text = l10n.get("generic_error", "❌ Something went wrong. Please try again.")
     update = event.update
     try:

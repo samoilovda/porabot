@@ -131,6 +131,14 @@ async def sweep_habit_cycles() -> None:
         # session keep their loaded scalar attributes (id, timezone, ...),
         # which is all _sweep_fixed_habits/_sweep_fluid_habits ever read.
         async with session_pool_factory() as session:
+            # 2.7: deliberately NOT filtering out User.bot_blocked_at here,
+            # unlike daily_briefs/missed_recovery/habit_reports. This job
+            # never sends a Telegram message — it only records habit_events
+            # ("missed", ...) so streaks and reports stay accurate. A user
+            # who blocked the bot can still unblock it later, or check
+            # progress via the Mini App; freezing their history at the
+            # moment they blocked the bot would be a real data-correctness
+            # regression, not just a performance win.
             result = await session.execute(
                 select(User)
                 .distinct()

@@ -275,6 +275,9 @@ async def process_habit_reports() -> None:
                 .where(
                     User.habit_reports_enabled.is_(True),
                     Reminder.is_habit.is_(True),
+                    # 2.7: a user who blocked the bot will only ever get
+                    # TelegramForbiddenError from the eventual send below.
+                    User.bot_blocked_at.is_(None),
                 )
             )
             candidates = result.scalars().all()

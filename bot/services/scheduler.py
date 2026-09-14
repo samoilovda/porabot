@@ -173,13 +173,22 @@ class SchedulerService:
         catch-up job for it if last_fired_at shows this cycle was never sent.
         Reminders that already gave up after repeated TelegramForbiddenError
         (see FORBIDDEN_STRIKES_LIMIT) are skipped entirely.
+
+        2.7: also skip a user with bot_blocked_at set, even at
+        forbidden_strikes=0 — that column only climbs once a send has
+        actually been ATTEMPTED and failed (up to FORBIDDEN_STRIKES_LIMIT
+        restarts/fires before reconcile would otherwise stop retrying on
+        its own), whereas a my_chat_member update reports the block
+        immediately, often before this reminder has ever fired once.
         """
         now_utc = datetime.now(timezone.utc)
         now_utc_naive = now_utc.replace(tzinfo=None)
         restored = 0
         async with self.session_pool() as session:
             result = await session.execute(
-                select(Reminder).where(
+                select(Reminder)
+                .join(User, User.id == Reminder.user_id)
+                .where(
                     Reminder.status == "pending",
                     Reminder.is_fluid_habit.is_(False),
                     Reminder.forbidden_strikes < FORBIDDEN_STRIKES_LIMIT,
@@ -187,6 +196,7 @@ class SchedulerService:
                     # job removed on purpose, awaiting either Undo or the
                     # cleanup sweep — reconcile must not resurrect it.
                     Reminder.pending_delete_at.is_(None),
+                    User.bot_blocked_at.is_(None),
                 )
             )
             reminders = result.scalars().all()
@@ -594,6 +604,14 @@ class SchedulerService:
                 # error instead of TelegramForbiddenError.
                 if send_outcome == "forbidden":
                     reminder.forbidden_strikes = int(reminder.forbidden_strikes or 0) + 1
+                    # 2.7: safety net for a missed/delayed my_chat_member
+                    # update — a confirmed Forbidden here is unambiguous
+                    # proof the user has blocked the bot, so mark it now
+                    # rather than waiting on an update that may never
+                    # arrive (Telegram doesn't guarantee my_chat_member
+                    # delivery the way it does for ordinary messages).
+                    if getattr(user, "bot_blocked_at", None) is None:
+                        user.bot_blocked_at = now_utc.replace(tzinfo=None)
                 elif send_outcome == "ok":
                     reminder.forbidden_strikes = 0
                 gave_up = reminder.forbidden_strikes >= FORBIDDEN_STRIKES_LIMIT

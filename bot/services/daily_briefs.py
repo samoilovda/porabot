@@ -275,6 +275,10 @@ async def get_users_needing_brief_check(session) -> list[int]:
         .join(Reminder)
         .where(
             User.briefs_enabled.is_(True),
+            # 2.7: a user who blocked the bot will only ever get
+            # TelegramForbiddenError — no reason to run this whole query
+            # and the per-user brief-building work that follows for them.
+            User.bot_blocked_at.is_(None),
             or_(
                 and_(Reminder.status == "pending", Reminder.pending_delete_at.is_(None)),
                 and_(

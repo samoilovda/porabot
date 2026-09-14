@@ -1,12 +1,14 @@
 """Handlers for base commands: /start, /help, /cancel."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from bot.database.dao.user import UserDAO
 from bot.database.models import User
@@ -71,6 +73,42 @@ async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict
     await callback.message.delete()
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
     await callback.answer()
+
+
+@router.my_chat_member()
+async def on_my_chat_member(event: ChatMemberUpdated, user_dao: UserDAO, user: User) -> None:
+    """2.7: track whether this user has blocked the bot in their private
+    chat, so the per-minute cron jobs (daily briefs, missed-task recovery,
+    habit sweeper, habit reports) and reconcile_jobs_with_db can exclude
+    them entirely instead of checking/scheduling for a user who will only
+    ever get TelegramForbiddenError, forever.
+
+    Telegram reuses "kicked" as the ChatMember status for BOTH "removed
+    from a group" and "blocked a private chat" — with PrivateChatOnlyMiddleware
+    (2.6) this update can in principle still arrive for a group (e.g. the
+    bot being removed from one it was briefly added to before that
+    middleware's own reply went out), so this only acts on private chats;
+    a group my_chat_member update is a no-op here regardless of status.
+
+    DatabaseMiddleware already resolved *user* from event.my_chat_member's
+    own from_user (UserContextMiddleware treats it the same as any other
+    update's user) — a fresh User row for a chat this bot has never
+    exchanged messages with (only ever received this one status update)
+    is created there exactly like for any other update.
+    """
+    if event.chat.type != "private":
+        return
+
+    blocked = event.new_chat_member.status == ChatMemberStatus.KICKED
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None) if blocked else None
+    if blocked and user.bot_blocked_at is None:
+        await user_dao.update_settings(user.id, bot_blocked_at=now_utc_naive)
+        user.bot_blocked_at = now_utc_naive
+        logger.info("User %s blocked the bot.", user.id)
+    elif not blocked and user.bot_blocked_at is not None:
+        await user_dao.update_settings(user.id, bot_blocked_at=None)
+        user.bot_blocked_at = None
+        logger.info("User %s unblocked the bot.", user.id)
 
 
 @router.message(F.pinned_message)

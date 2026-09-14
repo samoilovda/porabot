@@ -83,7 +83,12 @@ async def process_missed_task_recovery() -> None:
         # below stays fully usable after this session closes.
         async with session_pool_factory() as session:
             result = await session.execute(
-                select(User).where(User.missed_recovery_enabled.is_(True))
+                select(User).where(
+                    User.missed_recovery_enabled.is_(True),
+                    # 2.7: a user who blocked the bot will only ever get
+                    # TelegramForbiddenError from the eventual send below.
+                    User.bot_blocked_at.is_(None),
+                )
             )
             candidates = result.scalars().all()
 

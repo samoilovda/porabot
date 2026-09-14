@@ -165,6 +165,7 @@ ES.update(
         "forwarded_from": "Reenviado de",
         "text_only_hint": "📝 Por ahora solo entiendo texto. Envía tu recordatorio como mensaje de texto.",
         "unknown_command": "❓ Comando desconocido. Consulta /help para ver la lista de comandos.",
+        "private_only": "🔒 Porabot solo funciona en un chat privado. Escríbeme directamente.",
         "preview": "✅ *¡Tarea guardada\\!*\n📌 {text}\n⏰ {time}",
         "btn_repeat_prefix": "🔁 Repetir:",
         "btn_nagging_prefix": "{icon} Insistencia:",

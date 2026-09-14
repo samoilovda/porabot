@@ -164,6 +164,7 @@ RU: dict[str, Any] = {
     "forwarded_from": "Переслано от",
     "text_only_hint": "📝 Пока понимаю только текст. Пришли напоминание текстовым сообщением.",
     "unknown_command": "❓ Неизвестная команда. Список команд — /help.",
+    "private_only": "🔒 Porabot работает только в личном чате. Напиши мне напрямую.",
 
     # Confirmation logic -> Edit Logic
     "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",

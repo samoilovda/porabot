@@ -182,6 +182,14 @@ sudo systemctl status porabot
 2. **Use strong BOT_TOKEN** from @BotFather
 3. **Restrict ALLOWED_USERS** to trusted users only
 4. **Regular backups** of `/opt/porabot/data/` directory (see below)
+5. **Keep privacy mode ON** in @BotFather (`/setprivacy` → Enable, the
+   default for a new bot). Porabot only works in private DMs — if
+   someone adds it to a group, `PrivateChatOnlyMiddleware`
+   (`bot/middlewares/private_chat_only.py`) refuses every update from
+   that chat, but with privacy mode off the bot still RECEIVES (and has
+   to reject) every single message in the group, not just ones
+   mentioning/replying to it. Disabling privacy mode is only needed if
+   you later add a feature that genuinely reads group messages.
 
 ---
 

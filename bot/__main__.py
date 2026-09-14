@@ -34,6 +34,7 @@ from bot.database.engine import create_engine, create_session_maker, dispose_eng
 from bot.handlers import all_routers
 from bot.handlers.reminders import _cleanup_stale_timers
 from bot.middlewares.database import DatabaseMiddleware
+from bot.middlewares.private_chat_only import PrivateChatOnlyMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.services.daily_briefs import setup_daily_briefs
 from bot.services.delete_cleanup import setup_delete_cleanup
@@ -344,6 +345,13 @@ async def main() -> None:
     # To re-enable the whitelist, restore WhitelistMiddleware registration
     # before DatabaseMiddleware too.
     # dp.update.middleware(WhitelistMiddleware(allowed_users=config.ALLOWED_USERS, admin_id=config.ADMIN_ID))
+    # 2.6: PrivateChatOnlyMiddleware goes first of all — a rejected-outright
+    # group/channel update shouldn't even count toward a user's rate-limit
+    # window. No handler in this codebase filters on chat.type; without
+    # this, a group the bot is in (or one with privacy mode off) hits the
+    # exact same free-text-parses-as-task flow a DM does, notifying a
+    # chat_id the member may never have opened with the bot.
+    dp.update.middleware(PrivateChatOnlyMiddleware())
     rate_limit_middleware = RateLimitMiddleware()
     dp.update.middleware(rate_limit_middleware)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))

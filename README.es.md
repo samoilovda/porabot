@@ -71,12 +71,12 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 ## Cobertura de tests
 
 ```
-135 tests recopilados   (python -m pytest --collect-only -q)
+505 tests recopilados   (python -m pytest --collect-only -q)
 ```
 
-Los tests siguen el estilo de regresión: cada test se escribió para fallar con el bug concreto que protege, y luego se aplicó la corrección. Los archivos de test viven junto al código fuente en `bot/services/`.
+Los tests siguen el estilo de regresión: cada test se escribió para fallar con el bug concreto que protege, y luego se aplicó la corrección. Los archivos de test viven en `tests/`, reflejando la estructura de `bot/`.
 
-CI (`deploy.yml`) ejecuta todos los tests en cada push a `main` y bloquea el despliegue si alguno falla — el VPS solo se actualiza si los 135 tests pasan.
+CI (`deploy.yml`) ejecuta todos los tests en cada push a `main` y bloquea el despliegue si alguno falla — el VPS solo se actualiza si toda la suite pasa.
 
 ---
 

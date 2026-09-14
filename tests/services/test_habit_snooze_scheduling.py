@@ -54,7 +54,7 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
     reminder_dao = SimpleNamespace(
         get_by_id=AsyncMock(return_value=reminder),
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(rollback=AsyncMock()),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=Mock())
 

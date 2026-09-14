@@ -90,6 +90,95 @@ async def test_clear_resets_state_and_data() -> None:
     await engine.dispose()
 
 
+async def _row_exists(session_pool, key: StorageKey) -> bool:
+    from sqlalchemy import select
+
+    from bot.database.models import FsmState
+
+    async with session_pool() as session:
+        result = await session.execute(
+            select(FsmState).where(
+                FsmState.bot_id == key.bot_id,
+                FsmState.chat_id == key.chat_id,
+                FsmState.user_id == key.user_id,
+                FsmState.destiny == key.destiny,
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+
+async def test_clear_deletes_the_row_instead_of_leaving_an_empty_placeholder() -> None:
+    """3.5: FSMContext.clear() (state.clear(), called on nearly every
+    successful flow completion/cancel) used to leave the row behind with
+    state=None, data_json="{}" — a permanent placeholder for every chat
+    that ever started a wizard, only ever cleaned up by the 24-hour
+    cleanup_stale_fsm_state sweep. It should be dropped immediately
+    once both halves of clear() (set_state(None), then set_data({}))
+    have run.
+    """
+    engine = create_engine("sqlite+aiosqlite:///:memory:")
+    session_pool = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    storage = SQLAlchemyFSMStorage(session_pool)
+    key = StorageKey(bot_id=1, chat_id=1, user_id=1)
+    await storage.set_state(key, "SomeState:step")
+    await storage.set_data(key, {"a": 1})
+    assert await _row_exists(session_pool, key)
+
+    # Mirrors aiogram's FSMContext.clear(): set_state(None) then set_data({}).
+    await storage.set_state(key, None)
+    await storage.set_data(key, {})
+
+    assert not await _row_exists(session_pool, key)
+    # The public API still reads back the same defaults either way.
+    assert await storage.get_state(key) is None
+    assert await storage.get_data(key) == {}
+    await engine.dispose()
+
+
+async def test_setting_state_again_after_clear_recreates_the_row() -> None:
+    engine = create_engine("sqlite+aiosqlite:///:memory:")
+    session_pool = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    storage = SQLAlchemyFSMStorage(session_pool)
+    key = StorageKey(bot_id=1, chat_id=1, user_id=1)
+    await storage.set_state(key, "SomeState:step")
+    await storage.set_data(key, {})
+    await storage.set_state(key, None)
+    assert not await _row_exists(session_pool, key)
+
+    await storage.set_state(key, "NewWizard:entering_text")
+
+    assert await _row_exists(session_pool, key)
+    assert await storage.get_state(key) == "NewWizard:entering_text"
+    await engine.dispose()
+
+
+async def test_clearing_data_alone_does_not_delete_a_row_with_active_state() -> None:
+    """set_data({}) must only delete the row when state is ALSO already
+    None — a wizard step that happens to clear its own scratch data
+    mid-flow must not lose its FSM state."""
+    engine = create_engine("sqlite+aiosqlite:///:memory:")
+    session_pool = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    storage = SQLAlchemyFSMStorage(session_pool)
+    key = StorageKey(bot_id=1, chat_id=1, user_id=1)
+    await storage.set_state(key, "SomeState:step")
+    await storage.set_data(key, {"a": 1})
+
+    await storage.set_data(key, {})
+
+    assert await _row_exists(session_pool, key)
+    assert await storage.get_state(key) == "SomeState:step"
+    await engine.dispose()
+
+
 async def test_cleanup_drops_only_stale_rows(tmp_path) -> None:
     from datetime import datetime, timedelta
 

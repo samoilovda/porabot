@@ -41,7 +41,7 @@ async def test_toggle_nagging_on_past_one_off_reminder_removes_job_instead_of_fi
     )
     reminder_dao = SimpleNamespace(
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
+        session=SimpleNamespace(flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock(), refresh=AsyncMock()),
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
@@ -114,7 +114,7 @@ async def test_toggle_repeat_on_past_recurring_reminder_advances_to_future_occur
     )
     reminder_dao = SimpleNamespace(
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
+        session=SimpleNamespace(flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock(), refresh=AsyncMock()),
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
@@ -155,7 +155,7 @@ async def test_enabling_repeat_on_a_past_plain_task_creates_a_future_occurrence(
     )
     reminder_dao = SimpleNamespace(
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
+        session=SimpleNamespace(flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock(), refresh=AsyncMock()),
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(
@@ -197,7 +197,7 @@ async def test_repeat_builder_cycles_through_presets_and_back_to_none() -> None:
     )
     reminder_dao = SimpleNamespace(
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(flush=AsyncMock(), rollback=AsyncMock()),
+        session=SimpleNamespace(flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock(), refresh=AsyncMock()),
     )
     user = SimpleNamespace(id=1, timezone="UTC")
     callback = SimpleNamespace(

@@ -56,7 +56,7 @@ async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() ->
     reminder_dao = SimpleNamespace(
         get_by_id=AsyncMock(return_value=reminder),
         get_owned=AsyncMock(return_value=reminder),
-        session=SimpleNamespace(rollback=AsyncMock()),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=lambda *a, **k: None)
 

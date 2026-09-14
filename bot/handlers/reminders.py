@@ -142,6 +142,7 @@ from bot.handlers.reminders_snooze import (  # noqa: E402
     callback_snooze_act,
     callback_snooze_show,
     handle_non_text_message,
+    handle_unknown_command,
 )
 
 # --- reminders_wizard ---
@@ -267,6 +268,7 @@ __all__ = [
     "handle_forwarded_task",
     "handle_non_text_message",
     "handle_task_text",
+    "handle_unknown_command",
     "parser",
     "reminders_shared",
     "router",

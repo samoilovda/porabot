@@ -142,6 +142,19 @@ class User(Base):
     # URL immediately, since the lookup is by exact token match.
     ics_feed_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # 2.7: set when a my_chat_member update reports this user blocked the
+    # bot (status "kicked" — Telegram's term for a private chat the user
+    # closed/blocked, not a group-kick), cleared if they unblock it. NULL
+    # means never blocked (or status unknown — a legacy row from before
+    # this column existed). Every per-minute cron job's candidate query
+    # (daily briefs, missed-task recovery, habit sweeper, habit reports)
+    # and SchedulerService.reconcile_jobs_with_db exclude rows where this
+    # is set — without it, a user who blocked the bot months ago still got
+    # checked and "sent to" every single tick, forever, for no reason
+    # (each send already fails outright — see forbidden_strikes — this is
+    # about not doing the surrounding DB work at all, not about delivery).
+    bot_blocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # When user was added to database (for analytics/debugging)
     # Python-side default wins on ORM inserts (SQLAlchemy always applies it),
     # so this is UTC regardless of dialect — server_default=func.now() is a

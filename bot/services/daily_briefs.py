@@ -275,6 +275,10 @@ async def get_users_needing_brief_check(session) -> list[int]:
         .join(Reminder)
         .where(
             User.briefs_enabled.is_(True),
+            # 2.7: a user who blocked the bot will only ever get
+            # TelegramForbiddenError — no reason to run this whole query
+            # and the per-user brief-building work that follows for them.
+            User.bot_blocked_at.is_(None),
             or_(
                 and_(Reminder.status == "pending", Reminder.pending_delete_at.is_(None)),
                 and_(
@@ -298,7 +302,13 @@ async def process_daily_briefs() -> None:
 
     bot = ctx.bot
     session_pool_factory = ctx.session_pool
-    logger.info("Starting hourly daily briefs check...")
+    # 1.5: debug, not info — this job runs every minute (see
+    # setup_daily_briefs' cron registration below), so an info-level line
+    # here means one log line per minute for the life of the process, on
+    # top of whatever every other per-minute cron job in this package logs
+    # the same way. With Docker's default (unbounded) json-file log
+    # driver, that alone amounts to gigabytes over months on a small VPS.
+    logger.debug("Starting daily briefs check...")
 
     try:
         async with session_pool_factory() as session:
@@ -567,4 +577,9 @@ def setup_daily_briefs(scheduler) -> None:
         minute="*",
         id="daily_briefs_minutely",
         replace_existing=True,
+        # 1.4: memory jobstore, not the default SQLAlchemyJobStore — this
+        # job is re-registered with replace_existing=True on every single
+        # startup anyway, so there is no benefit to persisting it, and the
+        # persistent store is reserved for reminder jobs (see bot/__main__.py).
+        jobstore="memory",
     )

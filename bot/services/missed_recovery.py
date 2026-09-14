@@ -83,7 +83,12 @@ async def process_missed_task_recovery() -> None:
         # below stays fully usable after this session closes.
         async with session_pool_factory() as session:
             result = await session.execute(
-                select(User).where(User.missed_recovery_enabled.is_(True))
+                select(User).where(
+                    User.missed_recovery_enabled.is_(True),
+                    # 2.7: a user who blocked the bot will only ever get
+                    # TelegramForbiddenError from the eventual send below.
+                    User.bot_blocked_at.is_(None),
+                )
             )
             candidates = result.scalars().all()
 
@@ -162,5 +167,10 @@ def setup_missed_task_recovery(scheduler) -> None:
         minute="*",
         id="missed_task_recovery",
         replace_existing=True,
+        # 1.4: memory jobstore, not the default SQLAlchemyJobStore — this
+        # job is re-registered with replace_existing=True on every single
+        # startup anyway, so there is no benefit to persisting it, and the
+        # persistent store is reserved for reminder jobs (see bot/__main__.py).
+        jobstore="memory",
     )
 

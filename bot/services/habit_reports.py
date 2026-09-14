@@ -275,6 +275,9 @@ async def process_habit_reports() -> None:
                 .where(
                     User.habit_reports_enabled.is_(True),
                     Reminder.is_habit.is_(True),
+                    # 2.7: a user who blocked the bot will only ever get
+                    # TelegramForbiddenError from the eventual send below.
+                    User.bot_blocked_at.is_(None),
                 )
             )
             candidates = result.scalars().all()
@@ -359,4 +362,9 @@ def setup_habit_reports(scheduler) -> None:
         minute="*",
         id="habit_reports",
         replace_existing=True,
+        # 1.4: memory jobstore, not the default SQLAlchemyJobStore — this
+        # job is re-registered with replace_existing=True on every single
+        # startup anyway, so there is no benefit to persisting it, and the
+        # persistent store is reserved for reminder jobs (see bot/__main__.py).
+        jobstore="memory",
     )

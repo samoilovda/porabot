@@ -93,7 +93,19 @@ async def handle_forwarded_task(
 
 
 @router.message(ReminderWizard.entering_text, F.text)
-@router.message(StateFilter(None), F.text)
+# 2.5: ~F.text.startswith("/") here (only on the StateFilter(None) idle
+# registration, not the entering_text one above — a user who explicitly
+# tapped "+ New Task" is unambiguously trying to enter a task, stray
+# leading slash or not) is not just about unknown commands. Without it,
+# THIS catch-all — checked before any router registered later, including
+# reminders_listing.py's own Command("find") — swallowed every slash
+# command not already handled by an earlier TOP-LEVEL router (admin/
+# commands/donate/menu/settings/habits, all included before reminders_
+# router in bot/handlers/__init__.py): /find, sent from an idle chat, was
+# silently misparsed into "task: '/find milk'. When to remind?" instead of
+# ever reaching cmd_find. Verified empirically against the full router
+# tree before this fix.
+@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_task_text(
     message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
     reminder_dao: ReminderDAO, scheduler_service: SchedulerService,

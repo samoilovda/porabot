@@ -68,23 +68,34 @@ async def test_new_text_during_confirming_parse_is_not_ignored() -> None:
     await state.set_state(ReminderWizard.confirming_parse)
     await state.update_data(text="old stale task")
 
-    reminders_module.parser.parse = AsyncMock(
-        return_value=SimpleNamespace(clean_text="call mom", parsed_datetime=None, confidence=1.0)
-    )
+    # reminders_module.parser is the SAME singleton InputParser() instance
+    # as bot.handlers.reminders_wizard.parser (reminders_wizard stays a
+    # normal cached import even when reminders.py itself is re-loaded fresh
+    # via _load_module — see that module's own docstring on the caching
+    # trick this relies on), shared for the whole test session — restore
+    # the original bound method afterward so this doesn't leak a stub
+    # .parse into every later test that touches the real parser.
+    original_parse = reminders_module.parser.parse
+    try:
+        reminders_module.parser.parse = AsyncMock(
+            return_value=SimpleNamespace(clean_text="call mom", parsed_datetime=None, confidence=1.0)
+        )
 
-    message = SimpleNamespace(
-        text="call mom",
-        chat=SimpleNamespace(id=42),
-        answer=AsyncMock(),
-    )
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    l10n = {"ask_time": "When should I remind you about: {text}?", "parse_error": "error"}
+        message = SimpleNamespace(
+            text="call mom",
+            chat=SimpleNamespace(id=42),
+            answer=AsyncMock(),
+        )
+        user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
+        l10n = {"ask_time": "When should I remind you about: {text}?", "parse_error": "error"}
 
-    await reminders_module.state_confirming_parse_new_text(
-        message, state, user, l10n, reminder_dao=None, scheduler_service=None
-    )
+        await reminders_module.state_confirming_parse_new_text(
+            message, state, user, l10n, reminder_dao=None, scheduler_service=None
+        )
 
-    reminders_module.parser.parse.assert_awaited_once_with("call mom", "UTC")
-    assert await state.get_state() == ReminderWizard.choosing_time.state
-    data = await state.get_data()
-    assert data["text"] == "call mom"
+        reminders_module.parser.parse.assert_awaited_once_with("call mom", "UTC")
+        assert await state.get_state() == ReminderWizard.choosing_time.state
+        data = await state.get_data()
+        assert data["text"] == "call mom"
+    finally:
+        reminders_module.parser.parse = original_parse

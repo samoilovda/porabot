@@ -39,6 +39,10 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _is_empty_data_json(data_json: Optional[str]) -> bool:
+    return not data_json or data_json == "{}"
+
+
 class SQLAlchemyFSMStorage(BaseStorage):
     """Durable counterpart to aiogram's MemoryStorage.
 
@@ -77,6 +81,21 @@ class SQLAlchemyFSMStorage(BaseStorage):
                     data_json="{}",
                 )
                 session.add(row)
+            # 3.5: clearing state to None while data is ALSO already
+            # empty means this row represents nothing worth keeping —
+            # drop it immediately instead of leaving a "state=None,
+            # data_json={}" placeholder for every chat that ever started
+            # a wizard, relying solely on the 24-hour
+            # cleanup_stale_fsm_state sweep to eventually catch up.
+            # FSMContext.clear() (state.clear(), called on nearly every
+            # successful flow completion/cancel) does set_state(None)
+            # THEN set_data({}) — this branch only fires here when data
+            # was already empty going in; set_data's own matching check
+            # below is what catches the second half of that pair.
+            if state_str is None and _is_empty_data_json(row.data_json):
+                await session.delete(row)
+                await session.commit()
+                return
             row.state = state_str
             row.updated_at = _utcnow_naive()
             await session.commit()
@@ -100,6 +119,13 @@ class SQLAlchemyFSMStorage(BaseStorage):
                     state=None,
                 )
                 session.add(row)
+            # 3.5: mirror of set_state's own check above — an empty data
+            # write with state ALREADY None means the row is now fully
+            # empty; drop it rather than leave a permanent placeholder.
+            if not data and row.state is None:
+                await session.delete(row)
+                await session.commit()
+                return
             row.data_json = json.dumps(dict(data), ensure_ascii=False)
             row.updated_at = _utcnow_naive()
             await session.commit()

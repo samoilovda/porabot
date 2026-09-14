@@ -179,7 +179,10 @@ async def _apply_repeat_change(
     rrule_string: Optional[str],
 ) -> bool:
     """Persist a new repeat rule and reschedule. Returns False (and rolls
-    back) if scheduling fails."""
+    back) if scheduling OR the commit fails — the single choke point every
+    rrb_* repeat-builder callback in reminders_repeat.py goes through via
+    _apply_and_refresh, so fixing commit-before-reply here covers all of
+    them at once (2.2)."""
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
     await reminder_dao.session.flush()
@@ -187,6 +190,30 @@ async def _apply_repeat_change(
         _reschedule_current_execution(reminder, user, scheduler_service)
     except Exception:
         await reminder_dao.session.rollback()
+        return False
+
+    # 2.2: commit BEFORE the caller re-renders the repeat-builder screen —
+    # see _save_and_show_edit's comment for why an implicit commit failing
+    # after the job was already (re)scheduled above would otherwise
+    # mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit repeat change for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        try:
+            # is_recurring/rrule_string are back to their pre-change values
+            # after rollback + refresh — re-running the exact same
+            # reschedule call with those reverted values is what puts the
+            # job back in sync.
+            await reminder_dao.session.refresh(reminder)
+            _reschedule_current_execution(reminder, user, scheduler_service)
+        except Exception as restore_e:
+            logger.error(
+                "Failed to restore prior job for reminder %s after commit failure: %s",
+                reminder.id, restore_e, exc_info=True,
+            )
+            scheduler_service.remove_reminder_job(reminder.id)
         return False
     return True
 
@@ -451,6 +478,48 @@ async def _save_and_show_edit(
         # Critical: rollback DAO changes when scheduling failed, otherwise reminder
         # would be committed but never executed.
         await reminder_dao.session.rollback()
+        await source_message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
+        await state.clear()
+        return
+
+    # 1.3: commit BEFORE replying "created"/showing the edit keyboard, not
+    # after (DatabaseMiddleware's own commit, which runs once this handler
+    # returns). schedule_reminder above already wrote a job into
+    # jobs.sqlite and, without this, the user would see the "✅ saved"
+    # preview before the DB row is durable — if the implicit commit later
+    # failed (a collision with one of the per-minute cron jobs writing to
+    # the same SQLite file, a disk error), the user would have been told
+    # it worked while the reminder row never actually existed, with an
+    # orphaned job left ticking in the background.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit reminder %s: %s", new_reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        if edit_reminder_id:
+            # This reminder existed before this edit — schedule_reminder
+            # above already REPLACED its job with one pointing at the new
+            # (now rolled-back) execution_time. Put the job back in sync
+            # with the row's actual (old, still-committed) state instead
+            # of leaving it with no job at all until the next restart's
+            # reconcile_jobs_with_db notices.
+            try:
+                await reminder_dao.session.refresh(new_reminder)
+                scheduler_service.schedule_reminder(
+                    new_reminder.id,
+                    to_utc_aware(new_reminder.execution_time),
+                    is_nagging=new_reminder.is_nagging,
+                )
+            except Exception as restore_e:
+                logger.error(
+                    "Failed to restore prior job for reminder %s after commit failure: %s",
+                    new_reminder.id, restore_e, exc_info=True,
+                )
+                scheduler_service.remove_reminder_job(new_reminder.id)
+        else:
+            # A brand-new reminder — its INSERT was rolled back too, so
+            # the row (and any reason to keep a job) no longer exists.
+            scheduler_service.remove_reminder_job(new_reminder.id)
         await source_message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
         await state.clear()
         return

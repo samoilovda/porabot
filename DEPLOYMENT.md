@@ -182,6 +182,14 @@ sudo systemctl status porabot
 2. **Use strong BOT_TOKEN** from @BotFather
 3. **Restrict ALLOWED_USERS** to trusted users only
 4. **Regular backups** of `/opt/porabot/data/` directory (see below)
+5. **Keep privacy mode ON** in @BotFather (`/setprivacy` → Enable, the
+   default for a new bot). Porabot only works in private DMs — if
+   someone adds it to a group, `PrivateChatOnlyMiddleware`
+   (`bot/middlewares/private_chat_only.py`) refuses every update from
+   that chat, but with privacy mode off the bot still RECEIVES (and has
+   to reject) every single message in the group, not just ones
+   mentioning/replying to it. Disabling privacy mode is only needed if
+   you later add a feature that genuinely reads group messages.
 
 ---
 
@@ -244,6 +252,14 @@ The straightforward way to expose it publicly:
    `docker-compose.yml` (there is none by default, so the container's port
    is not published to the host) — or better, put the proxy on the same
    Docker network and skip publishing the port to the host entirely.
+4. Once that proxy is in place, also set `TRUSTED_PROXY=true`. The `.ics`
+   feed's and Mini App API's per-IP rate limiter otherwise keys on the raw
+   TCP peer address — which, behind a proxy, is always the proxy itself,
+   so every real visitor ends up sharing one rate-limit budget. With
+   `TRUSTED_PROXY=true` it keys on the `X-Forwarded-For` header's first
+   entry instead. Leave it `false` (the default) if the process isn't
+   behind a proxy you control — otherwise any client could just claim to
+   *be* any IP in that header and dodge the limit entirely.
 
 If `WEB_SERVER_ENABLED` is unset or `false`, the `.ics` feed and Mini App
 links are never generated and no HTTP socket is opened — this only affects

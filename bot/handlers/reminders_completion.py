@@ -413,6 +413,27 @@ async def callback_done_skip_next(
         await reminder_dao.session.rollback()
         return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
 
+    # 1.3/2.2: commit BEFORE replying — see _save_and_show_edit's comment
+    # for why an implicit commit failing after the job was already
+    # rescheduled above would otherwise mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit skip-next for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        try:
+            await reminder_dao.session.refresh(reminder)
+            scheduler_service.schedule_reminder(
+                reminder.id, to_utc_aware(reminder.execution_time), is_nagging=reminder.is_nagging
+            )
+        except Exception as restore_e:
+            logger.error(
+                "Failed to restore prior job for reminder %s after commit failure: %s",
+                reminder.id, restore_e, exc_info=True,
+            )
+            scheduler_service.remove_reminder_job(reminder.id)
+        return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
+
     next_str = format_time(next_run_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
     await callback.message.answer(
         l10n.get("done_skip_next_done", "⏭ Next occurrence skipped. New time: {time}").format(time=next_str)
@@ -478,6 +499,27 @@ async def callback_done_undo(
         scheduler_service.schedule_reminder(reminder.id, reminder.execution_time, is_nagging=reminder.is_nagging)
     except Exception:
         await reminder_dao.session.rollback()
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
+
+    # 1.3/2.2: commit BEFORE replying "undone" — see _save_and_show_edit's
+    # comment for why an implicit commit failing after the job was already
+    # rescheduled above would otherwise mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit undo for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        try:
+            await reminder_dao.session.refresh(reminder)
+            scheduler_service.schedule_reminder(
+                reminder.id, to_utc_aware(reminder.execution_time), is_nagging=reminder.is_nagging
+            )
+        except Exception as restore_e:
+            logger.error(
+                "Failed to restore prior job for reminder %s after commit failure: %s",
+                reminder.id, restore_e, exc_info=True,
+            )
+            scheduler_service.remove_reminder_job(reminder.id)
         return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
 
     try:

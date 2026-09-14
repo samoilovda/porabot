@@ -490,6 +490,31 @@ async def callback_edit_nagging(
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
 
+    # 2.2: commit BEFORE editing the keyboard — see _save_and_show_edit's
+    # comment for why an implicit commit failing after the job was already
+    # (re)scheduled above would otherwise mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit nagging toggle for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        try:
+            # is_nagging is back to its pre-toggle value after rollback +
+            # refresh — re-running the exact same reschedule call with that
+            # reverted value is what puts the job back in sync.
+            await reminder_dao.session.refresh(reminder)
+            _reschedule_current_execution(reminder, user, scheduler_service)
+            if not reminder.is_nagging:
+                scheduler_service.remove_nagging_job(reminder.id)
+        except Exception as restore_e:
+            logger.error(
+                "Failed to restore prior job for reminder %s after commit failure: %s",
+                reminder.id, restore_e, exc_info=True,
+            )
+            scheduler_service.remove_reminder_job(reminder.id)
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
+
     await callback.message.edit_reply_markup(
         reply_markup=get_edit_keyboard(
             reminder.id,

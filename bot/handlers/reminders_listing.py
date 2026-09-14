@@ -52,6 +52,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.pagination import limit_items, preview_line
+from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
 
 router = Router(name="reminders_listing")
@@ -137,6 +138,23 @@ async def callback_undo_delete(
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
 
+    # 2.2: commit BEFORE replying — see _save_and_show_edit's comment for
+    # why an implicit commit failing after the job was already (re)created
+    # above would otherwise mislead the user.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit undo-delete for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        # pending_delete_at is back to its original (still-set) value after
+        # rollback — the reminder is still logically soft-deleted, so the
+        # job _reschedule_current_execution just created above must not
+        # survive (every reminder with pending_delete_at set must have no
+        # active job — see reminders_shared.py's module docstring).
+        scheduler_service.remove_reminder_job(reminder.id)
+        await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+        return
+
     date_str = format_time(reminder.execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
     safe_preview = l10n["preview"].format(
         text=escape_markdown_v2(reminder.reminder_text),
@@ -191,7 +209,10 @@ async def callback_tasks_page(
 
     shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=requested_page)
     safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
-    await callback.message.edit_text(
+    # 2.1: this doubles as Refresh (see this function's docstring) — tapping
+    # it when nothing changed is the ordinary case, not an error.
+    await safe_edit_text(
+        callback.message,
         safe_text,
         reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
         parse_mode="MarkdownV2",
@@ -244,11 +265,16 @@ async def _show_filtered_tasks(
     callback: CallbackQuery, tasks: list, user: User, l10n: dict[str, Any], header_key: str, header_default: str
 ) -> None:
     if not tasks:
-        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await safe_edit_text(
+            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
+        )
         await callback.answer()
         return
     header = l10n.get(header_key, header_default)
-    await callback.message.edit_text(
+    # 2.1: re-tapping the same filter (or a Back into an unchanged filter
+    # result) is an ordinary, expected no-op, not an error.
+    await safe_edit_text(
+        callback.message,
         _render_filtered_tasks_text(tasks, user, l10n, header),
         reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
         parse_mode="MarkdownV2",
@@ -297,7 +323,10 @@ async def callback_tasks_tags_menu(
     if not tags:
         await callback.answer(l10n.get("no_tags_yet", "You have no tags yet."), show_alert=True)
         return
-    await callback.message.edit_text(
+    # 2.1: re-opening the tags menu from a Back button can land on the
+    # identical tag list twice in a row.
+    await safe_edit_text(
+        callback.message,
         l10n.get("tags_menu_title", "🏷 Pick a tag:"),
         reply_markup=get_tags_menu_keyboard(list(tags), l10n),
     )
@@ -312,11 +341,15 @@ async def callback_tasks_filter_by_tag(
     tag = callback.data.split("tasks_tag:", 1)[1]
     tasks = await reminder_dao.get_reminders_by_tag(user.id, tag)
     if not tasks:
-        await callback.message.edit_text(l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None)
+        await safe_edit_text(
+            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
+        )
         await callback.answer()
         return
     header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag))
-    await callback.message.edit_text(
+    # 2.1: re-tapping the same tag is an ordinary, expected no-op.
+    await safe_edit_text(
+        callback.message,
         _render_filtered_tasks_text(tasks, user, l10n, header),
         reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
         parse_mode="MarkdownV2",
@@ -338,7 +371,20 @@ async def callback_recovery_done_all(
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
 
+    # 3.5: every DB mutation for the whole batch happens first, with the
+    # scheduler action each task will need PLANNED but not yet applied —
+    # only after a successful commit does the loop below actually touch
+    # the scheduler. A mid-loop schedule_reminder() failure (for a task
+    # anywhere but the last one) used to roll back the DB but leave the
+    # scheduler already mutated for every task before it — rollback only
+    # undoes the session, not scheduler side effects already applied
+    # outside it — leaving those tasks' jobs out of sync with their (now
+    # reverted) DB rows. Computing the plan first and applying it only
+    # once the DB state is durable removes that whole class of failure:
+    # there's nothing to roll back on the scheduler side because nothing
+    # was touched there yet.
     now_utc = datetime.now(timezone.utc)
+    scheduler_plan: list[tuple] = []  # ("schedule", task_id, run_at_utc, is_nagging) | ("remove", task_id)
     for task in overdue:
         if _is_habit_like(task):
             due_at = task.habit_active_due_at or task.execution_time
@@ -371,23 +417,40 @@ async def callback_recovery_done_all(
             if next_run_utc_naive:
                 task.execution_time = next_run_utc_naive
                 task.completed_for_execution_time = None
-                try:
-                    scheduler_service.schedule_reminder(
-                        task.id,
-                        to_utc_aware(next_run_utc_naive),
-                        is_nagging=task.is_nagging,
-                    )
-                except Exception:
-                    await reminder_dao.session.rollback()
-                    return await callback.answer(
-                        l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."),
-                        show_alert=True,
-                    )
+                scheduler_plan.append(("schedule", task.id, to_utc_aware(next_run_utc_naive), task.is_nagging))
             else:
-                scheduler_service.remove_reminder_job(task.id)
+                scheduler_plan.append(("remove", task.id))
         else:
-            scheduler_service.remove_reminder_job(task.id)
-        scheduler_service.remove_nagging_job(task.id)
+            scheduler_plan.append(("remove", task.id))
+
+    # 2.2: commit BEFORE touching the scheduler or replying "done" — see
+    # _save_and_show_edit's comment. Nothing in the scheduler has been
+    # mutated yet at this point, so a commit failure needs no restore at
+    # all — just roll back and report the error.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit recovery 'done all' for user %s: %s", user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        return await callback.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True
+        )
+
+    for action in scheduler_plan:
+        task_id = action[1]
+        if action[0] == "schedule":
+            _, _, run_at_utc, is_nagging = action
+            try:
+                scheduler_service.schedule_reminder(task_id, run_at_utc, is_nagging=is_nagging)
+            except Exception as e:
+                # DB state is already durable regardless — a scheduling
+                # failure here just means THIS ONE task's next occurrence
+                # doesn't get a job; reconcile_jobs_with_db catches it up
+                # on the next restart.
+                logger.error("Failed to schedule reminder %s after recovery 'done all': %s", task_id, e, exc_info=True)
+        else:
+            scheduler_service.remove_reminder_job(task_id)
+        scheduler_service.remove_nagging_job(task_id)
 
     await callback.message.edit_text(
         l10n.get("recovery_done_all_done", "✅ Marked {count} overdue tasks as done.").format(count=len(overdue)),
@@ -409,6 +472,11 @@ async def callback_recovery_snooze_all(
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
 
+    # 3.5: DB mutations for the whole batch happen first; the scheduler is
+    # only touched after a successful commit — same reasoning as
+    # callback_recovery_done_all above (a mid-loop scheduling failure used
+    # to roll back the DB while leaving earlier tasks' jobs already
+    # mutated, out of sync with their now-reverted rows).
     new_time = datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1)
     for task in overdue:
         # For habit-like recurring reminders, do not overwrite execution_time —
@@ -419,12 +487,24 @@ async def callback_recovery_snooze_all(
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None
         task.last_nag_message_id = None
+
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit recovery 'snooze all' for user %s: %s", user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        return await callback.answer(
+            l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True
+        )
+
+    for task in overdue:
         try:
             scheduler_service.schedule_reminder(task.id, new_time, is_nagging=task.is_nagging)
-            scheduler_service.remove_nagging_job(task.id)
-        except Exception:
-            await reminder_dao.session.rollback()
-            return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
+        except Exception as e:
+            # DB state is already durable regardless — see
+            # callback_recovery_done_all's comment on the same pattern.
+            logger.error("Failed to schedule reminder %s after recovery 'snooze all': %s", task.id, e, exc_info=True)
+        scheduler_service.remove_nagging_job(task.id)
 
     await callback.message.edit_text(
         l10n.get("recovery_snooze_all_done", "⏰ Snoozed {count} overdue tasks by 1 hour.").format(count=len(overdue)),

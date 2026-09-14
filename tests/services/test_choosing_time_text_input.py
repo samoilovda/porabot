@@ -45,6 +45,7 @@ async def test_typed_time_while_choosing_time_creates_the_reminder() -> None:
     reminder_dao = SimpleNamespace(
         create_reminder=AsyncMock(return_value=created_reminder),
         get_owned=AsyncMock(),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=MagicMock())
 

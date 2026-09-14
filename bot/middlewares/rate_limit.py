@@ -17,8 +17,11 @@ from collections import defaultdict, deque
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject, Update
 from aiogram.types import User as TgUser
+
+from bot.lexicon import get_l10n
+from bot.utils.telegram import inner_event
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +62,37 @@ class RateLimitMiddleware(BaseMiddleware):
                 self.max_updates,
                 self.window_seconds,
             )
+            # 2.3: this middleware is registered via dp.update.middleware(),
+            # so `event` is always the raw Update, never the Message/
+            # CallbackQuery inside it — isinstance(event, Message)/
+            # isinstance(event, CallbackQuery) were consequently always
+            # False and this notification never actually sent; a
+            # rate-limited user's messages just silently vanished with no
+            # feedback at all. Unwrap it via inner_event instead.
+            #
             # Silent drop rather than a reply on every single throttled
             # update — replying would itself be an unbounded-rate action
             # against the same flood.
-            if isinstance(event, Message) and len(hits) == self.max_updates:
-                await event.answer(
-                    "⏳ Too many messages — please slow down and try again in a few seconds."
-                )
-            elif isinstance(event, CallbackQuery) and len(hits) == self.max_updates:
-                await event.answer("⏳ Too many requests — slow down.", show_alert=False)
+            target = inner_event(event) if isinstance(event, Update) else event
+            if len(hits) == self.max_updates:
+                # 2.3: this middleware runs before DatabaseMiddleware, so
+                # there's no persisted user.language yet to key off — the
+                # best available signal is Telegram's own client-reported
+                # language_code. get_l10n falls back to Russian for an
+                # unsupported/missing code, same as the rest of the app.
+                l10n = get_l10n(getattr(tg_user, "language_code", None))
+                if isinstance(target, Message):
+                    await target.answer(
+                        l10n.get(
+                            "rate_limited_message",
+                            "⏳ Too many messages — please slow down and try again in a few seconds.",
+                        )
+                    )
+                elif isinstance(target, CallbackQuery):
+                    await target.answer(
+                        l10n.get("rate_limited_callback", "⏳ Too many requests — slow down."),
+                        show_alert=False,
+                    )
             hits.append(now)
             return None
 

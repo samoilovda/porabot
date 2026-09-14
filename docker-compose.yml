@@ -3,6 +3,25 @@ services:
     build: .
     container_name: porabot
     restart: always
+    # 1.5: docker sends SIGTERM then waits this long before SIGKILL on a
+    # `docker compose up -d --build` recreate / `stop`. bot/__main__.py's
+    # SIGTERM handler (see 1.1's fix note there) now shuts down cleanly —
+    # finishing an in-flight reminder/brief send, closing the scheduler and
+    # DB engine — but that needs real wall-clock time for a per-user loop
+    # (daily_briefs, missed_recovery, habit_reports) that was mid-batch
+    # when the signal arrived. Docker's own default is 10s, too tight for
+    # that; 30s is comfortably more than one per-minute cron tick's usual
+    # runtime.
+    stop_grace_period: 30s
+    # 1.5: Docker's default json-file log driver has NO size limit. Every
+    # incoming update and every per-minute cron job's log lines accumulate
+    # forever — gigabytes over a few months on a small VPS otherwise. Keeps
+    # roughly the last 100MB (20MB x 5 files) of logs.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
       - ./data:/app/data
     env_file:
@@ -18,6 +37,17 @@ services:
       # restart: always only reacts to the process exiting — a polling loop
       # that's alive but hung looks identical to a healthy container from
       # the outside. bot/__main__.py touches HEARTBEAT_FILE every minute;
+      #
+      # 1.5: `docker compose` itself does NOT restart a container that
+      # reports `unhealthy` (unlike Swarm/Kubernetes) — this healthcheck
+      # is informational to `docker ps`/`docker inspect` on its own. What
+      # actually turns "hung" into a real restart is the heartbeat job
+      # verifying live Telegram connectivity, not just that the process is
+      # scheduling jobs, and stopping the process (not just the file
+      # write) after repeated failures — see the heartbeat job in
+      # bot/__main__.py and its docstring for that mechanism. An external
+      # watcher (e.g. a Docker autoheal sidecar watching this healthcheck)
+      # is an alternative/addition, deliberately not wired up here.
       # 150s (2.5x that interval) tolerates a slow tick without flapping.
       test:
         - CMD-SHELL

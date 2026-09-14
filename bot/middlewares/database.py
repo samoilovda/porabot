@@ -13,7 +13,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram.types import TelegramObject, Update
 from aiogram.types import User as TgUser
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -21,6 +21,7 @@ from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.lexicon import get_l10n
+from bot.utils.telegram import inner_event
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,17 @@ class DatabaseMiddleware(BaseMiddleware):
                     logger.error("Error resolving user %s: %s", tg_user.id, e, exc_info=True)
                     # Keep session state clean if user bootstrap failed mid-transaction.
                     await session.rollback()
-                    if hasattr(event, "answer"):
+                    # 2.3: this middleware is registered via
+                    # dp.update.middleware(), so `event` is always the raw
+                    # Update, never the Message/CallbackQuery inside it —
+                    # aiogram.types.Update has no .answer() at all, so
+                    # hasattr(event, "answer") was always False and this
+                    # notification never actually sent. Unwrap it via
+                    # inner_event instead.
+                    target = inner_event(event) if isinstance(event, Update) else event
+                    if target is not None and hasattr(target, "answer"):
                         try:
-                            await event.answer(
+                            await target.answer(
                                 l10n.get(
                                     "db_error",
                                     "❌ Database error. Please try again later.",

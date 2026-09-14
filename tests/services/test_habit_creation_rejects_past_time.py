@@ -35,7 +35,8 @@ async def test_habit_created_with_ambiguous_past_time_lands_in_the_future() -> N
     created_reminder = SimpleNamespace(id=1, is_nagging=True)
     reminder_dao = SimpleNamespace(
         create_reminder=AsyncMock(return_value=created_reminder),
-        session=SimpleNamespace(rollback=AsyncMock()),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
+        get_habit_motivation_stats=AsyncMock(return_value={}),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=Mock())
     state = SimpleNamespace(
@@ -78,7 +79,8 @@ async def test_habit_created_with_future_time_is_unaffected() -> None:
     created_reminder = SimpleNamespace(id=2, is_nagging=True)
     reminder_dao = SimpleNamespace(
         create_reminder=AsyncMock(return_value=created_reminder),
-        session=SimpleNamespace(rollback=AsyncMock()),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
+        get_habit_motivation_stats=AsyncMock(return_value={}),
     )
     scheduler_service = SimpleNamespace(schedule_reminder=Mock())
     state = SimpleNamespace(

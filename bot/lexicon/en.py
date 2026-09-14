@@ -163,6 +163,8 @@ EN: dict[str, Any] = {
     "choosing_time_retry": "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`.",
     "forwarded_from": "Forwarded from",
     "text_only_hint": "📝 I can only understand text right now. Send your reminder as a text message.",
+    "unknown_command": "❓ Unknown command. See /help for the list of commands.",
+    "private_only": "🔒 Porabot only works in a private chat. Message me directly instead.",
 
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",
@@ -392,4 +394,6 @@ EN: dict[str, Any] = {
     "schedule_error": "❌ Failed to schedule reminder. Please try again.",
     "db_error": "❌ Database error. Please try again later.",
     "generic_error": "❌ Something went wrong. Please try again.",
+    "rate_limited_message": "⏳ Too many messages — please slow down and try again in a few seconds.",
+    "rate_limited_callback": "⏳ Too many requests — slow down.",
 }

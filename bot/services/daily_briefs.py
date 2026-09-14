@@ -298,7 +298,13 @@ async def process_daily_briefs() -> None:
 
     bot = ctx.bot
     session_pool_factory = ctx.session_pool
-    logger.info("Starting hourly daily briefs check...")
+    # 1.5: debug, not info — this job runs every minute (see
+    # setup_daily_briefs' cron registration below), so an info-level line
+    # here means one log line per minute for the life of the process, on
+    # top of whatever every other per-minute cron job in this package logs
+    # the same way. With Docker's default (unbounded) json-file log
+    # driver, that alone amounts to gigabytes over months on a small VPS.
+    logger.debug("Starting daily briefs check...")
 
     try:
         async with session_pool_factory() as session:

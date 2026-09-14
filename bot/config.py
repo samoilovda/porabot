@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     # boundary (e.g. Docker, with the port published deliberately).
     WEB_SERVER_HOST: str = "127.0.0.1"
     WEB_SERVER_PORT: int = 8080
+    # 3.1: whether WEB_SERVER_HOST:WEB_SERVER_PORT sits behind a reverse
+    # proxy this deployment controls (nginx/Caddy terminating TLS, per the
+    # comment above). Off by default — trusting X-Forwarded-For from an
+    # untrusted network lets any client just claim to BE any IP, defeating
+    # the point of the per-IP rate limit entirely. When True, the .ics
+    # feed's and Mini App API's rate limiter (bot/services/webserver.py)
+    # keys on the first X-Forwarded-For entry instead of the raw TCP peer
+    # address — without this, that peer address is always the proxy
+    # itself, and the rate limit is effectively shared by every real
+    # visitor behind it as if they were one client.
+    TRUSTED_PROXY: bool = False
     # Publicly reachable origin for links the bot sends to the user (the
     # .ics feed URL, the Mini App web_app button). Deliberately empty by
     # default: there is no public domain/TLS cert for this out of the box.

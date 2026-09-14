@@ -81,11 +81,30 @@ class HttpRateLimiter:
             del self._hits[key]
 
 
+def _rate_limit_key(request: web.Request) -> str:
+    """3.1: request.remote is the raw TCP peer address — behind a reverse
+    proxy (the normal deployment: see config.PUBLIC_BASE_URL's docstring),
+    that's always the proxy itself, so every real visitor shares one rate
+    limit key. Only trust the client-supplied X-Forwarded-For header when
+    this deployment's own config says the proxy in front of it is trusted
+    to set it correctly — otherwise any client could just claim to BE any
+    IP and dodge the limit entirely, or frame another IP for it.
+    """
+    if request.app.get("trusted_proxy") and "X-Forwarded-For" in request.headers:
+        # The header is a comma-separated chain, closest-hop-last; the
+        # FIRST entry is what the trusted proxy itself reported as the
+        # original client.
+        forwarded = request.headers["X-Forwarded-For"].split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return request.remote or "unknown"
+
+
 @web.middleware
 async def _http_rate_limit_middleware(request: web.Request, handler):
     if request.path.startswith(_RATE_LIMITED_PREFIXES):
         limiter: HttpRateLimiter = request.app["http_rate_limiter"]
-        key = request.remote or "unknown"
+        key = _rate_limit_key(request)
         if not limiter.allow(key):
             return web.json_response({"error": "rate_limited"}, status=429)
     return await handler(request)
@@ -216,16 +235,20 @@ async def handle_miniapp_heatmap(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-def create_app(session_pool, bot_token: str = "") -> web.Application:
+def create_app(session_pool, bot_token: str = "", trusted_proxy: bool = False) -> web.Application:
     """Build the shared aiohttp Application. *session_pool* is the same
     async_sessionmaker bot/__main__.py hands to DatabaseMiddleware — routes
     open their own short-lived session per request, same pattern as
     background jobs (see bot/services/*.py). *bot_token* signs/validates
     Mini App initData (4.6) — optional so 4.4-only callers (and tests that
-    don't touch the Mini App routes) don't need to supply one."""
+    don't touch the Mini App routes) don't need to supply one.
+    *trusted_proxy* — see _rate_limit_key's docstring; defaults to False,
+    same "off unless a human explicitly configured it" spirit as
+    config.WEB_SERVER_ENABLED itself."""
     app = web.Application(middlewares=[_http_rate_limit_middleware])
     app["session_pool"] = session_pool
     app["bot_token"] = bot_token
+    app["trusted_proxy"] = trusted_proxy
     app["http_rate_limiter"] = HttpRateLimiter()
     app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/ics/{token}.ics", handle_ics_feed)

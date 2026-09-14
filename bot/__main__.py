@@ -237,7 +237,9 @@ async def _start_web_server_if_enabled(session_pool):
     logger.info(
         "Web server enabled, binding %s:%s", config.WEB_SERVER_HOST, config.WEB_SERVER_PORT
     )
-    web_app = create_app(session_pool, bot_token=config.BOT_TOKEN.get_secret_value())
+    web_app = create_app(
+        session_pool, bot_token=config.BOT_TOKEN.get_secret_value(), trusted_proxy=config.TRUSTED_PROXY
+    )
     return await start_web_server(web_app, config.WEB_SERVER_HOST, config.WEB_SERVER_PORT)
 
 

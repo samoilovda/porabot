@@ -252,6 +252,14 @@ The straightforward way to expose it publicly:
    `docker-compose.yml` (there is none by default, so the container's port
    is not published to the host) — or better, put the proxy on the same
    Docker network and skip publishing the port to the host entirely.
+4. Once that proxy is in place, also set `TRUSTED_PROXY=true`. The `.ics`
+   feed's and Mini App API's per-IP rate limiter otherwise keys on the raw
+   TCP peer address — which, behind a proxy, is always the proxy itself,
+   so every real visitor ends up sharing one rate-limit budget. With
+   `TRUSTED_PROXY=true` it keys on the `X-Forwarded-For` header's first
+   entry instead. Leave it `false` (the default) if the process isn't
+   behind a proxy you control — otherwise any client could just claim to
+   *be* any IP in that header and dodge the limit entirely.
 
 If `WEB_SERVER_ENABLED` is unset or `false`, the `.ics` feed and Mini App
 links are never generated and no HTTP socket is opened — this only affects

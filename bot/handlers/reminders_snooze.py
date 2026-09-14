@@ -165,6 +165,28 @@ async def callback_snooze_act(
 
 
 # ---------------------------------------------------------------------------
+# Catch-all: unrecognized slash commands
+# ---------------------------------------------------------------------------
+# 2.5: reminders_wizard.py's handle_task_text excludes slash-prefixed text
+# from its idle-state free-text-parses-as-task catch-all specifically so a
+# command can fall through the router tree to wherever it's actually
+# registered (admin.py, commands.py, donate.py, reminders_listing.py's
+# /find, ...) instead of being swallowed there first. This is the true
+# last resort, for a command that ISN'T registered anywhere — "/settings",
+# "/stats", a typo — which otherwise got no response at all. Registered
+# here (the last sub-router in the reminders_* family, itself the last
+# top-level router — see bot/handlers/reminders.py and bot/handlers/
+# __init__.py) so every real command handler across the whole dispatcher
+# gets first refusal, same reasoning as handle_non_text_message below.
+
+@router.message(StateFilter(None), F.text.regexp(r"^/\w+"))
+async def handle_unknown_command(message: Message, l10n: dict[str, Any]) -> None:
+    await message.answer(
+        l10n.get("unknown_command", "❓ Unknown command. See /help for the list of commands.")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Catch-all: non-text messages outside any FSM flow
 # ---------------------------------------------------------------------------
 # Without this, nothing responded to a photo/voice/video/sticker/etc.

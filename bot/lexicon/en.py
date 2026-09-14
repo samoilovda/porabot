@@ -163,6 +163,7 @@ EN: dict[str, Any] = {
     "choosing_time_retry": "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`.",
     "forwarded_from": "Forwarded from",
     "text_only_hint": "📝 I can only understand text right now. Send your reminder as a text message.",
+    "unknown_command": "❓ Unknown command. See /help for the list of commands.",
 
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",

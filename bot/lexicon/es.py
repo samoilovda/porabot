@@ -164,6 +164,7 @@ ES.update(
         "choosing_time_retry": "🕒 No encontré una hora en eso. Inténtalo de nuevo, por ejemplo `18:30` o `mañana a las 9`.",
         "forwarded_from": "Reenviado de",
         "text_only_hint": "📝 Por ahora solo entiendo texto. Envía tu recordatorio como mensaje de texto.",
+        "unknown_command": "❓ Comando desconocido. Consulta /help para ver la lista de comandos.",
         "preview": "✅ *¡Tarea guardada\\!*\n📌 {text}\n⏰ {time}",
         "btn_repeat_prefix": "🔁 Repetir:",
         "btn_nagging_prefix": "{icon} Insistencia:",

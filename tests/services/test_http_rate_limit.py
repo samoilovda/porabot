@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
 from bot.database.engine import Base
-from bot.services.webserver import HttpRateLimiter, create_app
+from bot.services.webserver import HTTP_RATE_LIMITER_KEY, HttpRateLimiter, create_app
 
 BOT_TOKEN = "123456:AAFake-Bot-Token-For-Tests"
 
@@ -29,7 +29,7 @@ async def tight_client(session_pool):
     """Same app as production, but with a 2-requests-per-window limiter so
     the test doesn't need to fire 31+ requests or fake elapsed time."""
     app = create_app(session_pool, bot_token=BOT_TOKEN)
-    app["http_rate_limiter"] = HttpRateLimiter(max_requests=2, window_seconds=60.0)
+    app[HTTP_RATE_LIMITER_KEY] = HttpRateLimiter(max_requests=2, window_seconds=60.0)
     server = TestServer(app)
     test_client = TestClient(server)
     await test_client.start_server()
@@ -60,7 +60,7 @@ async def test_healthz_and_miniapp_static_are_not_rate_limited(session_pool) -> 
     authenticate on every hit — healthz and the static Mini App frontend
     don't, so they must not be throttled by the same counter."""
     app = create_app(session_pool, bot_token=BOT_TOKEN)
-    app["http_rate_limiter"] = HttpRateLimiter(max_requests=1, window_seconds=60.0)
+    app[HTTP_RATE_LIMITER_KEY] = HttpRateLimiter(max_requests=1, window_seconds=60.0)
     server = TestServer(app)
     client = TestClient(server)
     await client.start_server()

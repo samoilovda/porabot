@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import models  # noqa: F401
 from bot.database.engine import Base
-from bot.services.webserver import HttpRateLimiter, create_app
+from bot.services.webserver import HTTP_RATE_LIMITER_KEY, HttpRateLimiter, create_app
 
 BOT_TOKEN = "123456:AAFake-Bot-Token-For-Tests"
 
@@ -24,7 +24,7 @@ async def _make_client(*, trusted_proxy: bool):
     session_pool = async_sessionmaker(engine, expire_on_commit=False)
 
     app = create_app(session_pool, bot_token=BOT_TOKEN, trusted_proxy=trusted_proxy)
-    app["http_rate_limiter"] = HttpRateLimiter(max_requests=2, window_seconds=60.0)
+    app[HTTP_RATE_LIMITER_KEY] = HttpRateLimiter(max_requests=2, window_seconds=60.0)
     server = TestServer(app)
     client = TestClient(server)
     await client.start_server()

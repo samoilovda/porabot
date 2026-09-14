@@ -44,7 +44,7 @@ from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.retention_cleanup import setup_retention_cleanup
 from bot.services.scheduler import SchedulerService, remove_orphan_scheduler_jobs_job
-from bot.services.webserver import create_app, start_web_server
+from bot.services.webserver import HTTP_RATE_LIMITER_KEY, create_app, start_web_server
 
 
 def _write_heartbeat() -> None:
@@ -495,7 +495,7 @@ async def main() -> None:
         # the HTTP-route IP rate limiter (bot/services/webserver.py) —
         # without a periodic sweep its per-IP dict only ever grows.
         scheduler.add_job(
-            web_runner.app["http_rate_limiter"].cleanup_expired,
+            web_runner.app[HTTP_RATE_LIMITER_KEY].cleanup_expired,
             "interval",
             minutes=10,
             id="cleanup_http_rate_limit_hits",

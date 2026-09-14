@@ -23,6 +23,7 @@ from typing import Optional
 
 import pytz
 from aiohttp import web
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
@@ -32,6 +33,19 @@ from bot.services.ics_feed import build_ics_calendar
 from bot.services.miniapp import build_heatmap_payload, build_scores_payload, validate_init_data
 
 logger = logging.getLogger(__name__)
+
+# 3.6: typed AppKeys, not plain string subscripts — aiohttp's own
+# recommendation (a bare app["x"] raises NotAppKeyWarning). Public (no
+# leading underscore) since tests that need to override create_app's
+# defaults (e.g. installing a tighter HttpRateLimiter) have to key on the
+# exact same AppKey OBJECT, not just a string that happens to read the
+# same — AppKey identity, not its label, is what app[...] actually indexes
+# by, so a test still using a plain "http_rate_limiter" string would write
+# to an entirely different, orphaned slot instead of the one every read
+# site below actually looks at.
+SESSION_POOL_KEY: web.AppKey[async_sessionmaker] = web.AppKey("session_pool", async_sessionmaker)
+BOT_TOKEN_KEY: web.AppKey[str] = web.AppKey("bot_token", str)
+TRUSTED_PROXY_KEY: web.AppKey[bool] = web.AppKey("trusted_proxy", bool)
 
 _WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 _MINIAPP_HEATMAP_DEFAULT_DAYS = 90
@@ -81,6 +95,9 @@ class HttpRateLimiter:
             del self._hits[key]
 
 
+HTTP_RATE_LIMITER_KEY: web.AppKey[HttpRateLimiter] = web.AppKey("http_rate_limiter", HttpRateLimiter)
+
+
 def _rate_limit_key(request: web.Request) -> str:
     """3.1: request.remote is the raw TCP peer address — behind a reverse
     proxy (the normal deployment: see config.PUBLIC_BASE_URL's docstring),
@@ -90,7 +107,7 @@ def _rate_limit_key(request: web.Request) -> str:
     to set it correctly — otherwise any client could just claim to BE any
     IP and dodge the limit entirely, or frame another IP for it.
     """
-    if request.app.get("trusted_proxy") and "X-Forwarded-For" in request.headers:
+    if request.app.get(TRUSTED_PROXY_KEY) and "X-Forwarded-For" in request.headers:
         # The header is a comma-separated chain, closest-hop-last; the
         # FIRST entry is what the trusted proxy itself reported as the
         # original client.
@@ -103,7 +120,7 @@ def _rate_limit_key(request: web.Request) -> str:
 @web.middleware
 async def _http_rate_limit_middleware(request: web.Request, handler):
     if request.path.startswith(_RATE_LIMITED_PREFIXES):
-        limiter: HttpRateLimiter = request.app["http_rate_limiter"]
+        limiter: HttpRateLimiter = request.app[HTTP_RATE_LIMITER_KEY]
         key = _rate_limit_key(request)
         if not limiter.allow(key):
             return web.json_response({"error": "rate_limited"}, status=429)
@@ -119,7 +136,7 @@ async def handle_ics_feed(request: web.Request) -> web.Response:
     non-revoked feed token can read that one user's calendar, same trust
     model as a Google/Apple Calendar "secret address" subscription link."""
     token = request.match_info.get("token", "")
-    session_pool = request.app["session_pool"]
+    session_pool = request.app[SESSION_POOL_KEY]
     async with session_pool() as session:
         user_dao = UserDAO(session)
         user = await user_dao.get_by_ics_feed_token(token)
@@ -184,11 +201,11 @@ async def _authenticate_miniapp_request(request: web.Request, bot_token: str) ->
 
 
 async def handle_miniapp_scores(request: web.Request) -> web.Response:
-    user_id = await _authenticate_miniapp_request(request, request.app["bot_token"])
+    user_id = await _authenticate_miniapp_request(request, request.app[BOT_TOKEN_KEY])
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    session_pool = request.app["session_pool"]
+    session_pool = request.app[SESSION_POOL_KEY]
     async with session_pool() as session:
         reminder_dao = ReminderDAO(session)
         habit_event_dao = HabitEventDAO(session)
@@ -203,7 +220,7 @@ async def handle_miniapp_scores(request: web.Request) -> web.Response:
 
 
 async def handle_miniapp_heatmap(request: web.Request) -> web.Response:
-    user_id = await _authenticate_miniapp_request(request, request.app["bot_token"])
+    user_id = await _authenticate_miniapp_request(request, request.app[BOT_TOKEN_KEY])
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
@@ -213,7 +230,7 @@ async def handle_miniapp_heatmap(request: web.Request) -> web.Response:
         days = _MINIAPP_HEATMAP_DEFAULT_DAYS
     days = max(1, min(days, _MINIAPP_HEATMAP_MAX_DAYS))
 
-    session_pool = request.app["session_pool"]
+    session_pool = request.app[SESSION_POOL_KEY]
     async with session_pool() as session:
         user_dao = UserDAO(session)
         user = await user_dao.get_by_id(user_id)
@@ -246,10 +263,10 @@ def create_app(session_pool, bot_token: str = "", trusted_proxy: bool = False) -
     same "off unless a human explicitly configured it" spirit as
     config.WEB_SERVER_ENABLED itself."""
     app = web.Application(middlewares=[_http_rate_limit_middleware])
-    app["session_pool"] = session_pool
-    app["bot_token"] = bot_token
-    app["trusted_proxy"] = trusted_proxy
-    app["http_rate_limiter"] = HttpRateLimiter()
+    app[SESSION_POOL_KEY] = session_pool
+    app[BOT_TOKEN_KEY] = bot_token
+    app[TRUSTED_PROXY_KEY] = trusted_proxy
+    app[HTTP_RATE_LIMITER_KEY] = HttpRateLimiter()
     app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/ics/{token}.ics", handle_ics_feed)
 

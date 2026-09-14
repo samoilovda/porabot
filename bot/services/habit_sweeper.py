@@ -164,4 +164,9 @@ def setup_habit_sweeper(scheduler) -> None:
         minute="*",
         id="habit_sweeper",
         replace_existing=True,
+        # 1.4: memory jobstore, not the default SQLAlchemyJobStore — this
+        # job is re-registered with replace_existing=True on every single
+        # startup anyway, so there is no benefit to persisting it, and the
+        # persistent store is reserved for reminder jobs (see bot/__main__.py).
+        jobstore="memory",
     )

@@ -15,6 +15,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, ErrorEvent
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -221,8 +222,30 @@ async def main() -> None:
     # Scheduler
     # Note: SQLAlchemyJobStore's own pickle_protocol already defaults to the
     # highest available protocol, so nothing needs to be set here explicitly.
+    #
+    # 1.4: two jobstores, not one. "default" (SQLAlchemyJobStore) holds only
+    # reminder jobs (SchedulerService.schedule_reminder/_schedule_send_retry/
+    # schedule_execution_retry/resume_nagging_if_stalled) — these must
+    # survive a restart. "memory" (MemoryJobStore) holds every periodic
+    # service/cron job below (heartbeat, the five per-minute cron jobs, the
+    # cleanup sweeps). Those are all re-registered with replace_existing=True
+    # on every single startup anyway, so persistence buys nothing — but
+    # SQLAlchemyJobStore serializes a job by PICKLING it, and for a job
+    # registered on a BOUND METHOD (rate_limit_middleware.cleanup_expired,
+    # http_rate_limiter.cleanup_expired below) that means pickling the
+    # method's __self__ too. Every scheduled run then unpickles and calls
+    # cleanup_expired() on a FRESH COPY of that instance — the live object
+    # actually receiving rate-limit hits is never touched, and its dict
+    # grows forever despite the periodic sweep. MemoryJobStore never
+    # pickles anything, so a bound method's job correctly acts on the live
+    # instance. (Top-level-function jobs weren't broken by this, but move
+    # here too for the same "no reason to persist" logic and so the
+    # persistent store only ever holds reminder jobs.)
     scheduler = AsyncIOScheduler(
-        jobstores={"default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL)},
+        jobstores={
+            "default": SQLAlchemyJobStore(url=config.SCHEDULER_DB_URL),
+            "memory": MemoryJobStore(),
+        },
         # Default is 1 second — any downtime (deploy, restart, crash) would make
         # APScheduler silently discard every job whose run_date fell during it.
         job_defaults={"misfire_grace_time": 3600, "coalesce": True},
@@ -240,6 +263,7 @@ async def main() -> None:
         minutes=10,
         id="cleanup_stale_timers",
         replace_existing=True,
+        jobstore="memory",
     )
     # 1.1: drop abandoned FSM rows (see fsm_storage.cleanup_stale_fsm_state) —
     # same reasoning as cleanup_stale_timers/cleanup_rate_limit_hits below.
@@ -249,6 +273,7 @@ async def main() -> None:
         hours=1,
         id="cleanup_stale_fsm_state",
         replace_existing=True,
+        jobstore="memory",
     )
     # 4.4: written now so the healthcheck doesn't see a stale/missing file
     # during startup (Dockerfile's schema init, etc.), then kept fresh by
@@ -260,6 +285,7 @@ async def main() -> None:
         minutes=1,
         id="write_heartbeat",
         replace_existing=True,
+        jobstore="memory",
     )
     logger.info("Scheduler configured.")
 
@@ -283,6 +309,7 @@ async def main() -> None:
         minutes=10,
         id="cleanup_rate_limit_hits",
         replace_existing=True,
+        jobstore="memory",
     )
 
     # Routers
@@ -305,6 +332,7 @@ async def main() -> None:
         hours=1,
         id="remove_orphan_scheduler_jobs",
         replace_existing=True,
+        jobstore="memory",
     )
 
     # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
@@ -324,6 +352,7 @@ async def main() -> None:
             minutes=10,
             id="cleanup_http_rate_limit_hits",
             replace_existing=True,
+            jobstore="memory",
         )
 
     logger.info("Starting polling…")

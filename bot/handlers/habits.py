@@ -277,6 +277,18 @@ async def cb_fluid_habit_mode(
         await callback.answer()
         return
 
+    # 1.3: commit BEFORE replying "created", not after (DatabaseMiddleware's
+    # own implicit commit once this handler returns) — otherwise the user
+    # can see "created" while the row never actually became durable.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit fluid habit for user %s: %s", user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        await callback.message.answer(l10n["habit_create_failed_internal"])
+        await callback.answer()
+        return
+
     await state.clear()
     await callback.message.edit_text(
         l10n["habit_fluid_created"].format(
@@ -346,34 +358,47 @@ async def state_habit_time(
             to_utc_aware(execution_time_utc),
             is_nagging=reminder.is_nagging,
         )
-
-        time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
-        reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
-
-        # 3.6: soft, one-time nudge on the 11th active habit — not a hard
-        # limit (Streaks caps at 12), just a heads-up that most people don't
-        # sustain more than ten at once. get_habit_motivation_stats'
-        # active_count already covers both fixed and fluid habits (is_habit
-        # is True for both), so this one check catches the threshold exactly
-        # once, right as it's crossed, instead of nagging on every habit
-        # created after it.
-        stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-        if stats.get("active_count") == 11:
-            reply_text = f"{reply_text}\n\n{l10n.get('habit_overload_hint', '')}"
-
-        await message.answer(reply_text, parse_mode="Markdown")
-        await state.clear()
-
     except ValueError as ve:
         # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
         # instead of the fixed "text too long" wording.
         logger.error("Validation error: %s", ve)
         await message.answer(str(ve))
+        return
     except Exception as e:
         logger.error("Error creating habit: %s", e, exc_info=True)
         # Keep DB and scheduler state consistent if scheduling fails mid-flow.
         await reminder_dao.session.rollback()
         await message.answer(l10n["habit_create_failed_internal"])
+        return
+
+    # 1.3: commit BEFORE replying "created" (DatabaseMiddleware's own
+    # implicit commit only runs once this handler returns) — otherwise the
+    # user can see "created" while the row/job never actually persisted.
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit habit %s for user %s: %s", habit_text, user.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        scheduler_service.remove_reminder_job(reminder.id)
+        await message.answer(l10n["habit_create_failed_internal"])
+        return
+
+    time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
+    reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+
+    # 3.6: soft, one-time nudge on the 11th active habit — not a hard
+    # limit (Streaks caps at 12), just a heads-up that most people don't
+    # sustain more than ten at once. get_habit_motivation_stats'
+    # active_count already covers both fixed and fluid habits (is_habit
+    # is True for both), so this one check catches the threshold exactly
+    # once, right as it's crossed, instead of nagging on every habit
+    # created after it.
+    stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
+    if stats.get("active_count") == 11:
+        reply_text = f"{reply_text}\n\n{l10n.get('habit_overload_hint', '')}"
+
+    await message.answer(reply_text, parse_mode="Markdown")
+    await state.clear()
 
 @router.callback_query(F.data == "habit_list")
 async def cb_habit_list(

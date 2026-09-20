@@ -521,6 +521,12 @@ async def process_daily_briefs() -> None:
                                     logger.info("Evening brief sent to user %s", user.id)
                                     if getattr(user, 'pinned_brief_message_id', None) is not None:
                                         await _unpin_brief_message(bot, session, user)
+                            elif getattr(user, 'pinned_brief_message_id', None) is not None:
+                                # 7: no completed/pending tasks means no evening
+                                # message is sent at all — but the morning brief's
+                                # pin still needs clearing, or it stays pinned
+                                # forever and blocks the next morning's pin.
+                                await _unpin_brief_message(bot, session, user)
 
                             if not delivered:
                                 # Retryable failure — see the morning branch above.

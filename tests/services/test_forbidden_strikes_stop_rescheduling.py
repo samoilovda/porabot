@@ -55,6 +55,7 @@ def _make_reminder(**overrides):
         forbidden_strikes=0,
         last_fired_at=None,
         send_retry_count=0,
+        pending_delete_at=None,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

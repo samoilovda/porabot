@@ -34,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 @router.callback_query(F.data.startswith("snooze_show_"))
 async def callback_snooze_show(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
-    reminder_id = int(callback.data.split("snooze_show_")[1])
+    try:
+        reminder_id = int(callback.data.split("snooze_show_")[1])
+    except (IndexError, ValueError) as e:
+        logger.error("Malformed snooze_show callback data %r: %s", callback.data, e)
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     await callback.message.edit_reply_markup(reply_markup=get_snooze_keyboard(reminder_id, l10n))
     await callback.answer()
 

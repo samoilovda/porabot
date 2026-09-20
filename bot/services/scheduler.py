@@ -566,6 +566,15 @@ class SchedulerService:
                 if reminder.status == "completed":
                     logger.info("Reminder %s already completed — skipping.", reminder_id)
                     return
+                if reminder.pending_delete_at is not None:
+                    # 4: the delete handler removes this job on tap, but a
+                    # job already fetched from the jobstore, or one racing
+                    # with the delete, can still reach here while the row
+                    # sits in its undo window — don't notify, reschedule, or
+                    # nag on a reminder the user is about to (or already
+                    # did) delete.
+                    logger.info("Reminder %s pending delete — skipping.", reminder_id)
+                    return
                 if is_nagging_execution and not reminder.is_nagging:
                     logger.info("Skipping stale nagging execution for reminder %s (nagging disabled).", reminder_id)
                     return

@@ -64,6 +64,7 @@ async def test_snooze_refire_does_not_shift_habit_active_due_to_tomorrow() -> No
         last_nag_message_id=None,
         forbidden_strikes=0,
         last_fired_at=today_due,
+        pending_delete_at=None,
     )
     user = SimpleNamespace(id=7, language="en", timezone="UTC", quiet_hours_enabled=False)
     session = _FakeSession(reminder, user)
@@ -105,6 +106,7 @@ async def test_on_time_fire_still_adopts_execution_time_as_active_due() -> None:
         last_nag_message_id=None,
         forbidden_strikes=0,
         last_fired_at=None,
+        pending_delete_at=None,
     )
     user = SimpleNamespace(id=7, language="en", timezone="UTC", quiet_hours_enabled=False)
     session = _FakeSession(reminder, user)

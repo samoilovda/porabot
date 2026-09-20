@@ -17,6 +17,7 @@ from aiogram.types import TelegramObject, Update
 from aiogram.types import User as TgUser
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from bot.config import config
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
@@ -54,7 +55,7 @@ class DatabaseMiddleware(BaseMiddleware):
             if tg_user:
                 try:
                     user = await user_dao.get_or_create(
-                        user_id=tg_user.id, username=tg_user.username
+                        user_id=tg_user.id, username=tg_user.username, timezone=config.TZ
                     )
                     data["user"] = user
                     l10n = get_l10n(user.language)

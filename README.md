@@ -71,7 +71,7 @@ Type a phrase; the bot parses time and extracts the task description:
 ## Test coverage
 
 ```
-505 tests collected   (python -m pytest --collect-only -q)
+513 tests collected   (python -m pytest --collect-only -q)
 ```
 
 Tests follow the regression style: each test was written to fail on the specific bug it guards, then the fix was applied. Test files live in `tests/`, mirroring the layout of `bot/`.
@@ -82,11 +82,10 @@ CI (`deploy.yml`) runs the full suite on every push to `main` and gates deployme
 
 ## Process artifacts
 
-Three formal self-audit rounds are part of this repository's history and are kept visible on purpose — they are evidence of the development process:
+Formal self-audit rounds are part of this repository's history and are kept visible on purpose — they are evidence of the development process. Earlier rounds (`AUDIT.md`, `REWORK_PLAN.md`, `REWORK_PLAN_2.md`) were removed once fully applied; the two most recent are still present:
 
-- [`AUDIT.md`](AUDIT.md) — audit of commit `ea1ced1`; 17 findings (C1–C4, W1–W8, N1–N7), priority-tagged P0/P1/P2, with reproduction commands and fix status
-- [`REWORK_PLAN.md`](REWORK_PLAN.md) — phase-1 rework plan generated from the audit
-- [`REWORK_PLAN_2.md`](REWORK_PLAN_2.md) — phase-2 plan covering habit statistics, sweeper, and report features
+- [`REWORK_PLAN_5.md`](REWORK_PLAN_5.md) — full-codebase audit (composition root, scheduler, DAOs, handlers, webserver, parser, infra, tests), phases 1–4
+- [`REWORK_PLAN_6.md`](REWORK_PLAN_6.md) — follow-up full-codebase audit, phases 1–3, 19 findings each fixed in its own commit with a regression test
 
 ---
 
@@ -136,8 +135,8 @@ pip install -r requirements.lock
 
 ## Known limitations
 
-- **O(users) minutely jobs.** Four cron jobs (daily briefs, missed recovery, habit sweeper, habit reports) scan all users every minute. Intentional and acceptable for a personal bot; does not scale to thousands of users without additional indexing. Tracked as W4 in `AUDIT.md`.
-- **Timezone input is whole-hours only.** The onboarding flow accepts integer UTC offsets (e.g. `+3`). Half-hour and quarter-hour offsets (India, Nepal, Iran, etc.) require manual `.env` configuration. Tracked as W8 in `AUDIT.md`.
+- **O(users) minutely jobs.** Four cron jobs (daily briefs, missed recovery, habit sweeper, habit reports) scan all users every minute. Intentional and acceptable for a personal bot; does not scale to thousands of users without additional indexing.
+- **Manual timezone entry supports common half/quarter-hour offsets, not every IANA zone.** The onboarding flow accepts whole-hour offsets (`+3`) and a mapped set of half/quarter-hour offsets (`+5:30`, `+5:45`, etc. — India, Nepal, Iran, and others); anything outside that map still needs `.env` configuration.
 - **Whitelist is implemented but disabled by default.** `WhitelistMiddleware` exists in `bot/middlewares/whitelist.py`. Enable it in `bot/__main__.py` before deploying publicly.
 
 ---

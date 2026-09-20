@@ -117,7 +117,7 @@ async def callback_undo_delete(
 ) -> None:
     reminder_id = int(callback.data.split("undo_del_")[1])
 
-    reminder = await reminder_dao.get_owned(reminder_id, user.id)
+    reminder = await reminder_dao.get_owned(reminder_id, user.id, include_pending_delete=True)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
 

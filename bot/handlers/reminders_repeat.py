@@ -534,7 +534,11 @@ async def callback_edit_delete(
     scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_delete_")[1])
+    try:
+        reminder_id = int(callback.data.split("edit_delete_")[1])
+    except (IndexError, ValueError) as e:
+        logger.error("Malformed edit_delete callback data %r: %s", callback.data, e)
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)

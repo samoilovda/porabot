@@ -666,6 +666,17 @@ async def callback_set_tz(
         await callback.answer()
         return
 
+    # 32: callback_data is client-controlled — Telegram doesn't cryptographically
+    # bind it to the keyboard actually shown, so a forged "set_tz_<garbage>"
+    # must not persist an unparseable zone. A stored invalid timezone later
+    # makes pytz.timezone() raise deep inside InputParser._parse_sync()
+    # instead of returning a parse result, breaking reminder creation for
+    # that user until they fix it via manual entry.
+    try:
+        pytz.timezone(action)
+    except pytz.UnknownTimeZoneError:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+
     old_tz = user.timezone
     await user_dao.update_timezone(user.id, action)
     user.timezone = action

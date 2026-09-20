@@ -139,18 +139,30 @@ class ReminderDAO(BaseDAO[Reminder]):
         await self.session.flush()  # Flush to populate auto-generated ID
         return reminder
 
-    async def get_owned(self, reminder_id: int, user_id: int) -> Optional[Reminder]:
+    async def get_owned(
+        self, reminder_id: int, user_id: int, *, include_pending_delete: bool = False
+    ) -> Optional[Reminder]:
         """
         Fetch a reminder by id, but only if it belongs to *user_id*.
 
         Prevents IDOR: callback handlers must never act on a reminder_id
         taken from callback.data without confirming the caller owns it.
 
+        3: also excludes rows with pending_delete_at set by default — a
+        stale callback from a message sent before Delete was tapped must
+        not be able to complete/snooze/edit a task sitting in its undo
+        window. Only callback_undo_delete (the one caller that legitimately
+        needs to see and restore a soft-deleted row) should pass
+        include_pending_delete=True.
+
         Returns:
-            Reminder if found and owned by user_id, otherwise None.
+            Reminder if found, owned by user_id, and (unless opted out)
+            not pending deletion — otherwise None.
         """
         reminder = await self.get_by_id(reminder_id)
         if reminder is None or reminder.user_id != user_id:
+            return None
+        if not include_pending_delete and reminder.pending_delete_at is not None:
             return None
         return reminder
 
@@ -750,6 +762,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.habit_streak_best > 0,
                 ),
                 Reminder.status == "pending",
+                Reminder.pending_delete_at.is_(None),
             )
         )
         active_habits = active_result.scalars().all()
@@ -786,11 +799,10 @@ class ReminderDAO(BaseDAO[Reminder]):
         from bot.services.habit_reports import compute_habit_score
 
         habit_event_dao = HabitEventDAO(self.session)
-        scores = []
-        for h in active_habits:
-            habit_events = await habit_event_dao.get_events_for_reminder(h.id)
-            if habit_events:
-                scores.append(compute_habit_score(habit_events))
+        events_by_habit = await habit_event_dao.get_events_for_reminders([h.id for h in active_habits])
+        scores = [
+            compute_habit_score(habit_events) for habit_events in events_by_habit.values() if habit_events
+        ]
         avg_score = round(sum(scores) / len(scores)) if scores else 0
 
         return {

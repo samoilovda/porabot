@@ -71,7 +71,7 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 ## Cobertura de tests
 
 ```
-505 tests recopilados   (python -m pytest --collect-only -q)
+513 tests recopilados   (python -m pytest --collect-only -q)
 ```
 
 Los tests siguen el estilo de regresión: cada test se escribió para fallar con el bug concreto que protege, y luego se aplicó la corrección. Los archivos de test viven en `tests/`, reflejando la estructura de `bot/`.
@@ -82,11 +82,10 @@ CI (`deploy.yml`) ejecuta todos los tests en cada push a `main` y bloquea el des
 
 ## Artefactos del proceso
 
-Tres rondas formales de auditoría propia forman parte del historial de este repositorio y se mantienen visibles a propósito — son evidencia del proceso de desarrollo:
+Varias rondas formales de auditoría propia forman parte del historial de este repositorio y se mantienen visibles a propósito — son evidencia del proceso de desarrollo. Las rondas más antiguas (`AUDIT.md`, `REWORK_PLAN.md`, `REWORK_PLAN_2.md`) se eliminaron una vez aplicadas por completo; las dos más recientes siguen en el repositorio:
 
-- [`AUDIT.md`](AUDIT.md) — auditoría del commit `ea1ced1`; 17 hallazgos (C1–C4, W1–W8, N1–N7) con prioridad P0/P1/P2, comandos de reproducción y estado de corrección
-- [`REWORK_PLAN.md`](REWORK_PLAN.md) — plan de mejoras de la fase 1 generado a partir de la auditoría
-- [`REWORK_PLAN_2.md`](REWORK_PLAN_2.md) — plan de la fase 2: estadísticas de hábitos, sweeper e informes
+- [`REWORK_PLAN_5.md`](REWORK_PLAN_5.md) — auditoría completa del código (raíz de composición, scheduler, DAOs, handlers, webserver, parser, infraestructura, tests), fases 1–4
+- [`REWORK_PLAN_6.md`](REWORK_PLAN_6.md) — nueva auditoría completa, fases 1–3, 19 hallazgos, cada uno corregido en su propio commit con test de regresión
 
 ---
 
@@ -136,8 +135,8 @@ pip install -r requirements.lock
 
 ## Limitaciones conocidas
 
-- **Jobs minutales O(usuarios).** Cuatro tareas cron (resúmenes, recuperación de perdidos, sweeper de hábitos, informes) escanean a todos los usuarios cada minuto. Aceptable para un bot personal; no escala a miles de usuarios sin indexación adicional. Registrado como W4 en `AUDIT.md`.
-- **Entrada de zona horaria solo en horas enteras.** El onboarding acepta desplazamientos UTC enteros (ej. `+3`). Los desplazamientos de media hora o cuarto de hora (India, Nepal, Irán, etc.) requieren configuración manual en `.env`. W8 en `AUDIT.md`.
+- **Jobs minutales O(usuarios).** Cuatro tareas cron (resúmenes, recuperación de perdidos, sweeper de hábitos, informes) escanean a todos los usuarios cada minuto. Aceptable para un bot personal; no escala a miles de usuarios sin indexación adicional.
+- **La entrada manual de zona horaria admite los desplazamientos de media/cuarto de hora más comunes, no todas las zonas IANA.** El onboarding acepta desplazamientos UTC enteros (ej. `+3`) y un conjunto mapeado de desplazamientos de media/cuarto de hora (`+5:30`, `+5:45`, etc. — India, Nepal, Irán y otros); cualquier otro caso sigue requiriendo configuración manual en `.env`.
 - **La whitelist está implementada pero desactivada por defecto.** `WhitelistMiddleware` existe en `bot/middlewares/whitelist.py`. Activarla en `bot/__main__.py` antes de un despliegue público.
 
 ---

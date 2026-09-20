@@ -243,3 +243,87 @@ def test_regex_hour_fallback_preserves_minutes(monkeypatch) -> None:
     assert result.parsed_datetime.minute == 30
     assert result.clean_text == "позвонить банку"
     assert ":30" not in result.clean_text
+
+
+# ---------------------------------------------------------------------------
+# GPTaudit27.07.26.md #1 — a recurrence phrase must be detected and stripped,
+# not left dangling in clean_text with no signal to the caller.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,expected_rrule",
+    [
+        ("каждый день в 9 тренировка", "FREQ=DAILY"),
+        ("every day at 9 gym", "FREQ=DAILY"),
+        ("cada día a las 9 entrenar", "FREQ=DAILY"),
+        ("по будням в 8 зарядка", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+        ("every weekday at 8 workout", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+        ("каждые выходные уборка", "FREQ=WEEKLY;BYDAY=SA,SU"),
+        ("every weekend cleaning", "FREQ=WEEKLY;BYDAY=SA,SU"),
+        ("каждую неделю отчет", "FREQ=WEEKLY"),
+        ("every week meeting", "FREQ=WEEKLY"),
+    ],
+)
+def test_recurrence_phrase_is_detected_and_stripped(text, expected_rrule) -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(text, "Europe/Moscow")
+
+    assert result.rrule_string == expected_rrule
+    for leftover in ("каждый", "every", "cada", "будням", "weekday", "выходные", "weekend", "неделю", "week"):
+        assert leftover not in result.clean_text.lower()
+
+
+def test_plain_text_has_no_recurrence() -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync("вечером принять лекарство", "Europe/Moscow")
+
+    assert result.rrule_string is None
+
+
+# ---------------------------------------------------------------------------
+# GPTaudit27.07.26.md #2 — dateparser misreads "в 23 часа"/"at 14 hours"/
+# "a las 23 horas" as a relative duration ("N hours from now") instead of a
+# clock time, because the trailing hour-unit word also means "duration" to
+# it. Must resolve to the stated clock hour, same as the equivalent phrase
+# with an explicit colon ("в 23:00").
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,expected_hour",
+    [
+        ("в 23 часа спать", 23),
+        ("at 14 hours call", 14),
+        ("a las 23 horas dormir", 23),
+        ("в 9 часов утра тренировка", 9),
+        ("в 15 часов встреча", 15),
+    ],
+)
+def test_ambiguous_hour_word_resolves_to_clock_time_not_duration(text, expected_hour) -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == expected_hour
+    # None of these phrases specify minutes — a duration misread carries
+    # over "now"'s minute/second instead of landing on the hour exactly.
+    assert result.parsed_datetime.minute == 0
+    assert result.parsed_datetime.second == 0
+    for word in ("час", "hour", "hora"):
+        assert word not in result.clean_text.lower()
+
+
+def test_duration_phrase_with_hour_word_is_unaffected() -> None:
+    """"через"/"in" durations must keep working — only the "в"/"at"/"a las"
+    clock-time preposition triggers the ambiguous-match override."""
+    parser = InputParser()
+    tz = pytz.timezone("Europe/Moscow")
+    before = datetime.now(tz)
+
+    result = parser._parse_sync("через 2 часа позвонить", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    delta_minutes = (result.parsed_datetime - before).total_seconds() / 60
+    assert 110 <= delta_minutes <= 130

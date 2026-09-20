@@ -56,6 +56,67 @@ def _mask_phone_like(text: str) -> str:
     return _PHONE_LIKE_RE.sub(_mask, text)
 
 
+# 1: recurrence phrases ("каждый день", "every weekday", "cada semana", …)
+# never resolve to a datetime via dateparser or the regex fallbacks below —
+# they describe a repeat pattern, not a point in time — so they used to
+# just sit unrecognized in clean_text with no signal that the reminder
+# should recur (GPTaudit27.07.26.md #1). Detected as their own stage,
+# independent of Stage 3/4. Order matters: the more specific multi-word
+# idioms (weekdays/weekend) are checked before the generic daily/weekly
+# ones so e.g. "по будням" isn't shadowed by a looser "day" match.
+_RECURRENCE_RULES: list[tuple[re.Pattern, str]] = [
+    (
+        re.compile(
+            r"\b(?:по\s+будням|в\s+будни(?:е\s+дни)?|каждый\s+будний\s+день|"
+            r"every\s+weekday|on\s+weekdays|each\s+weekday|weekdays|"
+            r"cada\s+d[ií]a\s+laborable|entre\s+semana|de\s+lunes\s+a\s+viernes|"
+            r"los\s+d[ií]as\s+laborables)\b",
+            re.IGNORECASE,
+        ),
+        "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+    ),
+    (
+        re.compile(
+            r"\b(?:кажд(?:ые|ый)\s+выходны[ех]|every\s+weekend|each\s+weekend|"
+            r"cada\s+fin\s+de\s+semana|todos\s+los\s+fines\s+de\s+semana)\b",
+            re.IGNORECASE,
+        ),
+        "FREQ=WEEKLY;BYDAY=SA,SU",
+    ),
+    (
+        re.compile(
+            r"\b(?:каждый\s+день|ежедневно|every\s+day|each\s+day|daily|"
+            r"cada\s+d[ií]a|diariamente|todos\s+los\s+d[ií]as)\b",
+            re.IGNORECASE,
+        ),
+        "FREQ=DAILY",
+    ),
+    (
+        re.compile(
+            r"\b(?:каждую\s+неделю|еженедельно|every\s+week|each\s+week|weekly|"
+            r"cada\s+semana|semanalmente)\b",
+            re.IGNORECASE,
+        ),
+        "FREQ=WEEKLY",
+    ),
+]
+
+# 2: dateparser reads a bare "в <N> час(а/ов)" / "at <N> hours" / "a las <N>
+# horas" as a DURATION offset from now ("N hours from now"), not a clock
+# time — apparently because "hour(s)"/"час(а/ов)" is also its own duration
+# unit word, and it doesn't distinguish the "в"/"at"/"a las" clock-time
+# preposition from "через"/"in"/"dentro de" duration prepositions the way
+# the rest of this parser does. "через 2 часа" / "in 2 hours" (a genuine
+# duration) is unaffected — those use a different preposition and aren't
+# matched here. Checked against dateparser's own matched substring, so it
+# only overrides the specific misreading, not dateparser matches in
+# general.
+_AMBIGUOUS_HOUR_WORD_RE = re.compile(
+    r"^(?:в|at|a\s+las?)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час(?:а|ов)?|hours?|horas?)\b",
+    re.IGNORECASE,
+)
+
+
 # ---------------------------------------------------------------------------
 # Result type
 # ---------------------------------------------------------------------------
@@ -69,11 +130,14 @@ class ParsedInput:
         parsed_datetime: Timezone-aware datetime when found, else None.
         confidence:      Parsing confidence in [0.0, 1.0].
         parse_source:    Which stage produced datetime ("dateparser", "regex_*", "none").
+        rrule_string:    RRULE string when a recurrence phrase ("every day",
+                         "по будням", …) was detected in the input, else None.
     """
     clean_text: str
     parsed_datetime: Optional[datetime]
     confidence: float = 0.0
     parse_source: str = "none"
+    rrule_string: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +241,20 @@ class InputParser:
         normalized_text = self._apply_heuristics(text)
         clean_text = normalized_text
 
+        # Stage 1.5 — recurrence phrase detection (see _RECURRENCE_RULES).
+        # Deliberately independent of the date/time stages below: none of
+        # them ever resolve "каждый день"/"every day"/etc. to a datetime,
+        # so this can't steal a match from Stage 3/4.
+        rrule_string: Optional[str] = None
+        for pattern, candidate_rrule in _RECURRENCE_RULES:
+            recurrence_match = pattern.search(normalized_text)
+            if recurrence_match:
+                rrule_string = candidate_rrule
+                matched_phrase = recurrence_match.group(0)
+                if matched_phrase in clean_text:
+                    clean_text = clean_text.replace(matched_phrase, "", 1)
+                break
+
         # Stage 2 — Natasha NER (serialised for thread safety)
         try:
             with _NATASHA_LOCK:
@@ -214,6 +292,14 @@ class InputParser:
         min_year, max_year = now_local.year, now_local.year + 5
         dp_matches = [(s, dt) for s, dt in (dp_matches or []) if min_year <= dt.year <= max_year]
 
+        # 2: drop a dateparser match that misread "в 23 часа"/"at 14 hours"/
+        # "a las 23 horas" as a duration offset from now instead of a clock
+        # time — see _AMBIGUOUS_HOUR_WORD_RE. Falls through to the Stage 4a
+        # regex fallback below, which resolves the same text correctly.
+        dp_matches = [
+            (s, dt) for s, dt in dp_matches if not _AMBIGUOUS_HOUR_WORD_RE.match(s.strip())
+        ]
+
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
@@ -222,11 +308,15 @@ class InputParser:
             if matched_substring in clean_text:
                 clean_text = clean_text.replace(matched_substring, "", 1)
 
-        # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра"
+        # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             hour_pattern = re.compile(
                 r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?"
+                # 2: consume a trailing bare hour-unit word ("часа"/"hours"/
+                # "horas") so it doesn't leak into clean_text — same words
+                # _AMBIGUOUS_HOUR_WORD_RE screens out of Stage 3 above.
+                r"\s*(?:час(?:а|ов)?|hours?|horas?)?"
                 r"(?:\s+(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
                 re.IGNORECASE,
             )
@@ -317,6 +407,7 @@ class InputParser:
             parsed_datetime=parsed_datetime,
             confidence=confidence,
             parse_source=parse_source,
+            rrule_string=rrule_string,
         )
 
     # ------------------------------------------------------------------

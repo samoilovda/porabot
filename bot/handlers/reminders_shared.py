@@ -376,6 +376,13 @@ async def _handle_parsed_result(
     await state.update_data(
         text=clean_text, tags=tags_csv, priority=priority,
         user_timezone=user.timezone, chat_id=source_message.chat.id,
+        # 1: a recurrence phrase ("каждый день"/"every weekday"/…) detected
+        # by the parser must survive the ask-time round trip (the user may
+        # still need to pick/confirm a time before _save_and_show_edit
+        # actually creates the reminder) — stored here, consumed there.
+        # Always overwritten (even to None) so a stale value from an
+        # earlier, unrelated flow in the same FSM session can't leak in.
+        recurrence_rrule=getattr(result, "rrule_string", None),
     )
 
     if result.parsed_datetime:
@@ -423,6 +430,12 @@ async def _save_and_show_edit(
     execution_time_raw = datetime.fromisoformat(data["execution_time"])
     execution_time = to_utc_naive(execution_time_raw)
     edit_reminder_id = data.get("edit_reminder_id")
+    # 1: a recurrence phrase the parser detected earlier (see
+    # _handle_parsed_result) — only applied when creating a brand-new
+    # reminder, not when re-typing the text of an existing one; changing
+    # an existing reminder's repeat rule is the repeat builder's job
+    # (reminders_repeat.py), not a side effect of an unrelated text edit.
+    recurrence_rrule = data.get("recurrence_rrule") if not edit_reminder_id else None
 
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if execution_time <= now_utc_naive + timedelta(minutes=1):
@@ -446,13 +459,29 @@ async def _save_and_show_edit(
             logger.warning("Reminder %s not found during edit.", edit_reminder_id)
             return
     else:
+        if recurrence_rrule:
+            # The parsed clock time is just "the next time this hour comes
+            # up" — for a rule like weekdays-only it may land on a day the
+            # rule excludes (e.g. "по будням в 8" parsed on a Saturday).
+            # Snap forward to the first occurrence the rule actually allows,
+            # same helper _reschedule_current_execution uses to advance an
+            # existing recurring reminder past a stale execution_time.
+            try:
+                snapped_time = next_occurrence_utc(
+                    recurrence_rrule, execution_time, user.timezone, execution_time - timedelta(seconds=1)
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning("Invalid recurrence rrule %r for user %s: %s", recurrence_rrule, user.id, e)
+                snapped_time = None
+            if snapped_time:
+                execution_time = snapped_time
         try:
             new_reminder = await reminder_dao.create_reminder(
                 user_id=user.id,
                 text=text,
                 execution_time=execution_time,
-                is_recurring=False,
-                rrule_string=None,
+                is_recurring=bool(recurrence_rrule),
+                rrule_string=recurrence_rrule,
                 is_nagging=False,
                 tags=tags_csv,
                 priority=priority,

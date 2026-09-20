@@ -10,14 +10,28 @@ EN: dict[str, Any] = {
         "/start — show the main menu\n"
         "/help — this message\n"
         "/cancel — cancel whatever you're in the middle of\n\n"
+        "If the menu buttons at the bottom ever disappear, these commands do "
+        "the same thing:\n"
+        "/newtask — new task\n"
+        "/tasks — my tasks\n"
+        "/habits — habits\n"
+        "/settings — settings\n"
+        "/timezone — change timezone\n"
+        "/language — change language\n\n"
         "Just type or forward a message like *\"remind me in 15 minutes to drink water\"* "
-        "and I'll parse the time for you. Use the menu buttons for tasks, habits, and settings."
+        "and I'll parse the time for you."
     ),
     "cmd_desc_start": "Main menu",
     "cmd_desc_help": "Show help",
     "cmd_desc_cancel": "Cancel current action",
     "cmd_desc_find": "Search your tasks",
     "cmd_desc_donate": "Support Porabot",
+    "cmd_desc_newtask": "New task",
+    "cmd_desc_tasks": "My tasks",
+    "cmd_desc_habits": "Habits",
+    "cmd_desc_settings": "Settings",
+    "cmd_desc_timezone": "Change timezone",
+    "cmd_desc_language": "Change language",
     "btn_new_task": "➕ New Task",
     "btn_my_tasks": "📅 My Tasks",
     "btn_settings": "⚙️ Settings",

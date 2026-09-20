@@ -8,6 +8,7 @@ from typing import Any
 
 import pytz
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
@@ -449,6 +450,25 @@ async def callback_change_tz(callback: CallbackQuery, l10n: dict[str, Any]) -> N
 async def callback_change_lang(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
     await callback.message.edit_text(l10n["choose_language"], reply_markup=get_language_selection_keyboard(l10n))
     await callback.answer()
+
+
+# /timezone and /language: direct shortcuts to the two settings sub-menus a
+# user is most likely to need urgently (wrong reminder times, wrong UI
+# language) when the reply-keyboard footer that normally leads to Settings
+# has failed to render. Reuse the same keyboards/callbacks as
+# settings_change_tz/settings_change_lang above — set_tz_*/set_lang_*
+# already handle being triggered outside onboarding via state_data's
+# onboarding_timezone flag, which state.clear() here guarantees is unset.
+@router.message(Command("timezone"))
+async def cmd_timezone(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
+    await state.clear()
+    await message.answer(l10n["choose_tz"], reply_markup=get_timezone_keyboard(l10n))
+
+
+@router.message(Command("language"))
+async def cmd_language(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
+    await state.clear()
+    await message.answer(l10n["choose_language"], reply_markup=get_language_selection_keyboard(l10n))
 
 
 def _dt_iso(value) -> Any:

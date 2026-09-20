@@ -15,10 +15,17 @@ from bot.lexicon import _LEXICONS, ALL_MENU_BUTTON_TEXTS
 
 
 def _handler_filter_matches(handler_callback, text: str) -> bool:
+    # Each menu button is now registered twice on menu.router — once with
+    # the F.text.in_(...) lexicon-derived filter checked here, once with a
+    # Command(...) filter (the /newtask, /tasks, /settings, /habits
+    # fallback for when the reply-keyboard footer fails to render) whose
+    # filter object has no .magic attribute at all. Find the F.text
+    # registration specifically instead of assuming it's the first (or
+    # only) one for this callback.
     for h in menu.router.message.handlers:
-        if h.callback is handler_callback:
+        if h.callback is handler_callback and getattr(h.filters[0], "magic", None) is not None:
             return bool(h.filters[0].magic.resolve(SimpleNamespace(text=text)))
-    raise AssertionError(f"handler {handler_callback} not registered on menu.router")
+    raise AssertionError(f"F.text handler for {handler_callback} not registered on menu.router")
 
 
 def test_menu_router_filters_match_every_language_for_their_button() -> None:

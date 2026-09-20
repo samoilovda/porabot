@@ -279,6 +279,12 @@ async def _set_bot_commands(bot: Bot) -> None:
         commands = [
             BotCommand(command="start", description=l10n.get("cmd_desc_start", "Main menu")),
             BotCommand(command="help", description=l10n.get("cmd_desc_help", "Show help")),
+            BotCommand(command="newtask", description=l10n.get("cmd_desc_newtask", "New task")),
+            BotCommand(command="tasks", description=l10n.get("cmd_desc_tasks", "My tasks")),
+            BotCommand(command="habits", description=l10n.get("cmd_desc_habits", "Habits")),
+            BotCommand(command="settings", description=l10n.get("cmd_desc_settings", "Settings")),
+            BotCommand(command="timezone", description=l10n.get("cmd_desc_timezone", "Change timezone")),
+            BotCommand(command="language", description=l10n.get("cmd_desc_language", "Change language")),
             BotCommand(command="cancel", description=l10n.get("cmd_desc_cancel", "Cancel current action")),
             BotCommand(command="find", description=l10n.get("cmd_desc_find", "Search your tasks")),
             BotCommand(command="donate", description=l10n.get("cmd_desc_donate", "Support Porabot")),

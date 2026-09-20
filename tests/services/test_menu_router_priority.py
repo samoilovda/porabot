@@ -9,6 +9,13 @@ menu button tap meant for a later router. These tests drive the REAL
 Dispatcher with the REAL router chain from bot.handlers.all_routers to prove
 a menu button tap reaches its handler regardless of what FSM state another
 router's flow left behind.
+
+Also covers the /newtask, /tasks, /habits, /settings, /timezone, /language
+slash-command fallbacks (bot/handlers/menu.py, bot/handlers/settings.py):
+the reply-keyboard footer occasionally fails to render, and these commands
+are the only way back to the main menu features when that happens — they
+must reach the exact same handlers as their button-text counterparts,
+regardless of FSM state left behind by another flow.
 """
 
 import os
@@ -31,6 +38,7 @@ import bot.handlers.reminders_wizard as reminders_wizard_module
 from bot.handlers.habits import HabitState
 from bot.handlers.settings import SettingsState
 from bot.lexicon import get_l10n
+from bot.states.reminder import ReminderWizard
 
 _TOKEN = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 
@@ -232,4 +240,125 @@ async def test_ordinary_text_is_unaffected_and_still_starts_the_task_wizard() ->
         assert sent.text != l10n["unknown_command"]
     finally:
         reminders_wizard_module.parser.parse = original_parse
+        await telegram_bot.session.close()
+
+
+# ---------------------------------------------------------------------------
+# Slash-command fallbacks for the four menu buttons + /timezone + /language
+# ---------------------------------------------------------------------------
+
+async def test_newtask_command_starts_the_wizard_like_the_button() -> None:
+    user_id = 560
+    telegram_bot = _make_bot()
+    try:
+        key = StorageKey(bot_id=telegram_bot.id, chat_id=user_id, user_id=user_id)
+        l10n = get_l10n("ru")
+
+        with patch.object(Bot, "__call__", AsyncMock(return_value=object())) as mock_call:
+            await _shared_dispatcher.feed_update(telegram_bot, _make_update("/newtask", user_id), l10n=l10n)
+
+        sent = mock_call.await_args.args[0]
+        assert sent.text == l10n["enter_task"]
+        assert await _shared_storage.get_state(key) == ReminderWizard.entering_text.state
+    finally:
+        await telegram_bot.session.close()
+
+
+async def test_tasks_command_reaches_same_handler_as_the_button() -> None:
+    user_id = 561
+    telegram_bot = _make_bot()
+    try:
+        key = StorageKey(bot_id=telegram_bot.id, chat_id=user_id, user_id=user_id)
+        await _shared_storage.set_state(key, SettingsState.waiting_for_brief_time)
+
+        reminder_dao = SimpleNamespace(get_user_reminders=AsyncMock(return_value=[]))
+        user = SimpleNamespace(id=user_id, timezone="UTC", show_utc_offset=False, language="ru")
+        l10n = get_l10n("ru")
+
+        with patch.object(Bot, "__call__", AsyncMock(return_value=SimpleNamespace(message_id=99))) as mock_call:
+            await _shared_dispatcher.feed_update(
+                telegram_bot, _make_update("/tasks", user_id), reminder_dao=reminder_dao, user=user, l10n=l10n
+            )
+
+        sent = mock_call.await_args.args[0]
+        assert sent.text == l10n["no_tasks"]
+        assert await _shared_storage.get_state(key) is None
+    finally:
+        await telegram_bot.session.close()
+
+
+async def test_settings_command_reaches_same_handler_as_the_button() -> None:
+    user_id = 562
+    telegram_bot = _make_bot()
+    try:
+        key = StorageKey(bot_id=telegram_bot.id, chat_id=user_id, user_id=user_id)
+        await _shared_storage.set_state(key, HabitState.waiting_for_name)
+
+        user = SimpleNamespace(
+            id=user_id,
+            timezone="UTC",
+            show_utc_offset=False,
+            language="ru",
+            quiet_hours_enabled=False,
+            quiet_hours_start="23:00",
+            quiet_hours_end="07:00",
+        )
+        l10n = get_l10n("ru")
+
+        with patch.object(Bot, "__call__", AsyncMock(return_value=SimpleNamespace(message_id=99))) as mock_call:
+            await _shared_dispatcher.feed_update(telegram_bot, _make_update("/settings", user_id), user=user, l10n=l10n)
+
+        sent = mock_call.await_args.args[0]
+        assert l10n["settings_text"].split("{")[0] in sent.text
+        assert await _shared_storage.get_state(key) is None
+    finally:
+        await telegram_bot.session.close()
+
+
+async def test_habits_command_reaches_the_habits_dashboard() -> None:
+    user_id = 563
+    telegram_bot = _make_bot()
+    try:
+        reminder_dao = SimpleNamespace(get_habit_motivation_stats=AsyncMock(return_value={}))
+        user = SimpleNamespace(id=user_id, timezone="UTC")
+        l10n = get_l10n("ru")
+
+        with patch.object(Bot, "__call__", AsyncMock(return_value=SimpleNamespace(message_id=99))) as mock_call:
+            await _shared_dispatcher.feed_update(
+                telegram_bot, _make_update("/habits", user_id), reminder_dao=reminder_dao, user=user, l10n=l10n
+            )
+
+        sent = mock_call.await_args.args[0]
+        assert l10n["habits_dashboard"] in sent.text
+    finally:
+        await telegram_bot.session.close()
+
+
+async def test_timezone_command_shows_the_timezone_picker() -> None:
+    user_id = 564
+    telegram_bot = _make_bot()
+    try:
+        l10n = get_l10n("ru")
+        with patch.object(Bot, "__call__", AsyncMock(return_value=object())) as mock_call:
+            await _shared_dispatcher.feed_update(telegram_bot, _make_update("/timezone", user_id), l10n=l10n)
+
+        sent = mock_call.await_args.args[0]
+        assert sent.text == l10n["choose_tz"]
+        assert sent.reply_markup is not None
+    finally:
+        await telegram_bot.session.close()
+
+
+async def test_language_command_shows_the_language_picker() -> None:
+    user_id = 565
+    telegram_bot = _make_bot()
+    try:
+        l10n = get_l10n("ru")
+        with patch.object(Bot, "__call__", AsyncMock(return_value=object())) as mock_call:
+            await _shared_dispatcher.feed_update(telegram_bot, _make_update("/language", user_id), l10n=l10n)
+
+        sent = mock_call.await_args.args[0]
+        assert sent.text == l10n["choose_language"]
+        assert sent.reply_markup is not None
+    finally:
         await telegram_bot.session.close()

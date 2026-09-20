@@ -14,14 +14,27 @@ ES.update(
             "/start — mostrar el menú principal\n"
             "/help — este mensaje\n"
             "/cancel — cancelar la acción actual\n\n"
+            "Si los botones del menú de abajo desaparecen, estos comandos hacen lo mismo:\n"
+            "/newtask — nueva tarea\n"
+            "/tasks — mis tareas\n"
+            "/habits — hábitos\n"
+            "/settings — ajustes\n"
+            "/timezone — cambiar zona horaria\n"
+            "/language — cambiar idioma\n\n"
             "Escribe o reenvía un mensaje como *«recuérdame en 15 minutos beber agua»* "
-            "y detectaré la hora por ti. Usa los botones del menú para tareas, hábitos y ajustes."
+            "y detectaré la hora por ti."
         ),
         "cmd_desc_start": "Menú principal",
         "cmd_desc_help": "Mostrar ayuda",
         "cmd_desc_cancel": "Cancelar la acción actual",
         "cmd_desc_find": "Buscar en tus tareas",
         "cmd_desc_donate": "Apoyar a Porabot",
+        "cmd_desc_newtask": "Nueva tarea",
+        "cmd_desc_tasks": "Mis tareas",
+        "cmd_desc_habits": "Hábitos",
+        "cmd_desc_settings": "Ajustes",
+        "cmd_desc_timezone": "Cambiar zona horaria",
+        "cmd_desc_language": "Cambiar idioma",
         "btn_new_task": "➕ Nueva tarea",
         "btn_my_tasks": "📅 Mis tareas",
         "btn_settings": "⚙️ Ajustes",

@@ -10,11 +10,19 @@ setting a brief time who taps "My Tasks" would have that text swallowed by
 the brief-time validator instead of reaching reminders.py. Registering all
 four menu buttons on one router placed before every FSM-state router fixes
 that regardless of what state the user happens to be in.
+
+Each handler also answers to a slash command (/newtask, /tasks, /habits,
+/settings) — the reply keyboard occasionally fails to (re)render (Telegram
+client quirk, or a chat where it was dismissed), leaving a user with no way
+to reach these besides typing the button text from memory. The commands
+are listed in /help and Telegram's own "/" command menu, so they work
+regardless of whether the footer is visible.
 """
 
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
@@ -32,6 +40,7 @@ router = Router(name="menu")
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_new_task"]))
+@router.message(Command("newtask"))
 async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
     await state.clear()
     await state.set_state(ReminderWizard.entering_text)
@@ -39,6 +48,7 @@ async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_my_tasks"]))
+@router.message(Command("tasks"))
 async def btn_my_tasks(
     message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
@@ -58,6 +68,7 @@ async def btn_my_tasks(
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_settings"]))
+@router.message(Command("settings"))
 async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
     await state.clear()  # Reset FSM if user navigates here mid-wizard
     text = _render_settings_text(user, l10n)
@@ -65,6 +76,7 @@ async def btn_settings(message: Message, state: FSMContext, user: User, l10n: di
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_habits"]))
+@router.message(Command("habits"))
 async def btn_habits(
     message: Message,
     state: FSMContext,

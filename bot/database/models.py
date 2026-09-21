@@ -337,6 +337,20 @@ class Reminder(Base):
     last_nag_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     last_nag_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # How many times the user has tapped Snooze for the CURRENT cycle.
+    # Reset to 0 whenever the cycle closes (ReminderDAO.mark_done /
+    # mark_habit_not_today / mark_fluid_habit_done_today). Repeated same-day
+    # snoozes used to each leave their own "Postponed until ..." message
+    # sitting in the chat forever — callback_snooze_act now lets only the
+    # first one stay visible and deletes the rest, while this counter keeps
+    # the total so nothing is lost.
+    snooze_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
     # When the main (non-nagging) notification for the CURRENT execution_time
     # cycle was last sent (naive UTC). One-off reminders stay status='pending'
     # until the user taps Done, so reconcile_jobs_with_db needs this to tell

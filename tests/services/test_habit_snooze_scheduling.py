@@ -50,6 +50,7 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
         habit_last_completed_due_at=None,
         habit_streak_current=2,
         habit_streak_best=5,
+        snooze_count=0,
     )
     reminder_dao = SimpleNamespace(
         get_by_id=AsyncMock(return_value=reminder),

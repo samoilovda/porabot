@@ -265,6 +265,7 @@ EN: dict[str, Any] = {
     "brief_items_more": "…and {count} more",
     "btn_done": "✅ Done",
     "btn_not_today": "🚫 Not today",
+    "btn_not_done": "🚫 No longer relevant",
     "btn_done_short": "✅ Done",
     "btn_not_done_short": "❌ Not done",
     "wrapup_task_hint": "Task from evening wrap-up",

@@ -264,6 +264,7 @@ RU: dict[str, Any] = {
     "brief_items_more": "…и ещё {count}",
     "btn_done": "✅ Сделано",
     "btn_not_today": "🚫 Не сегодня",
+    "btn_not_done": "🚫 Не актуально",
     "btn_done_short": "✅ Да",
     "btn_not_done_short": "❌ Нет",
     "wrapup_task_hint": "Задача из вечерней сводки",

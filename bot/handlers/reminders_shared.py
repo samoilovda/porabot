@@ -455,6 +455,8 @@ async def _save_and_show_edit(
             is_snooze_mode = bool(data.get("is_snooze_mode", False))
             if not (is_snooze_mode and _is_habit_like(new_reminder) and new_reminder.is_recurring):
                 new_reminder.execution_time = execution_time
+            if is_snooze_mode:
+                new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1
         else:
             logger.warning("Reminder %s not found during edit.", edit_reminder_id)
             return

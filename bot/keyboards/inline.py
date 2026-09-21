@@ -355,6 +355,8 @@ def get_task_done_keyboard(
     show_time_of_day_options: bool = True,
     cycle_due_ts: Optional[int] = None,
     show_not_today: bool = False,
+    show_not_done: bool = False,
+    is_recurring: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for marking a task as done or snoozing.
@@ -386,7 +388,16 @@ def get_task_done_keyboard(
         )
     )
 
-    # Row 2: "Not today" (habits only) — directly under Done, before snooze options.
+    # Row 2: "Not today" (habits) or "Not done" (plain tasks) — directly
+    # under Done, before snooze options. Mutually exclusive: habits/fluid
+    # habits get "Not today" (skips today, streak resets), plain tasks get
+    # "Not done" instead — a task that lost relevance while nagging you
+    # shouldn't have to sit through Done vs. keep-snoozing forever.
+    # "Not done" reuses two already-battle-tested flows rather than
+    # inventing a third reminder-closing path: a recurring plain task skips
+    # to its next occurrence (same as done_skip_next_ from the post-Done
+    # follow-up keyboard), a one-off task is soft-deleted with Undo (same
+    # as del_task_ from the task list).
     if show_not_today:
         not_today_callback = f"not_today_{reminder_id}"
         if cycle_due_ts is not None:
@@ -395,6 +406,14 @@ def get_task_done_keyboard(
             InlineKeyboardButton(
                 text=l10n["btn_not_today"],
                 callback_data=not_today_callback,
+            )
+        )
+    elif show_not_done:
+        not_done_callback = f"done_skip_next_{reminder_id}" if is_recurring else f"del_task_{reminder_id}"
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n["btn_not_done"],
+                callback_data=not_done_callback,
             )
         )
 

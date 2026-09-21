@@ -635,11 +635,14 @@ class SchedulerService:
                     cycle_due_ts = int(active_due.replace(tzinfo=timezone.utc).timestamp())
 
                 l10n = get_l10n(user.language)
+                is_habit_or_fluid = is_habit_like(reminder) or reminder.is_fluid_habit
                 keyboard = get_task_done_keyboard(
                     reminder.id,
                     l10n,
                     cycle_due_ts=cycle_due_ts,
-                    show_not_today=is_habit_like(reminder) or reminder.is_fluid_habit,
+                    show_not_today=is_habit_or_fluid,
+                    show_not_done=not is_habit_or_fluid,
+                    is_recurring=bool(reminder.is_recurring),
                 )
                 send_outcome, retry_after_seconds = await self._send_or_replace_nag_message(
                     reminder=reminder,

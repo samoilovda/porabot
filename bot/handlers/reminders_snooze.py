@@ -110,6 +110,7 @@ async def callback_snooze_act(
 
     reminder.last_nag_chat_id = None
     reminder.last_nag_message_id = None
+    reminder.snooze_count = int(reminder.snooze_count or 0) + 1
     try:
         scheduler_service.schedule_reminder(
             reminder.id,
@@ -149,22 +150,32 @@ async def callback_snooze_act(
         await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
         return
 
-    friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-    snoozed_line = l10n["snoozed_until"].format(time=escape_markdown_v2(friendly_time))
-    # callback.message.text is None for a media message (the done-keyboard
-    # is also attachable to a reminder sent with media_file_id) — fall back
-    # to the caption, then an empty string, instead of escape_markdown_v2
-    # crashing on None.
-    original_text = callback.message.text or callback.message.caption or ""
-    snooze_text = f"{escape_markdown_v2(original_text)}\n\n{snoozed_line}"
-    try:
-        await callback.message.edit_text(
-            snooze_text,
-            reply_markup=None,
-            parse_mode="MarkdownV2",
-        )
-    except TelegramBadRequest as e:
-        logger.warning("Could not edit snooze confirmation for reminder %s: %s", reminder.id, e)
+    if reminder.snooze_count <= 1:
+        friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+        snoozed_line = l10n["snoozed_until"].format(time=escape_markdown_v2(friendly_time))
+        # callback.message.text is None for a media message (the done-keyboard
+        # is also attachable to a reminder sent with media_file_id) — fall back
+        # to the caption, then an empty string, instead of escape_markdown_v2
+        # crashing on None.
+        original_text = callback.message.text or callback.message.caption or ""
+        snooze_text = f"{escape_markdown_v2(original_text)}\n\n{snoozed_line}"
+        try:
+            await callback.message.edit_text(
+                snooze_text,
+                reply_markup=None,
+                parse_mode="MarkdownV2",
+            )
+        except TelegramBadRequest as e:
+            logger.warning("Could not edit snooze confirmation for reminder %s: %s", reminder.id, e)
+    else:
+        # 2nd+ snooze of the same cycle: leaving another "Postponed until
+        # ..." message behind every time floods the chat over a day of
+        # repeated postpones. The count itself already lives in
+        # reminder.snooze_count, so just make this one disappear instead.
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest as e:
+            logger.warning("Could not delete snooze confirmation for reminder %s: %s", reminder.id, e)
     await callback.answer(l10n["snoozed_toast"])
 
 

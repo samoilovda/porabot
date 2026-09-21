@@ -257,6 +257,7 @@ ES.update(
         "brief_items_more": "…y {count} más",
         "btn_done": "✅ Hecho",
         "btn_not_today": "🚫 Hoy no",
+        "btn_not_done": "🚫 Ya no aplica",
         "btn_done_short": "✅ Sí",
         "btn_not_done_short": "❌ No",
         "wrapup_task_hint": "Tarea del resumen nocturno",

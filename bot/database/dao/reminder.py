@@ -261,6 +261,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             reminder.last_completion_note = None
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
+            reminder.snooze_count = 0
 
             await self.session.flush()
 
@@ -353,6 +354,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 reminder.completed_for_execution_time = reminder.execution_time
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
+            reminder.snooze_count = 0
             await self.session.flush()
 
     async def revert_habit_streak_completion(
@@ -873,6 +875,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         reminder.fluid_streak_best = max(new_streak, max(0, int(reminder.fluid_streak_best or 0)))
         reminder.fluid_last_completed_date = today_str
         reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
+        reminder.snooze_count = 0
         await self.session.flush()
         return True
 

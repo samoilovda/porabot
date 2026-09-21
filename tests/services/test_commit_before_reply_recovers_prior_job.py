@@ -38,6 +38,7 @@ async def test_snooze_commit_failure_restores_prior_job_and_survives_missing_tex
         is_nagging=False,
         last_nag_chat_id=None,
         last_nag_message_id=None,
+        snooze_count=0,
     )
     session = SimpleNamespace(
         commit=_failing_commit(),

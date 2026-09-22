@@ -350,6 +350,43 @@ async def _remove_keyboard_after_delay(message: Message, delay: int = 5) -> None
 # hard-deletes them once the deadline passes, restart or not.
 
 
+async def _soft_delete_reminder(
+    reminder,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+) -> bool:
+    """A-14: set pending_delete_at and commit FIRST, only remove the
+    scheduler job once that's durable. Every one of this function's three
+    call sites (callback_delete_task, callback_edit_delete, habits.py's
+    cb_del_habit) used to do this in the opposite order — remove the job,
+    THEN set pending_delete_at and commit, with no handling for that
+    commit failing. A failed commit there left the reminder genuinely
+    still active in the DB (pending_delete_at never actually set) while
+    its job had already been torn down — it would sit with no job at all,
+    silently never firing again, until the next restart's
+    reconcile_jobs_with_db happened to notice and recreate one. Same
+    "commit before anything externally visible" ordering this module's
+    other mutating flows already follow (see _save_and_show_edit's
+    comment on the same pattern).
+
+    Returns False (and rolls back) on a commit failure — callers should
+    show schedule_error and stop; nothing about the reminder or its job
+    has changed at that point.
+    """
+    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=_UNDO_DELETE_WINDOW
+    )
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit soft-delete for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        return False
+    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.remove_nagging_job(reminder.id)
+    return True
+
+
 def _reset_auto_delete(message: Message) -> None:
     """Cancel the pending keyboard-removal task for *message* (if any)."""
     task = active_auto_delete_tasks.get(_message_task_key(message))

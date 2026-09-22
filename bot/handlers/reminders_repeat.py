@@ -6,7 +6,7 @@ module docstring for the full module family and why).
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from datetime import time as dt_time
 from typing import Any, Optional
 
@@ -562,18 +562,12 @@ async def callback_edit_delete(
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
-    # Stop the job immediately; the DB row itself is only removed once the
-    # undo window elapses (see delete_cleanup.py), so an Undo tap can still
-    # restore it without recreating the reminder.
-    scheduler_service.remove_reminder_job(reminder_id)
-    scheduler_service.remove_nagging_job(reminder_id)
-    # Persisted and committed before confirming to the user — a restart
-    # right after this is still durable (every active-reminder query
-    # excludes pending_delete_at rows), unlike the old in-memory timer.
-    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-        seconds=reminders_shared._UNDO_DELETE_WINDOW
-    )
-    await reminder_dao.session.commit()
+    # A-14: commit pending_delete_at BEFORE tearing down the scheduler job
+    # — see reminders_shared._soft_delete_reminder's docstring. A restart
+    # right after this is still durable either way (every active-reminder
+    # query excludes pending_delete_at rows), unlike the old in-memory timer.
+    if not await reminders_shared._soft_delete_reminder(reminder, reminder_dao, scheduler_service):
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(
         l10n["task_deleted"], reply_markup=get_undo_delete_keyboard(reminder_id, l10n)

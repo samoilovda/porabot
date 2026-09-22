@@ -134,6 +134,7 @@ from bot.handlers.reminders_shared import (  # noqa: E402
     _rrule_end_label,
     _rrule_text,
     _save_and_show_edit,
+    _soft_delete_reminder,
     active_auto_delete_tasks,
 )
 
@@ -211,6 +212,7 @@ __all__ = [
     "_rrule_text",
     "_save_and_show_edit",
     "_show_filtered_tasks",
+    "_soft_delete_reminder",
     "active_auto_delete_tasks",
     "callback_close_tasks",
     "callback_delete_task",

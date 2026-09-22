@@ -46,6 +46,32 @@ _PHONE_LIKE_RE = re.compile(r"(?<!\d)(?:\d{2,4}(?:[-\s]\d{2,4}){2,4}|\d{7,})(?!\
 _YEAR_GROUP_RE = re.compile(r"^(?:19|20)\d{2}$")
 
 
+def _strip_first_occurrence(haystack: str, needle: str) -> str:
+    """Remove the first occurrence of *needle* from *haystack*, if present.
+
+    A-06: *needle* (a matched date/time span from Stage 3/4) can legitimately
+    no longer exist VERBATIM in clean_text by the time this runs — Stage 2's
+    Natasha pass already removed a leading chunk of it as its own, narrower
+    span (e.g. for "2 марта в 15:00 врач", Natasha extracts only "2 марта"
+    and removes that, so dateparser's own wider "2 марта в 15:00" match is no
+    longer a substring of clean_text at all, and the plain `in`/`.replace()`
+    check this used to be silently no-ops — leaving "15:00" dangling in the
+    saved task text). Falls back to shrinking *needle* from the left one
+    whitespace-delimited token at a time until the remaining suffix IS still
+    found, on the reasoning that an earlier stage would only ever have eaten
+    a PREFIX of a later, wider match (both work left-to-right over the same
+    text), never an arbitrary interior slice.
+    """
+    if needle in haystack:
+        return haystack.replace(needle, "", 1)
+    tokens = needle.split(" ")
+    for i in range(1, len(tokens)):
+        shrunk = " ".join(tokens[i:])
+        if shrunk and shrunk in haystack:
+            return haystack.replace(shrunk, "", 1)
+    return haystack
+
+
 def _mask_phone_like(text: str) -> str:
     def _mask(m: re.Match) -> str:
         token = m.group(0)
@@ -113,6 +139,45 @@ _RECURRENCE_RULES: list[tuple[re.Pattern, str]] = [
 # general.
 _AMBIGUOUS_HOUR_WORD_RE = re.compile(
     r"^(?:в|at|a\s+las?)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час(?:а|ов)?|hours?|horas?)\b",
+    re.IGNORECASE,
+)
+
+# A-06: dateparser also misreads "в 5 вечера"/"at 5 pm"/"a las 5 tarde" —
+# it matches only the bare "в 5"/"at 5" clock-time span and ignores the
+# period-of-day word trailing right after it, so "5 вечера" (17:00) comes
+# back as 05:00 and the un-consumed "вечера" leaks into clean_text. Unlike
+# _AMBIGUOUS_HOUR_WORD_RE above (a duration misread — wrong *kind* of
+# match), this is a wrong *span*: dateparser's own match is simply too
+# short. Detected the same way — by testing what immediately follows the
+# match in normalized_text — and handled the same way: drop the match so
+# Stage 4a/4c's regex fallback (which already asks for this exact trailing
+# period-of-day word and folds it into the computed hour via
+# _process_hour_expression) recomputes it, correctly, instead.
+_TRAILING_PERIOD_WORD_RE = re.compile(
+    r"^\s+(?:de\s+la\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche)\b",
+    re.IGNORECASE,
+)
+
+# A-05: a phrase that names only a DAY (a weekday, "tomorrow", a calendar
+# date) with no clock time at all must not be saved outright — dateparser
+# resolves the missing time to local midnight (or, for a bare "tomorrow",
+# to right-now's time-of-day carried over), and either one is silently
+# wrong for a reminder the user never actually gave a time for. Detected
+# by testing dateparser's OWN matched substring (not the resulting
+# datetime, which could legitimately be exact midnight) for anything that
+# looks like a clock time — if none is found, downstream lowers confidence
+# below the confirmation threshold so the user is asked instead of
+# assumed at. Bare "mañana"/"tarde"/"noche" are deliberately excluded from
+# the period-word branch here: unlike the trailing-period check above
+# (which only fires directly after an already-found clock number),
+# "mañana" on its own overwhelmingly means "tomorrow" in Spanish, not "in
+# the morning" — only "de/por la mañana" is unambiguous.
+_EXPLICIT_TIME_MARKER_RE = re.compile(
+    r"\d{1,2}[:.]\d{2}"
+    r"|\b(?:в|at|a\s+las?)\s*\d{1,2}\b"
+    r"|утра|дня|послеобеденно|вечера|ночи|am|pm"
+    r"|(?:de|por)\s+la\s+ma[ñn]ana|\btarde\b|\bnoche\b"
+    r"|полдень|полночь|midnight|noon|mediod[ií]a|medianoche",
     re.IGNORECASE,
 )
 
@@ -300,13 +365,40 @@ class InputParser:
             (s, dt) for s, dt in dp_matches if not _AMBIGUOUS_HOUR_WORD_RE.match(s.strip())
         ]
 
+        # A-06: drop a dateparser match immediately followed by a period-of-
+        # day word it didn't consume ("в 5 вечера") — see
+        # _TRAILING_PERIOD_WORD_RE's docstring. normalized_text.find here
+        # mirrors the existing clean_text.replace(matched_substring, "", 1)
+        # calls throughout this method: a first-occurrence lookup, not a
+        # tracked offset — fine for the short, single-clause phrases this
+        # parser is built for.
+        def _has_trailing_period_word(matched_substring: str) -> bool:
+            idx = normalized_text.find(matched_substring)
+            if idx == -1:
+                return False
+            tail = normalized_text[idx + len(matched_substring):]
+            return bool(_TRAILING_PERIOD_WORD_RE.match(tail))
+
+        dp_matches = [(s, dt) for s, dt in dp_matches if not _has_trailing_period_word(s)]
+
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
             parse_source = "dateparser"
             confidence = 0.75 if normalized_changed else 0.95
-            if matched_substring in clean_text:
-                clean_text = clean_text.replace(matched_substring, "", 1)
+            # A-05: dateparser's matched substring names only a day
+            # ("понедельник"/"friday"/"завтра"/a bare calendar date), with
+            # no clock time in it at all — it still returns a full
+            # datetime (local midnight, or "tomorrow" at whatever the
+            # current time-of-day happens to be), which this parser must
+            # not treat as confidently as an explicit "в 18:00". Capping
+            # confidence below _PARSE_CONFIDENCE_THRESHOLD routes it
+            # through the existing low-confidence confirmation prompt
+            # (see reminders_shared._handle_parsed_result) instead of
+            # silently saving a time the user never actually gave.
+            if not _EXPLICIT_TIME_MARKER_RE.search(matched_substring):
+                confidence = min(confidence, 0.4)
+            clean_text = _strip_first_occurrence(clean_text, matched_substring)
 
         # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
         if not parsed_datetime:
@@ -317,7 +409,18 @@ class InputParser:
                 # "horas") so it doesn't leak into clean_text — same words
                 # _AMBIGUOUS_HOUR_WORD_RE screens out of Stage 3 above.
                 r"\s*(?:час(?:а|ов)?|hours?|horas?)?"
-                r"(?:\s+(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
+                # A-06: \s* (not \s+) — when the час-word group above is
+                # absent (matches empty, e.g. "в 5 вечера" has no "час(а)"
+                # at all), the \s* right before it already greedily
+                # consumed the ONE separating space, leaving nothing left
+                # for a \s+ here to match and silently dropping the period
+                # word (and its AM/PM meaning) out of the whole match —
+                # "в 5 вечера" matched only "в 5", leaving group(3) empty,
+                # 17:00 misread as 05:00, and "вечера" leaking into
+                # clean_text. \s* accepts that already-consumed, now-empty
+                # gap just as well as a real one when a час-word WAS
+                # present and used its own trailing space.
+                r"(?:\s*(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
                 re.IGNORECASE,
             )
             hour_match = hour_pattern.search(normalized_text)
@@ -333,16 +436,21 @@ class InputParser:
                     parsed_datetime = result_dt
                     parse_source = "regex_hour"
                     confidence = 0.55
-                    match_str = hour_match.group(0)
-                    if match_str in clean_text:
-                        clean_text = clean_text.replace(match_str, "", 1)
+                    clean_text = _strip_first_occurrence(clean_text, hour_match.group(0))
 
         # Stage 4b — regex fallback: "через 15 минут", "через 2 часа", "через час", "через 2 дня"
         if not parsed_datetime:
             now = datetime.now(pytz.timezone(timezone))
             duration_match = re.search(
-                r"(?:через|dentro\s+de|en)\s+(\d+)?\s*"
-                r"(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки|minutos?|horas?|d[ií]as?)",
+                # A-06: a leading \b on the preposition, and a trailing
+                # (?!\w) on the unit word, stop this from firing on plain
+                # words that merely CONTAIN the pattern — "через 5 человек"
+                # used to match "через 5 ч" (the bare "ч" alternative is a
+                # prefix of "человек"), and "garden 2 horas" used to match
+                # "en 2 horas" (no boundary before "en", which is also the
+                # last two letters of "garden").
+                r"\b(?:через|dentro\s+de|en)\s+(\d+)?\s*"
+                r"(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки|minutos?|horas?|d[ií]as?)(?!\w)",
                 normalized_text,
                 re.IGNORECASE,
             )
@@ -357,8 +465,7 @@ class InputParser:
                     parsed_datetime = now + timedelta(days=amount)
                 parse_source = "regex_duration"
                 confidence = 0.5
-                if duration_match.group(0) in clean_text:
-                    clean_text = clean_text.replace(duration_match.group(0), "", 1)
+                clean_text = _strip_first_occurrence(clean_text, duration_match.group(0))
 
         # Stage 4c — regex fallback: "в 23 часа"
         if not parsed_datetime:
@@ -381,8 +488,7 @@ class InputParser:
                     parsed_datetime = result_dt
                     parse_source = "regex_hour_alt"
                     confidence = 0.5
-                    if hour_match.group(0) in clean_text:
-                        clean_text = clean_text.replace(hour_match.group(0), "", 1)
+                    clean_text = _strip_first_occurrence(clean_text, hour_match.group(0))
 
         # Stage 5 — final cleanup: strip dangling prepositions
         clean_text = re.sub(

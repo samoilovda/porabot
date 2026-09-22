@@ -139,7 +139,7 @@ EN: dict[str, Any] = {
     "find_no_results": "🔍 Nothing found for «{query}».",
     "find_no_results_filter": "🔍 No tasks match this filter.",
     "find_results_header": "🔍 *Results for «{query}»:*\n",
-    "find_truncated_notice": "Showing first {shown} of {total}.",
+    "find_truncated_notice": "Showing first {shown} of {total}\\.",
     "filter_header_today": "📅 *Today:*\n",
     "filter_header_week": "🗓 *This week:*\n",
     "filter_header_overdue": "⏰ *Overdue:*\n",
@@ -149,7 +149,7 @@ EN: dict[str, Any] = {
     "btn_filter_tags": "🏷 Tags",
     "tags_menu_title": "🏷 Pick a tag:",
     "no_tags_yet": "No tags yet. Add #tag to a task's text.",
-    "filter_header_tag": "🏷 *#{tag}:*\n",
+    "filter_header_tag": "🏷 *\\#{tag}:*\n",
 
     # Calendar feed (ICS) — 4.4
     "btn_ics_feed": "📅 Calendar feed",

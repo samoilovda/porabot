@@ -138,7 +138,7 @@ RU: dict[str, Any] = {
     "find_no_results": "🔍 Ничего не найдено по «{query}».",
     "find_no_results_filter": "🔍 По этому фильтру задач нет.",
     "find_results_header": "🔍 *Результаты по «{query}»:*\n",
-    "find_truncated_notice": "Показаны первые {shown} из {total}.",
+    "find_truncated_notice": "Показаны первые {shown} из {total}\\.",
     "filter_header_today": "📅 *Сегодня:*\n",
     "filter_header_week": "🗓 *Эта неделя:*\n",
     "filter_header_overdue": "⏰ *Просроченные:*\n",
@@ -148,7 +148,7 @@ RU: dict[str, Any] = {
     "btn_filter_tags": "🏷 Теги",
     "tags_menu_title": "🏷 Выбери тег:",
     "no_tags_yet": "Пока нет ни одного тега. Добавь #тег в текст задачи.",
-    "filter_header_tag": "🏷 *#{tag}:*\n",
+    "filter_header_tag": "🏷 *\\#{tag}:*\n",
 
     # Календарный фид (ICS) — 4.4
     "btn_ics_feed": "📅 Календарный фид",

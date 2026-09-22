@@ -141,7 +141,7 @@ ES.update(
         "find_no_results": "🔍 No se encontró nada para «{query}».",
         "find_no_results_filter": "🔍 No hay tareas que coincidan con este filtro.",
         "find_results_header": "🔍 *Resultados para «{query}»:*\n",
-        "find_truncated_notice": "Se muestran los primeros {shown} de {total}.",
+        "find_truncated_notice": "Se muestran los primeros {shown} de {total}\\.",
         "filter_header_today": "📅 *Hoy:*\n",
         "filter_header_week": "🗓 *Esta semana:*\n",
         "filter_header_overdue": "⏰ *Atrasadas:*\n",
@@ -151,7 +151,7 @@ ES.update(
         "btn_filter_tags": "🏷 Etiquetas",
         "tags_menu_title": "🏷 Elige una etiqueta:",
         "no_tags_yet": "Aún no hay etiquetas. Añade #etiqueta al texto de una tarea.",
-        "filter_header_tag": "🏷 *Etiqueta #{tag}:*\n",
+        "filter_header_tag": "🏷 *Etiqueta \\#{tag}:*\n",
 
         # Feed de calendario (ICS) — 4.4
         "btn_ics_feed": "📅 Feed de calendario",

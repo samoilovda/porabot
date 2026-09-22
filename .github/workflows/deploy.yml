@@ -5,11 +5,20 @@ on:
     branches:
       - main
 
+# A-30: a second push before a deploy finishes must not race it — cancel
+# the in-flight run for this branch instead of running two deploys
+# concurrently against the same VPS.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # A-01: scripts/scan_secrets.py's history scan needs full history, not the default shallow clone.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -24,13 +33,26 @@ jobs:
         env:
           BOT_TOKEN: "test-token"
         run: python -m pytest -q
+      # A-01: catches a secret landing in the tree at HEAD (the shape of
+      # leak that put a live BOT_TOKEN in README.md for ~4 months, see
+      # docs/audits/2026-07-27-gpt-audit.md and
+      # docs/audits/2026-09-22-audit.md#a-01). --no-history (current tree
+      # only) is deliberate here — the full `--no-history`-less history
+      # scan is for a one-off manual audit; gating every push on it would
+      # keep failing CI forever over the already-leaked-and-rotated token
+      # sitting in old commits, which nothing here can undo.
+      - name: Scan for leaked secrets (current tree)
+        run: python3 scripts/scan_secrets.py --no-history
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        # A-30: pinned by commit SHA (tag v1.0.3), not a mutable tag — a
+        # compromised/re-pushed tag on this third-party action would
+        # otherwise run arbitrary code with SSH access to the VPS.
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
@@ -39,7 +61,17 @@ jobs:
             # 1. Update the bot's source code
             cd ${{ secrets.PROJECT_PATH }}
             git pull origin main
-            
-            # 2. Switch to your orchestrator directory to restart the containers
+
+            # 2. Back up both SQLite databases before restarting the
+            # container on new code — see A-30/scripts/backup.sh. Best
+            # effort: a missing/older checkout without the script must not
+            # block the deploy, but a real backup failure should.
+            if [ -x scripts/backup.sh ]; then
+              cd "${{ secrets.ORCHESTRATOR_PATH }}"
+              "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data ./backups 14
+              cd "${{ secrets.PROJECT_PATH }}"
+            fi
+
+            # 3. Switch to your orchestrator directory to restart the containers
             cd ${{ secrets.ORCHESTRATOR_PATH }}
             docker compose up -d --build

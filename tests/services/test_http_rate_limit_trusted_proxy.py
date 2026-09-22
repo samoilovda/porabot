@@ -52,6 +52,33 @@ async def test_distinct_forwarded_for_ips_get_separate_limits_when_trusted() -> 
         await engine.dispose()
 
 
+async def test_client_cannot_spoof_the_limit_by_prefixing_a_fake_chain_entry() -> None:
+    """docs/audits/2026-09-22-audit.md#a-15 — nginx/Caddy's own
+    proxy_add_x_forwarded_for APPENDS the real peer address to whatever
+    chain the client already sent; a client sitting in front of the proxy
+    controls every entry except that last, proxy-appended one. Trusting
+    the FIRST entry (the old behavior) let a client dodge the limit
+    outright by sending a fresh fake value up front on every request —
+    only the LAST entry is the proxy's own and actually trustworthy."""
+    client, engine = await _make_client(trusted_proxy=True)
+    try:
+        for i in range(2):
+            # A different claimed client IP up front every time, but the
+            # SAME real address in the position the trusted proxy itself
+            # would have appended.
+            resp = await client.get(
+                "/ics/nonexistent.ics", headers={"X-Forwarded-For": f"{i}.{i}.{i}.{i}, 5.5.5.5"}
+            )
+            assert resp.status == 404
+        blocked = await client.get(
+            "/ics/nonexistent.ics", headers={"X-Forwarded-For": "9.9.9.9, 5.5.5.5"}
+        )
+        assert blocked.status == 429
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
 async def test_forwarded_for_is_ignored_when_proxy_not_trusted() -> None:
     """The default (TRUSTED_PROXY=False): a client-supplied
     X-Forwarded-For must not let it dodge the limit by claiming a fresh

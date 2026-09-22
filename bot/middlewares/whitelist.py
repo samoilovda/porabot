@@ -8,8 +8,10 @@ import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject, Update
 from aiogram.types import User as TgUser
+
+from bot.utils.telegram import inner_event
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +47,19 @@ class WhitelistMiddleware(BaseMiddleware):
                 "🚧 Porabot находится в режиме закрытого бета-тестирования. У вас пока нет доступа.\n"
                 "🚧 Porabot está en beta cerrada. Todavía no tienes acceso."
             )
-            if isinstance(event, Message):
-                await event.answer(msg)
-            elif isinstance(event, CallbackQuery):
-                await event.answer(msg, show_alert=True)
+            # A-24: this middleware is registered via dp.update.middleware()
+            # (see bot/__main__.py's commented-out registration point) —
+            # `event` is then always the raw Update, never the
+            # Message/CallbackQuery inside it, so isinstance(event, Message)/
+            # isinstance(event, CallbackQuery) were always False and this
+            # denial notice never actually sent (same dead-code shape
+            # RateLimitMiddleware had before its own 2.3 fix). Unwrap via
+            # inner_event instead.
+            target = inner_event(event) if isinstance(event, Update) else event
+            if isinstance(target, Message):
+                await target.answer(msg)
+            elif isinstance(target, CallbackQuery):
+                await target.answer(msg, show_alert=True)
             return None
 
         return await handler(event, data)

@@ -22,6 +22,14 @@ def get_l10n(language_code: Optional[str]) -> dict[str, Any]:
     return _LEXICONS.get(language_code, _LEXICONS[DEFAULT_LANG])
 
 
+# A-23: the set of language codes this bot actually has a lexicon for —
+# callback_set_lang (bot/handlers/commands.py) validates a client-supplied
+# set_lang_<code> callback against this instead of persisting any string
+# Telegram happens to hand back. Derived from _LEXICONS' own keys so a
+# future language added there is automatically accepted here too.
+SUPPORTED_LANGUAGES: frozenset[str] = frozenset(_LEXICONS.keys())
+
+
 # Main-menu button texts, keyed by lexicon key, one frozenset per button
 # holding that button's label in every supported language. Building these
 # from _LEXICONS instead of hardcoding literals means a wording/emoji change

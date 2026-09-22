@@ -14,7 +14,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_language_selection_keyboard, get_timezone_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard
-from bot.lexicon import get_l10n
+from bot.lexicon import SUPPORTED_LANGUAGES, get_l10n
 from bot.utils.markdown import escape_markdown
 
 router = Router(name="commands")
@@ -35,9 +35,21 @@ async def cmd_start(message: Message, state: FSMContext, user: User, l10n: dict[
 
 
 @router.callback_query(F.data.startswith("set_lang_"))
-async def callback_set_lang(callback: CallbackQuery, user_dao: UserDAO, user: User, state: FSMContext) -> None:
+async def callback_set_lang(
+    callback: CallbackQuery, user_dao: UserDAO, user: User, state: FSMContext, l10n: dict[str, Any]
+) -> None:
+    # A-23: callback_data is client-controlled — Telegram doesn't
+    # cryptographically bind it to the keyboard actually shown, so a
+    # forged "set_lang_<garbage>" must not persist an unsupported language
+    # code. A stored one falls back to Russian on every future get_l10n()
+    # call anyway (per DEFAULT_LANG), but silently — the user would see
+    # their language "change" to something that then never actually
+    # matches what they picked, with no error at all. Same defense-in-
+    # depth already applied to set_tz_<zone> in settings.py.
     is_onboarding = user.language is None
     lang_code = callback.data.split("set_lang_")[1]
+    if lang_code not in SUPPORTED_LANGUAGES:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     await user_dao.update_language(user.id, lang_code)
     user.language = lang_code
     new_l10n = get_l10n(lang_code)

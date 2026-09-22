@@ -409,7 +409,10 @@ async def callback_recovery_done_all(
         if task.is_recurring and task.rrule_string:
             try:
                 next_run_utc_naive = next_occurrence_utc(
-                    task.rrule_string, task.execution_time, user.timezone, now_utc.replace(tzinfo=None)
+                    task.rrule_string,
+                    getattr(task, "rrule_dtstart", None) or task.execution_time,  # A-02
+                    user.timezone,
+                    now_utc.replace(tzinfo=None),
                 )
             except Exception:
                 next_run_utc_naive = None
@@ -479,10 +482,14 @@ async def callback_recovery_snooze_all(
     # mutated, out of sync with their now-reverted rows).
     new_time = datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1)
     for task in overdue:
-        # For habit-like recurring reminders, do not overwrite execution_time —
-        # it anchors the rrule so the next day's occurrence stays on the correct
-        # original time. Only reschedule the current job.
-        if not (_is_habit_like(task) and task.is_recurring):
+        # A-02/A-03: for ANY recurring task (not just habit-like — see
+        # reminders_snooze.py's quick-snooze handler for the same
+        # widening), do not overwrite execution_time. The series is
+        # anchored on rrule_dtstart now, not execution_time — but
+        # overwriting it here would still show the wrong "next due" time
+        # everywhere else (task list, briefs) until the next fire recomputes
+        # it. Only reschedule the current job.
+        if not task.is_recurring:
             task.execution_time = new_time
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None

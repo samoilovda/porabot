@@ -130,6 +130,10 @@ class ReminderDAO(BaseDAO[Reminder]):
             is_fluid_habit=is_fluid_habit,
             fluid_mode=fluid_mode,
             habit_active_due_at=execution_time if is_habit else None,
+            # A-02: the series' fixed anchor — see Reminder.rrule_dtstart's
+            # docstring. Only meaningful (and only set) for a recurring
+            # reminder with an actual rule; NULL for a plain one-off.
+            rrule_dtstart=execution_time if (is_recurring and rrule_string) else None,
             is_nagging=is_nagging,
             nagging_max_repeats=nagging_max_repeats,
             tags=tags,

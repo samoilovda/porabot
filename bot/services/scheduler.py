@@ -249,7 +249,10 @@ class SchedulerService:
                             user_tz = user_tz_map.get(reminder.user_id, "UTC")
                             try:
                                 next_run_utc_naive = next_occurrence_utc(
-                                    reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
+                                    reminder.rrule_string,
+                                    getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+                                    user_tz,
+                                    now_utc_naive,
                                 )
                             except (ValueError, TypeError) as e:
                                 logger.error(
@@ -715,7 +718,7 @@ class SchedulerService:
                     try:
                         next_run_utc_naive = next_occurrence_utc(
                             reminder.rrule_string,
-                            reminder.execution_time,
+                            getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
                             user.timezone,
                             now_utc_naive,
                         )
@@ -734,6 +737,7 @@ class SchedulerService:
                         logger.error("Invalid rrule for reminder %s: %s — disabling recurrence.", reminder_id, e)
                         reminder.is_recurring = False
                         reminder.rrule_string = None
+                        reminder.rrule_dtstart = None
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))

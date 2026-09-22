@@ -21,7 +21,6 @@ from aiogram.types import Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
-from bot.database.models import is_habit_like as _is_habit_like
 from bot.keyboards.inline import (
     TASKS_PAGE_SIZE,
     get_edit_keyboard,
@@ -170,6 +169,19 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return base
 
 
+def _rrule_base_key(rrule_string: Optional[str]) -> tuple:
+    """*rrule_string* with COUNT=/UNTIL= stripped, as a hashable key — two
+    rrule strings that only differ by their end-condition compare equal.
+    Used by _apply_repeat_change (A-02) to tell "the user picked a new base
+    pattern" (reset the series anchor) apart from "the user only changed
+    when this same pattern stops" (keep counting COUNT= from where the
+    series actually started)."""
+    parts = _parse_rrule_parts(rrule_string or "")
+    parts.pop("COUNT", None)
+    parts.pop("UNTIL", None)
+    return tuple(sorted(parts.items()))
+
+
 async def _apply_repeat_change(
     reminder,
     user: User,
@@ -183,8 +195,20 @@ async def _apply_repeat_change(
     rrb_* repeat-builder callback in reminders_repeat.py goes through via
     _apply_and_refresh, so fixing commit-before-reply here covers all of
     them at once (2.2)."""
+    # A-02: reset the series anchor (rrule_dtstart) only when the BASE
+    # pattern actually changes (including off->on) — an end-condition-only
+    # tweak (rrb_endcount_/rrb_enduntil_/rrb_endnone_, which strip and
+    # rebuild on top of the existing base via _strip_end_condition) must
+    # keep counting COUNT= from the series' true start, not restart it from
+    # "now" on every such tweak.
+    old_base = _rrule_base_key(reminder.rrule_string) if reminder.is_recurring else None
+    new_base = _rrule_base_key(rrule_string) if is_recurring else None
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
+    if not is_recurring:
+        reminder.rrule_dtstart = None
+    elif getattr(reminder, "rrule_dtstart", None) is None or old_base != new_base:
+        reminder.rrule_dtstart = reminder.execution_time
     await reminder_dao.session.flush()
     try:
         _reschedule_current_execution(reminder, user, scheduler_service)
@@ -243,7 +267,10 @@ def _reschedule_current_execution(reminder, user: User, scheduler_service: Sched
     if reminder.is_recurring and reminder.rrule_string:
         try:
             next_run_utc_naive = next_occurrence_utc(
-                reminder.rrule_string, reminder.execution_time, user.timezone, now.replace(tzinfo=None)
+                reminder.rrule_string,
+                getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+                user.timezone,
+                now.replace(tzinfo=None),
             )
         except (ValueError, TypeError):
             next_run_utc_naive = None
@@ -453,7 +480,11 @@ async def _save_and_show_edit(
             new_reminder.tags = tags_csv
             new_reminder.priority = priority
             is_snooze_mode = bool(data.get("is_snooze_mode", False))
-            if not (is_snooze_mode and _is_habit_like(new_reminder) and new_reminder.is_recurring):
+            # A-02/A-03: same widening as reminders_snooze.py's quick-snooze
+            # handler — ANY recurring reminder's execution_time must stay
+            # untouched by a snooze (custom "own time" included here), not
+            # just a habit-like one. See Reminder.rrule_dtstart's docstring.
+            if not (is_snooze_mode and new_reminder.is_recurring):
                 new_reminder.execution_time = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1

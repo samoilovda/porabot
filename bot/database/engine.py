@@ -221,6 +221,35 @@ async def init_db(engine: AsyncEngine) -> None:
 
         await _run_once(conn, "backfill_last_fired_at_v1", _backfill_last_fired_at)
 
+        # A-02: seed rrule_dtstart for every recurring reminder that
+        # predates this column — the best available anchor for a legacy
+        # row is its current execution_time (the same fallback every
+        # next_occurrence_utc call site uses for a still-NULL value, so
+        # this backfill just makes that fallback permanent instead of
+        # re-evaluated, and drifting, on every future fire). Guarded by
+        # _run_once, not a plain WHERE rrule_dtstart IS NULL run on every
+        # startup: a legitimately-NULL rrule_dtstart on a NON-recurring
+        # reminder must stay NULL forever, not get backfilled the first
+        # time that reminder is (still) non-recurring at some later boot.
+        async def _backfill_rrule_dtstart() -> None:
+            try:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        text(
+                            """
+                            UPDATE reminders
+                            SET rrule_dtstart = execution_time
+                            WHERE rrule_dtstart IS NULL
+                              AND COALESCE(is_recurring, 0) = 1
+                              AND rrule_string IS NOT NULL
+                            """
+                        )
+                    )
+            except (OperationalError, ProgrammingError):
+                pass
+
+        await _run_once(conn, "backfill_rrule_dtstart_v1", _backfill_rrule_dtstart)
+
         # PRAGMA foreign_keys=ON (see create_engine) only enforces
         # constraints on future writes — it never retroactively validates
         # rows that already exist. Surface any pre-existing orphan here as a

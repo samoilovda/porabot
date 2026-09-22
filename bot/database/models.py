@@ -251,6 +251,23 @@ class Reminder(Base):
     # Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
     rrule_string: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # A-02: the RRULE series' own fixed DTSTART (naive UTC), independent of
+    # execution_time. Before this column existed, every next_occurrence_utc
+    # call anchored the series on the CURRENT execution_time — which
+    # advances on every fire (and, worse, on every snooze) — so a
+    # "COUNT=3" repeat's count restarted from whatever cycle happened to be
+    # current instead of counting from the series' true start, and never
+    # actually stopped after 3 occurrences. Set once when a repeat rule is
+    # first applied (ReminderDAO.create_reminder,
+    # reminders_shared._apply_repeat_change) and never touched again by a
+    # fire or a snooze — see next_occurrence_utc's call sites, all of which
+    # now pass this instead of execution_time. NULL for a non-recurring
+    # reminder, or for a legacy recurring row from before this column
+    # existed until the one-time backfill in engine.py's init_db runs
+    # (falls back to execution_time at that point, same as every call site
+    # falls back to execution_time when this is still NULL).
+    rrule_dtstart: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Habit streak tracking.
     habit_streak_current: Mapped[int] = mapped_column(
         Integer,

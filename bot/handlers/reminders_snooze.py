@@ -20,7 +20,6 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
-from bot.database.models import is_habit_like as _is_habit_like
 from bot.keyboards.inline import get_snooze_keyboard, get_time_selection_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -99,13 +98,19 @@ async def callback_snooze_act(
 
     new_time_utc_naive = to_utc_naive(new_time)
 
-    # For habit-like recurring reminders, we must NOT overwrite execution_time.
-    # The scheduler uses execution_time as the rrule dtstart to compute the NEXT
-    # day's occurrence after the reminder fires. Overwriting it here would cause
-    # every snooze to permanently shift all future occurrences (drift bug).
-    # Instead, we only reschedule the current APScheduler job to fire later.
-    is_habit_recurring = _is_habit_like(reminder) and reminder.is_recurring
-    if not is_habit_recurring:
+    # A-02/A-03: for ANY recurring reminder (not just habit-like — that
+    # restriction was the actual bug), we must NOT overwrite
+    # execution_time. The scheduler now anchors the rrule on the separate,
+    # never-touched rrule_dtstart (see Reminder.rrule_dtstart's docstring)
+    # rather than execution_time, so overwriting execution_time here is no
+    # longer strictly required to prevent permanent drift the way it used
+    # to be — but it's still the right behavior: a snooze changes when
+    # TODAY's cycle fires, not the series' own schedule, and leaving
+    # execution_time at whatever the scheduler already advanced it to
+    # keeps daily briefs/the task list showing the correct upcoming
+    # occurrence instead of today's now-superseded snoozed time. Instead,
+    # we only reschedule the current APScheduler job to fire later.
+    if not reminder.is_recurring:
         reminder.execution_time = new_time_utc_naive
 
     reminder.last_nag_chat_id = None

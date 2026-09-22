@@ -395,7 +395,10 @@ async def callback_done_skip_next(
 
     try:
         next_run_utc_naive = next_occurrence_utc(
-            reminder.rrule_string, reminder.execution_time, user.timezone, reminder.execution_time
+            reminder.rrule_string,
+            getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+            user.timezone,
+            reminder.execution_time,
         )
         if not next_run_utc_naive:
             return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)

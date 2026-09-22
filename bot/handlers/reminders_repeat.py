@@ -7,8 +7,10 @@ module docstring for the full module family and why).
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from typing import Any, Optional
 
+import pytz
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -422,7 +424,14 @@ async def state_rrb_end_until(
         parsed_date = datetime.strptime(raw, "%d.%m.%Y").date()
     except ValueError:
         pass
-    today_local = datetime.now(timezone.utc).date()
+    # A-04: the user's own local "today", not the server's UTC date — a
+    # user east of UTC could otherwise have their local "today" rejected
+    # as not-in-the-future for another several hours.
+    try:
+        tz = pytz.timezone(user.timezone)
+    except Exception:
+        tz = pytz.UTC
+    today_local = datetime.now(tz).date()
     if parsed_date is None or parsed_date <= today_local:
         await message.answer(l10n.get("repeat_end_date_invalid", "❌ Send a future date as DD.MM.YYYY."))
         return
@@ -433,7 +442,18 @@ async def state_rrb_end_until(
         await message.answer(l10n["item_not_found"])
         return
     base = _strip_end_condition(reminder.rrule_string)
-    rrule = f"{base};UNTIL={parsed_date.strftime('%Y%m%d')}"
+    # A-04: UNTIL=<bare YYYYMMDD> is a DATE value, which dateutil/iCalendar
+    # treats as exactly 00:00:00 that day — a reminder due later THAT SAME
+    # day (the common case: someone picking "repeat until the 30th" almost
+    # always means through the end of the 30th) fell just past the
+    # deadline and got silently dropped from the series one day early.
+    # UNTIL is a DATE-TIME instead here, set to the end of the chosen
+    # local day. No "Z"/UTC marker: next_occurrence_utc always builds this
+    # rule's DTSTART as a NAIVE LOCAL datetime (see its own docstring), and
+    # dateutil requires UNTIL's awareness to match DTSTART's exactly — a
+    # UTC-marked UNTIL against a naive-local DTSTART raises ValueError.
+    until_local_end_of_day = datetime.combine(parsed_date, dt_time(23, 59, 59))
+    rrule = f"{base};UNTIL={until_local_end_of_day.strftime('%Y%m%dT%H%M%S')}"
     ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
     if not ok:
         await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))

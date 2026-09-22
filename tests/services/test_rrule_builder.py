@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.handlers.reminders import (
@@ -19,10 +20,12 @@ from bot.handlers.reminders import (
     callback_rrb_toggle_weekday,
     callback_rrb_weekday_done,
     state_rrb_end_count,
+    state_rrb_end_until,
     state_rrb_monthday,
 )
 from bot.lexicon.ru import RU
 from bot.services.scheduler import SchedulerService
+from bot.utils.time_ext import next_occurrence_utc
 
 
 def _reminder(**overrides):
@@ -203,3 +206,62 @@ async def test_end_condition_none_strips_count_and_until() -> None:
     await callback_rrb_end_none(_callback("rrb_endnone_1"), dao, service, user, RU)
 
     assert reminder.rrule_string == "FREQ=DAILY"
+
+
+# ---------------------------------------------------------------------------
+# docs/audits/2026-09-22-audit.md#a-04 — UNTIL=<bare YYYYMMDD> is a DATE
+# value: dateutil/iCalendar treats it as exactly 00:00:00 that day, so a
+# reminder due LATER that same day (the last day the user meant to
+# include) fell just past the deadline and silently dropped a day early.
+# Also: "today" for the future-date validation must be the user's own
+# local date, not the server's UTC one.
+# ---------------------------------------------------------------------------
+
+async def test_end_condition_until_includes_the_chosen_final_day() -> None:
+    reminder = _reminder(is_recurring=True, rrule_string="FREQ=DAILY")
+    dao = _dao(reminder)
+    scheduler = AsyncIOScheduler()
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=None)
+    state = FakeFSM(data={"rrb_reminder_id": 1})
+    user = SimpleNamespace(id=1, timezone="Europe/Moscow")
+    future_date = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%d.%m.%Y")
+    message = SimpleNamespace(text=future_date, answer=AsyncMock())
+
+    await state_rrb_end_until(message, state, dao, service, user, RU)
+
+    assert reminder.rrule_string.startswith("FREQ=DAILY;UNTIL=")
+    # A 09:00-local daily reminder anchored well before the chosen end date
+    # must still have an occurrence ON that end date itself.
+    dtstart = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    dtstart = dtstart.replace(hour=9, minute=0, second=0, microsecond=0)
+    end_date = datetime.strptime(future_date, "%d.%m.%Y").date()
+    last_occurrence = None
+    cursor = dtstart
+    for _ in range(60):
+        nxt = next_occurrence_utc(reminder.rrule_string, dtstart, "Europe/Moscow", cursor)
+        if nxt is None:
+            break
+        last_occurrence = nxt
+        cursor = nxt
+    assert last_occurrence is not None
+    tz = pytz.timezone("Europe/Moscow")
+    last_occurrence_local_date = pytz.UTC.localize(last_occurrence).astimezone(tz).date()
+    assert last_occurrence_local_date == end_date
+
+
+async def test_end_condition_until_rejects_a_date_in_the_past_using_user_local_today() -> None:
+    reminder = _reminder(is_recurring=True, rrule_string="FREQ=DAILY")
+    dao = _dao(reminder)
+    scheduler = AsyncIOScheduler()
+    service = SchedulerService(scheduler, bot=SimpleNamespace(), session_pool=None)
+    state = FakeFSM(data={"rrb_reminder_id": 1})
+    user = SimpleNamespace(id=1, timezone="UTC")
+    today = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    message = SimpleNamespace(text=today, answer=AsyncMock())
+
+    await state_rrb_end_until(message, state, dao, service, user, RU)
+
+    # Today itself is not "a future date" — must be rejected, not silently
+    # accepted as an already-expired series.
+    assert reminder.rrule_string == "FREQ=DAILY"
+    message.answer.assert_awaited_once()

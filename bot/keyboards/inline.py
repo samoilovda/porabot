@@ -876,13 +876,19 @@ def get_settings_keyboard(
         )
     )
 
-    # 4.4: read-only .ics calendar feed link.
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_ics_feed", "📅 Calendar feed"),
-            callback_data="settings_ics_feed",
+    # 4.4: read-only .ics calendar feed link. A-17: shown only once the
+    # web server that actually serves it is both enabled and reachable
+    # from a real address — otherwise this button generates a feed token
+    # and shows the user a URL under http://localhost:{WEB_SERVER_PORT}
+    # that is not reachable from anywhere outside this host, same "don't
+    # ship a button that can never work" reasoning as MINI_APP_URL below.
+    if config.WEB_SERVER_ENABLED and config.PUBLIC_BASE_URL:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_ics_feed", "📅 Calendar feed"),
+                callback_data="settings_ics_feed",
+            )
         )
-    )
 
     # 4.6: Mini App entry point — only shown once a real MINI_APP_URL is
     # configured (see bot/config.py). web_app buttons require an https://

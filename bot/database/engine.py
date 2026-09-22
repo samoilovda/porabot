@@ -137,6 +137,34 @@ async def _add_column_if_missing(conn, table: str, column) -> None:
         await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column_ddl}"))
 
 
+async def _add_index_if_missing(conn, table: str, index) -> None:
+    """CREATE [UNIQUE] INDEX for *index* (a live SQLAlchemy Index from
+    Base.metadata), but only if a table doesn't already have an index with
+    that name — the same "read the model, don't hand-maintain a second
+    copy of the DDL" shape _add_column_if_missing already uses for columns
+    (A-26: added for User.ics_feed_token's new unique index, but generic
+    over every Index declared in models.py's __table_args__).
+    """
+    from sqlalchemy import inspect
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+    from sqlalchemy.schema import CreateIndex
+
+    existing_indexes = await conn.run_sync(
+        lambda sync_conn: {ix["name"] for ix in inspect(sync_conn).get_indexes(table)}
+    )
+    if index.name in existing_indexes:
+        return
+    try:
+        await conn.execute(CreateIndex(index))
+    except (OperationalError, ProgrammingError) as e:
+        # Most likely cause on an existing deployment: pre-existing
+        # duplicate values under a newly-unique index. Loud, not silently
+        # swallowed forever — surfaces on every startup until a human
+        # de-duplicates the offending rows, same spirit as init_db's own
+        # foreign_key_check warning below.
+        logger.warning("Could not create index %s on %s: %s", index.name, table, e)
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """Create all tables defined in models.py. Call once at startup."""
     from sqlalchemy import text
@@ -161,6 +189,8 @@ async def init_db(engine: AsyncEngine) -> None:
         for table in Base.metadata.tables.values():
             for column in table.columns:
                 await _add_column_if_missing(conn, table.name, column)
+            for index in table.indexes:
+                await _add_index_if_missing(conn, table.name, index)
 
         # Backfill legacy habits created before `is_habit` existed.
         # Heuristic: daily recurring + nagging reminders were produced by Habits

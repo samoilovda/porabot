@@ -57,6 +57,15 @@ class User(Base):
     __table_args__ = (
         Index('idx_users_timezone', 'timezone'),      # For timezone-based queries
         Index('idx_users_language', 'language'),      # For language filtering
+        # A-26: UserDAO.get_by_ics_feed_token's "exactly one user per
+        # token" contract was never actually enforced at the DB level —
+        # just assumed from secrets.token_urlsafe(24)'s collision
+        # probability. A UNIQUE index turns that assumption into a real
+        # guarantee (and makes the lookup an index seek instead of a full
+        # scan). SQLite allows multiple NULLs in a UNIQUE index — the
+        # common case for a user who's never opened the feed-link screen
+        # — so this can't conflict with the column's own nullable=True.
+        Index('uq_users_ics_feed_token', 'ics_feed_token', unique=True),
     )
 
     # Telegram user ID - NOT auto-incremented, must be set from update!

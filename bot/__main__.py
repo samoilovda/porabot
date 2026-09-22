@@ -450,7 +450,8 @@ async def main() -> None:
     # this, a group the bot is in (or one with privacy mode off) hits the
     # exact same free-text-parses-as-task flow a DM does, notifying a
     # chat_id the member may never have opened with the bot.
-    dp.update.middleware(PrivateChatOnlyMiddleware())
+    private_chat_only_middleware = PrivateChatOnlyMiddleware()
+    dp.update.middleware(private_chat_only_middleware)
     rate_limit_middleware = RateLimitMiddleware()
     dp.update.middleware(rate_limit_middleware)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
@@ -462,6 +463,16 @@ async def main() -> None:
         "interval",
         minutes=10,
         id="cleanup_rate_limit_hits",
+        replace_existing=True,
+        jobstore="memory",
+    )
+    # A-25: same "don't grow forever" reasoning as cleanup_rate_limit_hits,
+    # for PrivateChatOnlyMiddleware's per-chat renotify-cooldown dict.
+    scheduler.add_job(
+        private_chat_only_middleware.cleanup_expired,
+        "interval",
+        minutes=10,
+        id="cleanup_private_chat_only_notices",
         replace_existing=True,
         jobstore="memory",
     )

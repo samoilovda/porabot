@@ -21,6 +21,7 @@ from bot.handlers.reminders_shared import (
     _MAX_INPUT,
     _MENU_TEXTS,
     _handle_parsed_result,
+    _parse_id_suffix,
     _reset_auto_delete,
     _save_and_show_edit,
 )
@@ -290,7 +291,9 @@ async def callback_edit_edit(
     callback: CallbackQuery, reminder_dao: ReminderDAO, state: FSMContext, l10n: dict[str, Any], user: User
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_edit_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "edit_edit_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)

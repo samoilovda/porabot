@@ -22,6 +22,7 @@ from bot.handlers.reminders_shared import (
     _RRULE_WEEKDAY_CODES,
     _apply_repeat_change,
     _message_task_key,
+    _parse_id_suffix,
     _parse_rrule_parts,
     _remove_keyboard_after_delay,
     _render_repeat_builder,
@@ -53,7 +54,12 @@ logger = logging.getLogger(__name__)
 # open "⏳ End: ..." to layer a COUNT= or UNTIL= on top of it.
 
 async def _get_owned_or_alert(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any], prefix: str):
-    reminder_id = int(callback.data.split(prefix)[1])
+    # A-22: this helper backs ~11 rrb_*/edit_repeat_menu_ callbacks — a
+    # single guard here covers all of them.
+    reminder_id = _parse_id_suffix(callback.data, prefix)
+    if reminder_id is None:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return None
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -492,7 +498,9 @@ async def callback_edit_nagging(
     user: User, l10n: dict[str, Any]
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_toggle_nagging_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "edit_toggle_nagging_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)

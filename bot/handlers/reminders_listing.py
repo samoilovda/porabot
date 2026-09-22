@@ -32,6 +32,7 @@ from bot.handlers.reminders_shared import (
     _format_task_line_md2,
     _message_task_key,
     _paginate_tasks_for_list,
+    _parse_id_suffix,
     _remove_keyboard_after_delay,
     _render_tasks_list_text,
     _reschedule_current_execution,
@@ -64,7 +65,9 @@ logger = logging.getLogger(__name__)
 async def callback_task_settings(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    reminder_id = int(callback.data.split("task_settings_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "task_settings_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -87,7 +90,9 @@ async def callback_delete_task(
     callback: CallbackQuery, reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
 ) -> None:
-    task_id = int(callback.data.split("del_task_")[1])
+    task_id = _parse_id_suffix(callback.data, "del_task_")
+    if task_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(task_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -113,7 +118,9 @@ async def callback_undo_delete(
     callback: CallbackQuery, reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
 ) -> None:
-    reminder_id = int(callback.data.split("undo_del_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "undo_del_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
 
     reminder = await reminder_dao.get_owned(reminder_id, user.id, include_pending_delete=True)
     if not reminder:
@@ -523,7 +530,9 @@ async def callback_edit_set_nag_limit(
     callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_set_nag_limit_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "edit_set_nag_limit_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)

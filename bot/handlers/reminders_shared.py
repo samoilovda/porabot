@@ -320,6 +320,27 @@ def _render_tasks_list_text(shown_tasks: list, user: User, l10n: dict[str, Any],
     return "\n".join(lines)
 
 
+def _parse_id_suffix(data: str, prefix: str) -> Optional[int]:
+    """A-22: parse the trailing "<prefix><id>" shape most callback_data
+    values in this codebase use (e.g. "del_task_42" with prefix
+    "del_task_"), returning None instead of raising on a malformed value.
+
+    callback_data is client-controlled — Telegram doesn't cryptographically
+    bind it to the keyboard actually shown, so a forged or a stale value
+    from an old message (edited keyboard, changed id scheme, ...) must not
+    crash the handler. Before this helper existed, roughly a dozen call
+    sites did a bare `int(callback.data.split(prefix)[1])` with no guard —
+    an uncaught IndexError/ValueError there propagated all the way to
+    bot/__main__.py's handle_dispatcher_error, which shows the user a
+    generic "❌ Something went wrong" alert instead of the specific,
+    already-existing "invalid_action" one every guarded call site uses.
+    """
+    try:
+        return int(data.split(prefix)[1])
+    except (IndexError, ValueError):
+        return None
+
+
 def _message_task_key(message: Message) -> tuple[int, int]:
     """Use chat+message id to avoid cross-chat key collisions."""
     return (message.chat.id, message.message_id)

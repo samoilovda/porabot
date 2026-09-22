@@ -19,7 +19,7 @@ from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import ReminderKind, User
 from bot.database.models import is_habit_like as _is_habit_like
-from bot.handlers.reminders_shared import _pick_done_reply
+from bot.handlers.reminders_shared import _parse_id_suffix, _pick_done_reply
 from bot.keyboards.inline import get_done_followup_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -344,7 +344,9 @@ async def callback_done_note(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_note_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "done_note_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -388,7 +390,9 @@ async def callback_done_skip_next(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_skip_next_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "done_skip_next_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder or not reminder.is_recurring or not reminder.rrule_string:
         return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)

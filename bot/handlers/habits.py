@@ -22,6 +22,7 @@ from bot.database.models import (
 from bot.handlers.reminders import (
     _UNDO_DELETE_WINDOW,
     _message_task_key,
+    _parse_id_suffix,
     _remove_keyboard_after_delay,
     _soft_delete_reminder,
     active_auto_delete_tasks,
@@ -776,7 +777,10 @@ async def cb_del_habit(
     sweep hard-deletes both the reminder and its habit_events once the
     undo window elapses, restart-safe by construction.
     """
-    task_id = int(callback.data.split("_")[-1])
+    task_id = _parse_id_suffix(callback.data, "del_habit_")
+    if task_id is None:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
     reminder = await reminder_dao.get_owned(task_id, user.id)
     if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)

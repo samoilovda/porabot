@@ -17,7 +17,7 @@ from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.models import Reminder, ReminderKind, User
-from bot.utils.markdown import escape_markdown
+from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.pagination import limit_items, preview_line
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,9 @@ async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
     """Send a report message, suppressing bot-blocked / bad-request errors.
 
     Returns True if this outcome is final (delivered, blocked, or a bad
-    payload) — False only for a retryable failure. See
-    daily_briefs._send_safe for the rationale."""
+    payload even after the plain-text retry) — False only for a retryable
+    failure. See daily_briefs._send_safe for the rationale.
+    """
     try:
         await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
         return True
@@ -42,8 +43,19 @@ async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
         logger.warning("User %s has blocked the bot — skipping habit report.", user_id)
         return True
     except TelegramBadRequest as e:
-        logger.error("Bad request sending habit report to %s: %s", user_id, e)
-        return True
+        # A-21: unlike daily_briefs/missed_recovery's own _send_safe, this
+        # used to give up outright on a Markdown parse failure instead of
+        # falling back to plain text — a single stray unescaped character
+        # anywhere in a habit name (user-controlled text) silently dropped
+        # the ENTIRE weekly/monthly report for that user, with nothing
+        # else ever retrying it.
+        logger.error("Bad request sending habit report to %s: %s — retrying without Markdown.", user_id, e)
+        try:
+            await bot.send_message(chat_id=user_id, text=strip_markdown_escapes(text), parse_mode=None)
+            return True
+        except Exception as retry_e:
+            logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
+            return True
     except Exception as e:
         logger.error("Failed to send habit report to %s: %s", user_id, e, exc_info=True)
         return False

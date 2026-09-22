@@ -101,6 +101,34 @@ async def remove_orphan_scheduler_jobs_job() -> None:
     await ctx.scheduler.remove_orphan_scheduler_jobs()
 
 
+async def reconcile_jobs_with_db_job() -> None:
+    """A-11: periodic wrapper for SchedulerService.reconcile_jobs_with_db,
+    same reasoning and module-level-function requirement as
+    remove_orphan_scheduler_jobs_job above (a persisted bound-method job
+    would try to pickle the whole SchedulerService, including its own
+    live AsyncIOScheduler, which explicitly refuses to be pickled).
+
+    reconcile_jobs_with_db used to run only once, at startup — the one
+    place a pending reminder can end up with no scheduler job at all
+    (after downtime spanning a misfire window, or a jobstore reset) is NOT
+    limited to "the process just started": once exhausted,
+    _schedule_send_retry/schedule_execution_retry's own backoff (see their
+    docstrings) explicitly gives up and leaves the reminder for this exact
+    function to pick back up — but a process that stays up for days
+    between deploys would otherwise never run it again, leaving such a
+    reminder (and, worse, every future occurrence of a RECURRING one)
+    silently dead until the next restart. Runs hourly, alongside — and
+    for the same "the jobstore is a cache derived from the DB, not the
+    source of truth" reason as — remove_orphan_scheduler_jobs_job.
+    """
+    try:
+        ctx = _get_context()
+    except RuntimeError:
+        logger.error("Cannot reconcile scheduler jobs: AppContext not set.")
+        return
+    await ctx.scheduler.reconcile_jobs_with_db()
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------

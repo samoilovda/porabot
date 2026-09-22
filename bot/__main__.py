@@ -43,7 +43,7 @@ from bot.services.habit_reports import setup_habit_reports
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.retention_cleanup import setup_retention_cleanup
-from bot.services.scheduler import SchedulerService, remove_orphan_scheduler_jobs_job
+from bot.services.scheduler import SchedulerService, reconcile_jobs_with_db_job, remove_orphan_scheduler_jobs_job
 from bot.services.webserver import HTTP_RATE_LIMITER_KEY, create_app, start_web_server
 
 
@@ -475,6 +475,22 @@ async def main() -> None:
 
     scheduler.start()
     await scheduler_service.reconcile_jobs_with_db()
+    # A-11: also run hourly, not just once at startup — the one place a
+    # pending reminder ends up with no scheduler job at all (a misfire
+    # window during downtime, a jobstore reset, or a delivery retry chain
+    # exhausting its own backoff — see SEND_RETRY_BACKOFF_MINUTES's
+    # docstring) isn't limited to "the process just started". A
+    # long-lived process between deploys used to never notice until its
+    # next restart, leaving such a reminder (and every future occurrence
+    # of a recurring one) silently dead until then.
+    scheduler.add_job(
+        reconcile_jobs_with_db_job,
+        "interval",
+        hours=1,
+        id="reconcile_jobs_with_db",
+        replace_existing=True,
+        jobstore="memory",
+    )
     # 2.5: the jobstore is a cache derived from the DB, not the source of
     # truth — this is the symmetric "remove what shouldn't be there any
     # more" counterpart to reconcile_jobs_with_db's "add what's missing",

@@ -16,7 +16,7 @@ keep both tables bounded relative to their growth rate.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from bot.database.models import HabitEvent, Reminder
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # "now" from the pruned history, and the score can shift measurably. That
 # is an accepted tradeoff of calendar-age-based retention — such a habit
 # is effectively being scored fresh from its recent restart anyway. See
-# bot/services/test_retention_cleanup.py for a test against the
+# tests/services/test_retention_cleanup.py for a test against the
 # continuous-activity case this reasoning actually covers.
 HABIT_EVENT_RETENTION_DAYS = 400
 
@@ -65,22 +65,37 @@ async def process_retention_cleanup() -> None:
 
     try:
         async with session_pool_factory() as session:
-            deleted_events = await session.execute(
-                delete(HabitEvent).where(HabitEvent.created_at < habit_event_cutoff)
+            reminder_delete_criteria = (
+                Reminder.status == "completed",
+                Reminder.is_recurring.is_(False),
+                Reminder.completed_at.is_not(None),
+                Reminder.completed_at < reminder_cutoff,
             )
-            deleted_reminders = await session.execute(
-                delete(Reminder).where(
-                    Reminder.status == "completed",
-                    Reminder.is_recurring.is_(False),
-                    Reminder.completed_at.is_not(None),
-                    Reminder.completed_at < reminder_cutoff,
-                )
+            # A-12: a habit whose repeat was later turned off via the
+            # settings gear (rrb_none) becomes is_recurring=False while
+            # still owning habit_events — some possibly well within
+            # HABIT_EVENT_RETENTION_DAYS. Deleting THOSE reminders below
+            # would violate the reminders.habit_events foreign key
+            # (PRAGMA foreign_keys=ON, see engine.py's create_engine)
+            # unless their events are removed first, regardless of the
+            # events' own age — this predates and is independent of the
+            # age-based habit_event pruning further down, which only ever
+            # touches events belonging to reminders NOT being deleted here.
+            reminder_ids_to_delete = select(Reminder.id).where(*reminder_delete_criteria)
+            deleted_events_for_deleted_reminders = await session.execute(
+                delete(HabitEvent).where(HabitEvent.reminder_id.in_(reminder_ids_to_delete))
+            )
+            deleted_reminders = await session.execute(delete(Reminder).where(*reminder_delete_criteria))
+            deleted_events_by_age = await session.execute(
+                delete(HabitEvent).where(HabitEvent.created_at < habit_event_cutoff)
             )
             await session.commit()
             logger.info(
-                "Retention cleanup: removed %s habit_events (>%sd old), %s completed one-off reminders (>%sd old).",
-                deleted_events.rowcount,
+                "Retention cleanup: removed %s habit_events (>%sd old) + %s habit_events "
+                "of %s completed one-off reminders (>%sd old).",
+                deleted_events_by_age.rowcount,
                 HABIT_EVENT_RETENTION_DAYS,
+                deleted_events_for_deleted_reminders.rowcount,
                 deleted_reminders.rowcount,
                 COMPLETED_REMINDER_RETENTION_DAYS,
             )

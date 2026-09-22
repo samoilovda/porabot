@@ -258,6 +258,7 @@ ES.update(
         "btn_done": "✅ Hecho",
         "btn_not_today": "🚫 Hoy no",
         "btn_not_done": "🚫 Ya no aplica",
+        "not_relevant_saved": "🚫 Marcado como no relevante. La serie continúa según lo previsto.",
         "btn_done_short": "✅ Sí",
         "btn_not_done_short": "❌ No",
         "wrapup_task_hint": "Tarea del resumen nocturno",

@@ -266,6 +266,7 @@ EN: dict[str, Any] = {
     "btn_done": "✅ Done",
     "btn_not_today": "🚫 Not today",
     "btn_not_done": "🚫 No longer relevant",
+    "not_relevant_saved": "🚫 Marked as not relevant. The series continues on schedule.",
     "btn_done_short": "✅ Done",
     "btn_not_done_short": "❌ Not done",
     "wrapup_task_hint": "Task from evening wrap-up",

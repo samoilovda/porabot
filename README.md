@@ -71,7 +71,7 @@ Type a phrase; the bot parses time and extracts the task description:
 ## Test coverage
 
 ```
-513 tests collected   (python -m pytest --collect-only -q)
+623 tests collected   (python -m pytest --collect-only -q)
 ```
 
 Tests follow the regression style: each test was written to fail on the specific bug it guards, then the fix was applied. Test files live in `tests/`, mirroring the layout of `bot/`.

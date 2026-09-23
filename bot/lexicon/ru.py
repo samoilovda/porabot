@@ -166,6 +166,12 @@ RU: dict[str, Any] = {
     "donate_invoice_description": "Добровольный донат — спасибо, что поддерживаешь разработку!",
     "donate_thanks": "☕ Спасибо огромное за поддержку Porabot! 💛",
     "donate_unknown_payment_error": "Неизвестный платёж. Попробуйте ещё раз.",
+    "paysupport_no_payments": "У вас нет донатов, которые можно вернуть.",
+    "paysupport_intro": "Ваши последние донаты — нажмите, чтобы запросить возврат:",
+    "paysupport_item": "⭐ {amount} — {date}",
+    "btn_paysupport_refund": "↩ Вернуть {amount} ⭐",
+    "paysupport_refund_success": "✅ Возврат выполнен.",
+    "paysupport_refund_failed": "❌ Не удалось вернуть донат. Возможно, он уже возвращён.",
 
     # Wizard
     "enter_task": "Напиши, о чем напомнить.\nМожно сразу с временем: *\"Позвонить маме завтра в 18:00\"*.",

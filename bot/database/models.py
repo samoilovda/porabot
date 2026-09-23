@@ -477,6 +477,40 @@ class Reminder(Base):
         return f"<Reminder(id={self.id}, user_id={self.user_id}, time={self.execution_time})>"
 
 
+class Payment(Base):
+    """A-19: a record of every Telegram Stars payment actually completed
+    (bot/handlers/donate.py's process_successful_payment — the only writer
+    of this table). Telegram's own refundStarPayment API takes a
+    telegram_payment_charge_id, not any id of ours, so this exists mainly
+    to make that value (and what was actually paid) look-up-able again
+    later — from /paysupport, or by a human doing it manually — instead of
+    a completed Stars payment leaving no trace anywhere once its "Thank
+    you" message scrolls out of the chat.
+    """
+
+    __tablename__ = "payments"
+
+    __table_args__ = (
+        Index("idx_payments_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    # Unique per Telegram's own guarantee — this IS the refund key.
+    telegram_payment_charge_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String, nullable=False)
+    invoice_payload: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow_naive,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Payment(id={self.id}, user_id={self.user_id}, amount={self.amount} {self.currency})>"
+
+
 class HabitEvent(Base):
     """
     One row per resolved habit cycle (done / not_today / missed).

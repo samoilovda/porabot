@@ -57,6 +57,8 @@ def test_spanish_is_not_accidentally_falling_back_to_english() -> None:
         "btn_prev_page",
         "btn_next_page",
         "tasks_page_indicator",
+        # A-19: a star amount + a date, no actual words to translate.
+        "paysupport_item",
     }
     equal_keys = {k for k, v in EN.items() if ES.get(k) == v}
     assert equal_keys <= allowed_equal

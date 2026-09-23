@@ -167,6 +167,12 @@ EN: dict[str, Any] = {
     "donate_invoice_description": "A voluntary tip — thank you for supporting development!",
     "donate_thanks": "☕ Thank you so much for supporting Porabot! 💛",
     "donate_unknown_payment_error": "Unrecognized payment. Please try again.",
+    "paysupport_no_payments": "You have no recorded donations to refund.",
+    "paysupport_intro": "Your recent donations — tap one to request a refund:",
+    "paysupport_item": "⭐ {amount} — {date}",
+    "btn_paysupport_refund": "↩ Refund {amount} ⭐",
+    "paysupport_refund_success": "✅ Refunded.",
+    "paysupport_refund_failed": "❌ Refund failed. It may already be refunded.",
 
     # Wizard
     "enter_task": "Write what to remind you about.\nYou can include time: *\"Call mom tomorrow at 18:00\"*.",

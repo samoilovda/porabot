@@ -220,10 +220,19 @@ class Reminder(Base):
         nullable=False  # Required - can't create empty reminders
     )
 
-    # Optional media attachment for context (photo/video)
+    # A-28: dead schema. Declared for an attach-a-photo/video-to-a-reminder
+    # feature that was never actually built — no creation flow ever
+    # populates either column, and no notification/list/export path ever
+    # reads them. Left as real, nullable, always-NULL columns rather than
+    # dropped outright: dropping a column needs a migration tool this
+    # codebase doesn't have yet (see docs/audits/2026-09-22-audit.md#a-27),
+    # and a bare SQLite `ALTER TABLE ... DROP COLUMN` on every deployment's
+    # already-live database is not something to improvise here. What WAS
+    # safe to remove — ReminderDAO.create_reminder's matching (also always-
+    # None-in-practice) parameters — is gone; nothing constructed a
+    # Reminder with an actual value for either field even once these
+    # existed.
     media_file_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-    # Media type: 'photo', 'video', etc.
     media_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # When task should fire - stored in UTC timezone!

@@ -158,10 +158,13 @@ async def callback_snooze_act(
     if reminder.snooze_count <= 1:
         friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         snoozed_line = l10n["snoozed_until"].format(time=escape_markdown_v2(friendly_time))
-        # callback.message.text is None for a media message (the done-keyboard
-        # is also attachable to a reminder sent with media_file_id) — fall back
-        # to the caption, then an empty string, instead of escape_markdown_v2
-        # crashing on None.
+        # callback.message.text is None for a media message — fall back to
+        # the caption, then an empty string, instead of escape_markdown_v2
+        # crashing on None. (Reminder.media_file_id/media_type are dead
+        # schema — see A-28 — so this bot itself never actually sends one
+        # today; this fallback is just defensive against any future
+        # message shape, or a message this same done-keyboard gets
+        # attached to from outside this reminder-send path.)
         original_text = callback.message.text or callback.message.caption or ""
         snooze_text = f"{escape_markdown_v2(original_text)}\n\n{snoozed_line}"
         try:

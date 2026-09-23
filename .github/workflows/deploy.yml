@@ -4,13 +4,18 @@ on:
   push:
     branches:
       - main
+  # Tests/lint/secret scan run on PRs too; the deploy job below is gated to
+  # pushes on main only.
+  pull_request:
+    branches:
+      - main
 
-# A-30: a second push before a deploy finishes must not race it — cancel
-# the in-flight run for this branch instead of running two deploys
-# concurrently against the same VPS.
+# A-30: two runs for the same ref must never deploy concurrently against
+# the same VPS. Queue rather than cancel: cancelling an in-flight run could
+# kill an SSH deploy halfway through `docker compose up --build`.
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -46,6 +51,7 @@ jobs:
 
   deploy:
     needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
@@ -64,8 +70,9 @@ jobs:
 
             # 2. Back up both SQLite databases before restarting the
             # container on new code — see A-30/scripts/backup.sh. Best
-            # effort: a missing/older checkout without the script must not
-            # block the deploy, but a real backup failure should.
+            # effort: this action runs without script_stop, so a backup
+            # failure (e.g. no sqlite3 CLI on the host) is logged but does
+            # not block the deploy.
             if [ -x scripts/backup.sh ]; then
               cd "${{ secrets.ORCHESTRATOR_PATH }}"
               "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data ./backups 14

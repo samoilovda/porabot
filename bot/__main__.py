@@ -10,6 +10,7 @@ import logging
 import signal
 import sys
 import time
+from typing import Optional
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -43,7 +44,12 @@ from bot.services.habit_reports import setup_habit_reports
 from bot.services.habit_sweeper import setup_habit_sweeper
 from bot.services.missed_recovery import setup_missed_task_recovery
 from bot.services.retention_cleanup import setup_retention_cleanup
-from bot.services.scheduler import SchedulerService, reconcile_jobs_with_db_job, remove_orphan_scheduler_jobs_job
+from bot.services.scheduler import (
+    SchedulerService,
+    reconcile_jobs_with_db_job,
+    remove_orphan_scheduler_jobs_job,
+    wait_for_in_flight_jobs,
+)
 from bot.services.webserver import HTTP_RATE_LIMITER_KEY, create_app, start_web_server
 
 
@@ -141,7 +147,9 @@ def _start_polling_coro(dp: Dispatcher, bot: Bot):
     return dp.start_polling(bot, handle_signals=False)
 
 
-async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
+async def _run_until_stopped(
+    polling_coro, stop_event: asyncio.Event, dp: Optional[Dispatcher] = None
+) -> None:
     """Run *polling_coro* until either *stop_event* is set or it ends on its own.
 
     Waiting on stop_event alone (the earlier version of this function) left
@@ -149,10 +157,29 @@ async def _run_until_stopped(polling_coro, stop_event: asyncio.Event) -> None:
     would just hang forever with dead polling, Docker would never see a
     non-zero exit, and `restart: always` would never kick in. Waiting on
     FIRST_COMPLETED between the two means a crash surfaces immediately.
+
+    A-09: when *dp* is given (the real Dispatcher, in production) and a
+    shutdown SIGNAL (not a polling crash) is what woke this up, polling is
+    wound down via dp.stop_polling() — which waits for aiogram's own
+    polling loop to finish dispatching whatever update is CURRENTLY in
+    flight and return on its own — instead of a bare task.cancel(), which
+    would inject CancelledError into a handler at an arbitrary await point
+    (mid-commit, mid-send) rather than letting it finish. *dp* defaults to
+    None so tests exercising this function's crash-surfacing behavior with
+    a plain fake coroutine (no real Dispatcher involved) are unaffected —
+    they get the pre-existing cancel-based path exactly as before.
     """
     polling_task = asyncio.ensure_future(polling_coro)
     stop_task = asyncio.ensure_future(stop_event.wait())
     done, pending = await asyncio.wait({polling_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+
+    if dp is not None and stop_task in done and polling_task not in done:
+        await dp.stop_polling()
+        # dp.stop_polling() only returns once aiogram's own loop has
+        # already finished and is about to return — polling_task should
+        # already be resolved by now; the cancel below then just no-ops
+        # on an already-done task instead of hard-cancelling a live one.
+
     for task in pending:
         task.cancel()
     for task in pending:
@@ -540,16 +567,29 @@ async def main() -> None:
 
     try:
         # See _start_polling_coro's docstring for why handle_signals=False
-        # is required here, not optional.
-        await _run_until_stopped(_start_polling_coro(dp, bot), stop_event)
+        # is required here, not optional. Passing `dp` (A-09) is what lets
+        # a signal-triggered shutdown wind polling down gracefully instead
+        # of hard-cancelling it — see _run_until_stopped's docstring.
+        await _run_until_stopped(_start_polling_coro(dp, bot), stop_event, dp)
     finally:
         # Stop the scheduler BEFORE closing the bot session/engine: a job
         # mid-send (a reminder, a brief) that races past this point would
         # otherwise hit a closed aiohttp session or a disposed engine.
-        # wait=False still lets an in-flight async job coroutine that's
-        # already running continue to completion (APScheduler cancels
-        # only pending/scheduled runs, not one already executing) — it
-        # just stops issuing NEW ones.
+        #
+        # A-09: scheduler.shutdown(), even with wait=True, does NOT
+        # actually wait for an in-flight job — AsyncIOExecutor.shutdown()
+        # unconditionally cancels every pending future regardless of that
+        # argument (see its own source; SchedulerService.execute_reminder_job's
+        # module docstring has the full explanation). A job cancelled
+        # mid-send-then-commit (already sent, last_fired_at not yet
+        # committed) gets redelivered after restart. scheduler.pause()
+        # first stops any NEW job from starting; wait_for_in_flight_jobs
+        # then gives whatever's already running real wall-clock time to
+        # reach its own commit before shutdown() cancels anything —
+        # docker-compose's stop_grace_period (30s) budgets for exactly
+        # this, so the 20s default here leaves it room to spare.
+        scheduler.pause()
+        await wait_for_in_flight_jobs()
         scheduler.shutdown(wait=False)
 
         try:

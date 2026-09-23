@@ -7,6 +7,7 @@ bot.context.get_context() (4.2) instead of holding a reference itself. This
 is a known APScheduler tradeoff.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -44,6 +45,40 @@ SEND_RETRY_BACKOFF_MINUTES = [1, 5, 15, 60]
 # APScheduler job target (must be a top-level function, not a bound method)
 # ---------------------------------------------------------------------------
 
+# A-09: APScheduler's AsyncIOExecutor.shutdown() cancels every pending
+# future regardless of its own wait= argument — see its own source
+# (apscheduler.executors.asyncio.AsyncIOExecutor.shutdown: "There is no
+# way to honor wait=True without converting this method into a coroutine
+# method"). A reminder job cancelled mid-send-then-commit (the send
+# already went out, the commit that records last_fired_at hasn't) gets
+# redelivered after restart — reconcile_jobs_with_db sees an
+# undelivered cycle that was, in fact, already sent. Tracking in-flight
+# jobs here (populated/cleared around the one call below) lets
+# bot/__main__.py's shutdown sequence wait for them to finish on its own
+# terms, BEFORE calling scheduler.shutdown() at all — see
+# wait_for_in_flight_jobs.
+_in_flight_jobs: set[asyncio.Task] = set()
+
+
+async def wait_for_in_flight_jobs(timeout: float = 20.0) -> None:
+    """Best-effort wait for every currently-running execute_reminder_job
+    call to finish, up to *timeout* seconds. Call this BEFORE
+    scheduler.shutdown() during graceful shutdown — see _in_flight_jobs'
+    docstring for why shutdown() itself can't be trusted to wait."""
+    tasks = [t for t in _in_flight_jobs if not t.done()]
+    if not tasks:
+        return
+    logger.info("Waiting up to %.0fs for %d in-flight reminder job(s) to finish...", timeout, len(tasks))
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    if pending:
+        logger.warning(
+            "%d reminder job(s) still running after %.0fs shutdown grace period — "
+            "proceeding with shutdown anyway.",
+            len(pending),
+            timeout,
+        )
+
+
 async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
     """Called by APScheduler at the scheduled time to fire a reminder."""
     try:
@@ -51,6 +86,9 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     except RuntimeError:
         logger.error("Cannot execute reminder %s: AppContext not set.", reminder_id)
         return
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        _in_flight_jobs.add(current_task)
     job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
     try:
         await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
@@ -78,6 +116,9 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
             is_nagging_execution,
         )
         ctx.scheduler.schedule_execution_retry(reminder_id, is_nagging_execution)
+    finally:
+        if current_task is not None:
+            _in_flight_jobs.discard(current_task)
 
 
 async def remove_orphan_scheduler_jobs_job() -> None:

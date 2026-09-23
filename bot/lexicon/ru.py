@@ -4,9 +4,9 @@ from typing import Any
 
 RU: dict[str, Any] = {
     # Menu & Commands
-    "cmd_start": "👋 Привет, {name}!\nЯ **Porabot**. Я помогу тебе не прокрастинировать.\n\nВыбери действие в меню 👇",
+    "cmd_start": "👋 Привет, {name}!\nЯ *Porabot*. Я помогу тебе не прокрастинировать.\n\nВыбери действие в меню 👇",
     "cmd_help": (
-        "🤖 **Команды Porabot**\n\n"
+        "🤖 *Команды Porabot*\n\n"
         "/start — показать главное меню\n"
         "/help — это сообщение\n"
         "/cancel — отменить текущее действие\n\n"
@@ -44,7 +44,7 @@ RU: dict[str, Any] = {
     "lang_set": "✅ Язык установлен на Русский.",
 
     # Settings
-    "settings_text": "⚙️ **Настройки**\n\n🌍 Твой часовой пояс: `{timezone}`\n🗣 Язык интерфейса: Русский\n😴 Тихие часы: `{quiet_hours}`\n\nЕсли время напоминаний скачет, проверь пояс.",
+    "settings_text": "⚙️ *Настройки*\n\n🌍 Твой часовой пояс: `{timezone}`\n🗣 Язык интерфейса: Русский\n😴 Тихие часы: `{quiet_hours}`\n\nЕсли время напоминаний скачет, проверь пояс.",
     "btn_change_tz": "🌍 Сменить часовой пояс",
     "btn_change_lang": "🗣 Сменить язык",
     "btn_quiet_hours_setup": "😴 Тихие часы",
@@ -104,7 +104,7 @@ RU: dict[str, Any] = {
     "btn_clear_all": "🗑 Очистить всё",
     "btn_clear_all_confirm": "✅ Да, удалить всё",
     "btn_clear_all_cancel": "↩ Отмена",
-    "clear_all_confirm_text": "⚠️ Это навсегда удалит **все** задачи, привычки и настройки.\n\nТочно продолжить?",
+    "clear_all_confirm_text": "⚠️ Это навсегда удалит *все* задачи, привычки и настройки.\n\nТочно продолжить?",
     "clear_all_done": "✅ Все данные удалены. Начинаем с нуля.",
 
     # Custom Daily Briefs Settings
@@ -262,11 +262,11 @@ RU: dict[str, Any] = {
 
     # Reminders / Scheduler
     "reminder_prefix": "🔔 ",
-    "brief_morning": "🌅 **Доброе утро! План на сегодня:**\n",
-    "brief_evening_title": "🌙 **Итоги дня:**",
+    "brief_morning": "🌅 *Доброе утро! План на сегодня:*\n",
+    "brief_evening_title": "🌙 *Итоги дня:*",
     "brief_evening_done": "✅ Выполнено: {count}",
     "brief_evening_pending": "⏳ Осталось/Пропущено: {count}\n",
-    "brief_evening_upcoming_title": "⏰ **Ещё сегодня:**",
+    "brief_evening_upcoming_title": "⏰ *Ещё сегодня:*",
     "brief_items_more": "…и ещё {count}",
     "btn_done": "✅ Сделано",
     "btn_not_today": "🚫 Не сегодня",
@@ -327,7 +327,7 @@ RU: dict[str, Any] = {
     "btn_parse_confirm_cancel": "❌ Отмена",
 
     # Missed-task recovery
-    "missed_recovery_title": "📎 **Восстановление пропущенных задач**\nУ тебя осталось {count} просроченных задач:",
+    "missed_recovery_title": "📎 *Восстановление пропущенных задач*\nУ тебя осталось {count} просроченных задач:",
     "btn_recovery_done_all": "✅ Сделать всё",
     "btn_recovery_snooze_all": "⏰ +1ч всем",
     "recovery_done_all_done": "✅ Отмечено выполненными: {count} просроченных задач.",
@@ -346,7 +346,7 @@ RU: dict[str, Any] = {
     "btn_done_task_prefix": "✅ Готово:",
 
     # Habits
-    "habits_dashboard": "🫧 **Панель привычек**:\nВыбери шаблон или создай свою ежедневную привычку.",
+    "habits_dashboard": "🫧 *Панель привычек*:\nВыбери шаблон или создай свою ежедневную привычку.",
     "habit_motivation": "🔥 Импульс: {weekly_done} выполнений за 7 дней · {active_count} активных привычек · серия {best_current_streak} (рекорд {best_ever_streak}) · 💪 {avg_score}%",
     "habit_preset_water": "💧 Пить воду",
     "habit_preset_workout": "🧘 Тренировка",
@@ -357,23 +357,23 @@ RU: dict[str, Any] = {
     "habit_btn_cancel": "❌ Отмена",
     "habit_cancelled": "Отменено.",
     "habit_unknown": "❓ Привычка",
-    "habit_selected_prompt": "Выбрано: **{habit}**\n\nВо сколько напоминать каждый день? (например, `10:00`)",
+    "habit_selected_prompt": "Выбрано: *{habit}*\n\nВо сколько напоминать каждый день? (например, `10:00`)",
     "habit_custom_prompt": "Какую привычку хочешь добавить?\n*(например: \"Читать 20 страниц\" или \"Учить Python\")*",
     "habit_time_prompt": "Отлично! Во сколько напоминать каждый день? (например, `10:00`)",
     "habit_default_name": "Моя привычка",
     "habit_time_retry": "❌ Не удалось распознать время. Попробуй снова (например, `10:00`).",
-    "habit_created": "✅ **Ежедневная привычка создана!**\nБуду напоминать: **{habit}** каждый день в `{time}`.",
+    "habit_created": "✅ *Ежедневная привычка создана!*\nБуду напоминать: *{habit}* каждый день в `{time}`.",
     "habit_overload_hint": "💡 У тебя уже больше десяти привычек. Больше десяти одновременно почти никто не удерживает — возможно, стоит сосредоточиться на самых важных.",
     "habit_fluid_name_prompt": "🌊 Отправь название гибкой привычки.\n\nНапример: `Прочитать 20 страниц`",
     "habit_fluid_mode_prompt": "Выбери режим гибкой привычки:",
     "habit_fluid_mode_brief_only": "1) Только утренняя сводка + вечерняя проверка",
     "habit_fluid_mode_ask_time": "2) Каждое утро спрашивать время напоминания",
-    "habit_fluid_created": "✅ **Гибкая привычка создана!**\nПривычка: **{habit}**\nРежим: {mode}",
+    "habit_fluid_created": "✅ *Гибкая привычка создана!*\nПривычка: *{habit}*\nРежим: {mode}",
     "habit_create_failed_long": "❌ Не удалось создать привычку (слишком длинный текст).",
     "habit_create_failed_internal": "❌ Внутренняя ошибка при создании привычки.",
     "habit_no_active": "📋 Активных ежедневных привычек пока нет. Нажми «➕ Своя привычка» или выбери шаблон.",
-    "habit_list_header": "📋 **Твои активные ежедневные привычки:**\n",
-    "habit_list_item": "{index}. **{habit}** ({time}) · 🔥 {streak} (рекорд {best}) · 💪 {score}% · {mode}",
+    "habit_list_header": "📋 *Твои активные ежедневные привычки:*\n",
+    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (рекорд {best}) · 💪 {score}% · {mode}",
     "habit_btn_delete_n": "❌ Удалить {index}",
     "habit_btn_back_dashboard": "🔙 Назад к панели",
     "habit_deleted_alert": "✅ Привычка удалена!",
@@ -383,9 +383,9 @@ RU: dict[str, Any] = {
     "habit_mode_fluid_ask_time": "гибкая: спросить время утром",
     "habit_mode_fluid_brief_only": "гибкая: только сводки",
     "habit_fluid_time_anytime": "в любое время сегодня",
-    "fluid_morning_title": "🌊 **Гибкие привычки на сегодня:**",
-    "fluid_pick_time_prompt": "🌊 **План на день:**\nВыбери время напоминания сегодня для: **{habit}**",
-    "fluid_evening_check": "🌙 **Перед вечерней сводкой:**\nОтметь выполненные гибкие привычки:",
+    "fluid_morning_title": "🌊 *Гибкие привычки на сегодня:*",
+    "fluid_pick_time_prompt": "🌊 *План на день:*\nВыбери время напоминания сегодня для: *{habit}*",
+    "fluid_evening_check": "🌙 *Перед вечерней сводкой:*\nОтметь выполненные гибкие привычки:",
     "fluid_done_btn_prefix": "✅ Сделано: ",
     "fluid_done_saved": "✅ Отмечено как выполненное за сегодня.",
     "fluid_time_custom": "⌨️ Свое время",
@@ -404,10 +404,10 @@ RU: dict[str, Any] = {
     "habit_report_day_prompt": "Выбери день для отчёта по привычкам:",
     "habit_report_time_prompt": "Отправь время отчёта в формате HH:MM (например `23:50`).",
     "habit_report_time_saved": "✅ Время отчёта обновлено: {time}",
-    "habit_report_weekly_title": "📊 **Итоги недели**",
-    "habit_report_monthly_title": "📊 **Итоги месяца**",
+    "habit_report_weekly_title": "📊 *Итоги недели*",
+    "habit_report_monthly_title": "📊 *Итоги месяца*",
     "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
-    "habit_report_total": "**Итого:** ✅ {done} · ❌ {not_done} ({rate}%)",
+    "habit_report_total": "*Итого:* ✅ {done} · ❌ {not_done} ({rate}%)",
     "weekday_names": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
 
     # Error messages (SECURITY FIX: Added missing keys)

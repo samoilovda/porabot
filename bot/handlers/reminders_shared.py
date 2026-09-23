@@ -71,15 +71,6 @@ _RRULE_WEEKDAYS_SET = {"MO", "TU", "WE", "TH", "FR"}
 _RRULE_WEEKEND_SET = {"SA", "SU"}
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_RRULE_WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-_RRULE_WEEKDAYS_SET = {"MO", "TU", "WE", "TH", "FR"}
-_RRULE_WEEKEND_SET = {"SA", "SU"}
-
-
 def _parse_rrule_parts(rrule_string: str) -> dict[str, str]:
     """Parse a flat RRULE string ("FREQ=DAILY;INTERVAL=2") into a dict.
 

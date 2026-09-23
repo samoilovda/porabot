@@ -8,9 +8,9 @@ ES: dict[str, Any] = dict(EN)
 ES.update(
     {
         # Menu & Commands
-        "cmd_start": "👋 Hola, {name}!\nSoy **Porabot**. Te ayudaré a procrastinar menos.\n\nElige una acción del menú 👇",
+        "cmd_start": "👋 Hola, {name}!\nSoy *Porabot*. Te ayudaré a procrastinar menos.\n\nElige una acción del menú 👇",
         "cmd_help": (
-            "🤖 **Comandos de Porabot**\n\n"
+            "🤖 *Comandos de Porabot*\n\n"
             "/start — mostrar el menú principal\n"
             "/help — este mensaje\n"
             "/cancel — cancelar la acción actual\n\n"
@@ -48,7 +48,7 @@ ES.update(
         "lang_set": "✅ Idioma cambiado a Español.",
 
         # Settings
-        "settings_text": "⚙️ **Ajustes**\n\n🌍 Tu zona horaria: `{timezone}`\n🗣 Idioma de la interfaz: Español\n😴 Horas de silencio: `{quiet_hours}`\n\nSi la hora de recordatorios cambia, revisa tu zona horaria.",
+        "settings_text": "⚙️ *Ajustes*\n\n🌍 Tu zona horaria: `{timezone}`\n🗣 Idioma de la interfaz: Español\n😴 Horas de silencio: `{quiet_hours}`\n\nSi la hora de recordatorios cambia, revisa tu zona horaria.",
         "btn_change_tz": "🌍 Cambiar zona horaria",
         "btn_change_lang": "🗣 Cambiar idioma",
         "btn_quiet_hours_setup": "😴 Horas de silencio",
@@ -108,7 +108,7 @@ ES.update(
         "btn_clear_all": "🗑 Borrar todo",
         "btn_clear_all_confirm": "✅ Sí, borrar todo",
         "btn_clear_all_cancel": "↩ Cancelar",
-        "clear_all_confirm_text": "⚠️ Esto eliminará **todas** tus tareas, hábitos y ajustes de forma permanente.\n\n¿Seguro?",
+        "clear_all_confirm_text": "⚠️ Esto eliminará *todas* tus tareas, hábitos y ajustes de forma permanente.\n\n¿Seguro?",
         "clear_all_done": "✅ Todos tus datos se eliminaron. Empezamos desde cero.",
         "btn_briefs_setup": "📋 Configurar resúmenes",
         "btn_briefs_on": "🔔 Resúmenes diarios: ON",
@@ -255,11 +255,11 @@ ES.update(
         "time_tomorrow": "🗓 Mañana (09:00)",
         "time_manual": "⌨️ Introducir manualmente",
         "reminder_prefix": "🔔 ",
-        "brief_morning": "🌅 **¡Buenos días! Plan para hoy:**\n",
-        "brief_evening_title": "🌙 **Resumen del día:**",
+        "brief_morning": "🌅 *¡Buenos días! Plan para hoy:*\n",
+        "brief_evening_title": "🌙 *Resumen del día:*",
         "brief_evening_done": "✅ Hechas: {count}",
         "brief_evening_pending": "⏳ Pendientes/Perdidas: {count}\n",
-        "brief_evening_upcoming_title": "⏰ **Todavía hoy:**",
+        "brief_evening_upcoming_title": "⏰ *Todavía hoy:*",
         "brief_items_more": "…y {count} más",
         "btn_done": "✅ Hecho",
         "btn_not_today": "🚫 Hoy no",
@@ -309,7 +309,7 @@ ES.update(
         "btn_parse_confirm_yes": "✅ Sí",
         "btn_parse_confirm_time": "🕒 Elegir hora",
         "btn_parse_confirm_cancel": "❌ Cancelar",
-        "missed_recovery_title": "📎 **Recuperación de tareas perdidas**\nAún tienes {count} tareas vencidas:",
+        "missed_recovery_title": "📎 *Recuperación de tareas perdidas*\nAún tienes {count} tareas vencidas:",
         "btn_recovery_done_all": "✅ Marcar todo hecho",
         "btn_recovery_snooze_all": "⏰ +1h todo",
         "recovery_done_all_done": "✅ Se marcaron como hechas {count} tareas vencidas.",
@@ -341,7 +341,7 @@ ES.update(
         "schedule_error": "❌ No se pudo programar el recordatorio. Inténtalo de nuevo.",
 
         # Habits
-        "habits_dashboard": "🫧 **Panel de hábitos**:\nElige una plantilla o crea tu hábito diario.",
+        "habits_dashboard": "🫧 *Panel de hábitos*:\nElige una plantilla o crea tu hábito diario.",
         "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 {avg_score}%",
         "habit_preset_water": "💧 Beber agua",
         "habit_preset_workout": "🧘 Entrenar",
@@ -352,21 +352,21 @@ ES.update(
         "habit_btn_cancel": "❌ Cancelar",
         "habit_cancelled": "Cancelado.",
         "habit_unknown": "❓ Hábito",
-        "habit_selected_prompt": "Elegiste: **{habit}**\n\n¿A qué hora debo recordártelo cada día? (por ejemplo `10:00`)",
+        "habit_selected_prompt": "Elegiste: *{habit}*\n\n¿A qué hora debo recordártelo cada día? (por ejemplo `10:00`)",
         "habit_custom_prompt": "¿Qué hábito quieres crear?\n*(por ejemplo: \"Leer 20 páginas\")*",
         "habit_time_prompt": "¡Genial! ¿A qué hora debo recordártelo cada día? (por ejemplo `10:00`)",
         "habit_default_name": "Mi hábito",
         "habit_time_retry": "❌ No pude entender la hora. Inténtalo de nuevo (por ejemplo `10:00`).",
-        "habit_created": "✅ **Hábito diario creado**\nTe recordaré **{habit}** cada día a las `{time}`.",
+        "habit_created": "✅ *Hábito diario creado*\nTe recordaré *{habit}* cada día a las `{time}`.",
         "habit_overload_hint": "💡 Ya tienes más de diez hábitos. Casi nadie mantiene más de diez a la vez — quizás valga la pena enfocarte en los más importantes.",
         "habit_fluid_name_prompt": "🌊 Envía el nombre de tu hábito flexible.\n\nEjemplo: `Leer 20 páginas`",
         "habit_fluid_mode_prompt": "Elige el modo del hábito flexible:",
         "habit_fluid_mode_brief_only": "1) Solo resumen de mañana + comprobación de noche",
         "habit_fluid_mode_ask_time": "2) Preguntarme cada mañana la hora de recordatorio",
-        "habit_fluid_created": "✅ **Hábito flexible creado**\nHábito: **{habit}**\nModo: {mode}",
+        "habit_fluid_created": "✅ *Hábito flexible creado*\nHábito: *{habit}*\nModo: {mode}",
         "habit_no_active": "📋 No tienes hábitos diarios activos.",
-        "habit_list_header": "📋 **Tus hábitos diarios activos:**\n",
-        "habit_list_item": "{index}. **{habit}** ({time}) · 🔥 {streak} (máx {best}) · 💪 {score}% · {mode}",
+        "habit_list_header": "📋 *Tus hábitos diarios activos:*\n",
+        "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (máx {best}) · 💪 {score}% · {mode}",
         "habit_btn_delete_n": "❌ Eliminar {index}",
         "habit_btn_back_dashboard": "🔙 Volver al panel",
         "habit_deleted_alert": "✅ Hábito eliminado.",
@@ -376,9 +376,9 @@ ES.update(
         "habit_mode_fluid_ask_time": "flexible: preguntar hora cada mañana",
         "habit_mode_fluid_brief_only": "flexible: solo resúmenes",
         "habit_fluid_time_anytime": "en cualquier momento de hoy",
-        "fluid_morning_title": "🌊 **Hábitos flexibles de hoy:**",
-        "fluid_pick_time_prompt": "🌊 **Plan del día:**\nElige la hora de recordatorio para: **{habit}**",
-        "fluid_evening_check": "🌙 **Antes del resumen nocturno:**\nMarca hábitos flexibles completados:",
+        "fluid_morning_title": "🌊 *Hábitos flexibles de hoy:*",
+        "fluid_pick_time_prompt": "🌊 *Plan del día:*\nElige la hora de recordatorio para: *{habit}*",
+        "fluid_evening_check": "🌙 *Antes del resumen nocturno:*\nMarca hábitos flexibles completados:",
         "fluid_done_btn_prefix": "✅ Hecho: ",
         "fluid_done_saved": "✅ Marcado como hecho para hoy.",
         "fluid_time_custom": "⌨️ Hora personalizada",
@@ -397,10 +397,10 @@ ES.update(
         "habit_report_day_prompt": "Elige el día para tu informe de hábitos:",
         "habit_report_time_prompt": "Envía la hora del informe en formato HH:MM (por ejemplo `23:50`).",
         "habit_report_time_saved": "✅ Hora del informe actualizada: {time}",
-        "habit_report_weekly_title": "📊 **Resumen semanal**",
-        "habit_report_monthly_title": "📊 **Resumen mensual**",
+        "habit_report_weekly_title": "📊 *Resumen semanal*",
+        "habit_report_monthly_title": "📊 *Resumen mensual*",
         "habit_report_line": "🫧 {habit}: {done} de {total} ({rate}%)",
-        "habit_report_total": "**Total:** ✅ {done} logrados · ❌ {not_done} fallados ({rate}%)",
+        "habit_report_total": "*Total:* ✅ {done} logrados · ❌ {not_done} fallados ({rate}%)",
         "weekday_names": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     }
 )

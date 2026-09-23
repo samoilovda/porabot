@@ -4,9 +4,9 @@ from typing import Any
 
 EN: dict[str, Any] = {
     # Menu & Commands
-    "cmd_start": "👋 Hi, {name}!\nI'm **Porabot**. I'll help you stop procrastinating.\n\nChoose an action from the menu 👇",
+    "cmd_start": "👋 Hi, {name}!\nI'm *Porabot*. I'll help you stop procrastinating.\n\nChoose an action from the menu 👇",
     "cmd_help": (
-        "🤖 **Porabot commands**\n\n"
+        "🤖 *Porabot commands*\n\n"
         "/start — show the main menu\n"
         "/help — this message\n"
         "/cancel — cancel whatever you're in the middle of\n\n"
@@ -45,7 +45,7 @@ EN: dict[str, Any] = {
     "lang_set": "✅ Language set to English.",
 
     # Settings
-    "settings_text": "⚙️ **Settings**\n\n🌍 Your timezone: `{timezone}`\n🗣 Interface language: English\n😴 Quiet hours: `{quiet_hours}`\n\nIf reminder times jump around, check your timezone.",
+    "settings_text": "⚙️ *Settings*\n\n🌍 Your timezone: `{timezone}`\n🗣 Interface language: English\n😴 Quiet hours: `{quiet_hours}`\n\nIf reminder times jump around, check your timezone.",
     "btn_change_tz": "🌍 Change Timezone",
     "btn_change_lang": "🗣 Change Language",
     "btn_quiet_hours_setup": "😴 Quiet hours",
@@ -105,7 +105,7 @@ EN: dict[str, Any] = {
     "btn_clear_all": "🗑 Clear all",
     "btn_clear_all_confirm": "✅ Yes, clear all",
     "btn_clear_all_cancel": "↩ Cancel",
-    "clear_all_confirm_text": "⚠️ This will delete **all** your tasks, habits, and settings permanently.\n\nAre you sure?",
+    "clear_all_confirm_text": "⚠️ This will delete *all* your tasks, habits, and settings permanently.\n\nAre you sure?",
     "clear_all_done": "✅ All your data was deleted. Let's start from scratch.",
 
     # Custom Daily Briefs Settings
@@ -263,11 +263,11 @@ EN: dict[str, Any] = {
 
     # Reminders / Scheduler
     "reminder_prefix": "🔔 ",
-    "brief_morning": "🌅 **Good morning! Plan for today:**\n",
-    "brief_evening_title": "🌙 **Day summary:**",
+    "brief_morning": "🌅 *Good morning! Plan for today:*\n",
+    "brief_evening_title": "🌙 *Day summary:*",
     "brief_evening_done": "✅ Done: {count}",
     "brief_evening_pending": "⏳ Remaining/Missed: {count}\n",
-    "brief_evening_upcoming_title": "⏰ **Still today:**",
+    "brief_evening_upcoming_title": "⏰ *Still today:*",
     "brief_items_more": "…and {count} more",
     "btn_done": "✅ Done",
     "btn_not_today": "🚫 Not today",
@@ -328,7 +328,7 @@ EN: dict[str, Any] = {
     "btn_parse_confirm_cancel": "❌ Cancel",
 
     # Missed-task recovery
-    "missed_recovery_title": "📎 **Missed-task recovery**\nYou still have {count} overdue tasks:",
+    "missed_recovery_title": "📎 *Missed-task recovery*\nYou still have {count} overdue tasks:",
     "btn_recovery_done_all": "✅ Done all",
     "btn_recovery_snooze_all": "⏰ +1h all",
     "recovery_done_all_done": "✅ Marked {count} overdue tasks as done.",
@@ -347,7 +347,7 @@ EN: dict[str, Any] = {
     "btn_done_task_prefix": "✅ Done:",
 
     # Habits
-    "habits_dashboard": "🫧 **Habits Dashboard**:\nChoose a preset or create your own custom daily habit.",
+    "habits_dashboard": "🫧 *Habits Dashboard*:\nChoose a preset or create your own custom daily habit.",
     "habit_motivation": "🔥 Momentum: {weekly_done} completions in 7d · {active_count} active habits · streak {best_current_streak} (best {best_ever_streak}) · 💪 {avg_score}%",
     "habit_preset_water": "💧 Drink water",
     "habit_preset_workout": "🧘 Workout",
@@ -358,23 +358,23 @@ EN: dict[str, Any] = {
     "habit_btn_cancel": "❌ Cancel",
     "habit_cancelled": "Cancelled.",
     "habit_unknown": "❓ Habit",
-    "habit_selected_prompt": "You selected: **{habit}**\n\nWhat time every day should I remind you? (e.g. `10:00`)",
+    "habit_selected_prompt": "You selected: *{habit}*\n\nWhat time every day should I remind you? (e.g. `10:00`)",
     "habit_custom_prompt": "What custom habit do you want to build?\n*(e.g. \"Read 20 pages\" or \"Study Python\")*",
     "habit_time_prompt": "Great! What time every day should I remind you? (e.g. `10:00`)",
     "habit_default_name": "My Habit",
     "habit_time_retry": "❌ I couldn't understand the time. Please try again (e.g. `10:00`).",
-    "habit_created": "✅ **Daily Habit Created!**\nI will remind you to **{habit}** every day at `{time}`.",
+    "habit_created": "✅ *Daily Habit Created!*\nI will remind you to *{habit}* every day at `{time}`.",
     "habit_overload_hint": "💡 You now have more than ten habits. Almost nobody keeps up more than ten at once — you might want to focus on the ones that matter most.",
     "habit_fluid_name_prompt": "🌊 Send the name of your fluid habit.\n\nExample: `Read 20 pages`",
     "habit_fluid_mode_prompt": "Choose fluid habit mode:",
     "habit_fluid_mode_brief_only": "1) Morning brief + evening check",
     "habit_fluid_mode_ask_time": "2) Ask me each morning for reminder time",
-    "habit_fluid_created": "✅ **Fluid habit created!**\nHabit: **{habit}**\nMode: {mode}",
+    "habit_fluid_created": "✅ *Fluid habit created!*\nHabit: *{habit}*\nMode: {mode}",
     "habit_create_failed_long": "❌ Failed to create habit (text too long).",
     "habit_create_failed_internal": "❌ Internal error creating habit.",
     "habit_no_active": "📋 You have no active daily habits. Click '➕ Custom Habit' or choose a preset to create one!",
-    "habit_list_header": "📋 **Your Active Daily Habits:**\n",
-    "habit_list_item": "{index}. **{habit}** ({time}) · 🔥 {streak} (best {best}) · 💪 {score}% · {mode}",
+    "habit_list_header": "📋 *Your Active Daily Habits:*\n",
+    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (best {best}) · 💪 {score}% · {mode}",
     "habit_btn_delete_n": "❌ Delete {index}",
     "habit_btn_back_dashboard": "🔙 Back to Dashboard",
     "habit_deleted_alert": "✅ Habit successfully deleted!",
@@ -384,9 +384,9 @@ EN: dict[str, Any] = {
     "habit_mode_fluid_ask_time": "fluid: ask time daily",
     "habit_mode_fluid_brief_only": "fluid: brief-only",
     "habit_fluid_time_anytime": "anytime today",
-    "fluid_morning_title": "🌊 **Fluid habits for today:**",
-    "fluid_pick_time_prompt": "🌊 **Plan your fluid habit:**\nPick today’s reminder time for: **{habit}**",
-    "fluid_evening_check": "🌙 **Before evening wrap-up:**\nMark completed fluid habits:",
+    "fluid_morning_title": "🌊 *Fluid habits for today:*",
+    "fluid_pick_time_prompt": "🌊 *Plan your fluid habit:*\nPick today’s reminder time for: *{habit}*",
+    "fluid_evening_check": "🌙 *Before evening wrap-up:*\nMark completed fluid habits:",
     "fluid_done_btn_prefix": "✅ Done: ",
     "fluid_done_saved": "✅ Marked as done for today.",
     "fluid_time_custom": "⌨️ Custom time",
@@ -405,10 +405,10 @@ EN: dict[str, Any] = {
     "habit_report_day_prompt": "Choose the day for your habit report:",
     "habit_report_time_prompt": "Please type the report time in HH:MM format (e.g. `23:50`).",
     "habit_report_time_saved": "✅ Habit report time updated: {time}",
-    "habit_report_weekly_title": "📊 **Weekly habit report**",
-    "habit_report_monthly_title": "📊 **Monthly habit report**",
+    "habit_report_weekly_title": "📊 *Weekly habit report*",
+    "habit_report_monthly_title": "📊 *Monthly habit report*",
     "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
-    "habit_report_total": "**Total:** ✅ {done} · ❌ {not_done} ({rate}%)",
+    "habit_report_total": "*Total:* ✅ {done} · ❌ {not_done} ({rate}%)",
     "weekday_names": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
 
     # Error messages (SECURITY FIX: Added missing keys)

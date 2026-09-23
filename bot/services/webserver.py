@@ -106,14 +106,20 @@ def _rate_limit_key(request: web.Request) -> str:
     this deployment's own config says the proxy in front of it is trusted
     to set it correctly — otherwise any client could just claim to BE any
     IP and dodge the limit entirely, or frame another IP for it.
+
+    A-15: the trusted proxy APPENDS the real peer address to whatever
+    X-Forwarded-For chain the client already sent, per nginx/Caddy's
+    normal `proxy_add_x_forwarded_for` behavior — a client sitting in
+    front of that proxy fully controls every entry except the LAST one.
+    Trusting the FIRST entry (this function's previous behavior) let any
+    client defeat the rate limit outright by sending a fresh random
+    X-Forwarded-For value on every request. Only the proxy's own,
+    appended, last entry is actually trustworthy.
     """
     if request.app.get(TRUSTED_PROXY_KEY) and "X-Forwarded-For" in request.headers:
-        # The header is a comma-separated chain, closest-hop-last; the
-        # FIRST entry is what the trusted proxy itself reported as the
-        # original client.
-        forwarded = request.headers["X-Forwarded-For"].split(",")[0].strip()
-        if forwarded:
-            return forwarded
+        chain = [part.strip() for part in request.headers["X-Forwarded-For"].split(",") if part.strip()]
+        if chain:
+            return chain[-1]
     return request.remote or "unknown"
 
 

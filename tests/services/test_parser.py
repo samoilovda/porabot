@@ -327,3 +327,112 @@ def test_duration_phrase_with_hour_word_is_unaffected() -> None:
     assert result.parsed_datetime is not None
     delta_minutes = (result.parsed_datetime - before).total_seconds() / 60
     assert 110 <= delta_minutes <= 130
+
+
+# ---------------------------------------------------------------------------
+# docs/audits/2026-09-22-audit.md#a-06 — dateparser matches only the bare
+# "в N"/"at N" clock-time span and ignores a period-of-day word trailing
+# right after it ("вечера"/"pm"/"noche"/...), so "5 вечера" (17:00) comes
+# back misread as 05:00 with "вечера" left dangling in clean_text. Fixed by
+# dropping any dateparser match immediately followed by an unconsumed
+# period-of-day word, falling through to the regex fallback that already
+# folds the period into the computed hour.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,expected_hour,expected_minute",
+    [
+        ("в 5 вечера позвонить маме", 17, 0),
+        ("купить хлеб в 7 утра", 7, 0),
+        ("в 12 ночи спать", 0, 0),
+        ("в 9 часов вечера тренировка", 21, 0),
+        ("мама сказала в 7 утра", 7, 0),
+        ("at 5pm call mom", 17, 0),
+    ],
+)
+def test_period_of_day_word_correctly_shifts_the_hour(text, expected_hour, expected_minute) -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == expected_hour
+    assert result.parsed_datetime.minute == expected_minute
+    for word in ("вечера", "утра", "ночи", "pm", "am"):
+        assert word not in result.clean_text.lower()
+
+
+def test_compound_date_plus_time_phrase_fully_strips_from_clean_text() -> None:
+    """Natasha (Stage 2) extracts only the DATE portion ("2 марта") of a
+    "2 марта в 15:00 врач"-shaped phrase and removes just that from
+    clean_text — dateparser's own wider match ("2 марта в 15:00") is then no
+    longer a literal substring of clean_text at all, and the naive `in`/
+    `.replace()` removal used to silently no-op, leaving "15:00 врач"
+    (the time survived) in the saved task text instead of just "врач"."""
+    parser = InputParser()
+
+    result = parser._parse_sync("2 марта в 15:00 врач", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert (result.parsed_datetime.month, result.parsed_datetime.day) == (3, 2)
+    assert result.parsed_datetime.hour == 15
+    assert result.clean_text == "врач"
+
+
+# ---------------------------------------------------------------------------
+# docs/audits/2026-09-22-audit.md#a-05 — a phrase naming only a DAY (a
+# weekday, a bare "tomorrow", a calendar date) with no clock time at all
+# must not be saved outright: dateparser resolves the missing time to local
+# midnight (or, for a bare "tomorrow", to whatever time it happens to be
+# right now), and both are silently wrong for a reminder the user never
+# actually gave a time for. Confidence is capped below the confirmation
+# threshold instead, routing it through the existing "confirm this time?"
+# prompt (reminders_shared._handle_parsed_result) rather than saving blind.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "приготовить обед в понедельник",
+        "call mom on friday",
+        "позвонить завтра",
+        "call mom tomorrow",
+    ],
+)
+def test_date_only_phrase_gets_low_confidence_not_silently_saved(text) -> None:
+    parser = InputParser()
+
+    result = parser._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.confidence < 0.7  # below reminders_shared._PARSE_CONFIDENCE_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "text,expected_hour",
+    [
+        ("2 марта в 15:00 врач", 15),
+        ("call mom at 5pm", 17),
+    ],
+)
+def test_phrase_with_explicit_time_keeps_full_confidence(text, expected_hour) -> None:
+    """A date WITH an explicit clock time must not be caught by the
+    date-only downgrade above — 0.95/0.75 confidence, straight to save."""
+    parser = InputParser()
+
+    result = parser._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.parsed_datetime.hour == expected_hour
+    assert result.confidence >= 0.7
+
+
+def test_date_with_no_time_at_all_is_also_low_confidence() -> None:
+    """A bare calendar date with no clock time ("15-08-2026") is just as
+    much a date-only phrase as a bare weekday — same downgrade applies."""
+    parser = InputParser()
+
+    result = parser._parse_sync("напомни 15-08-2026 позвонить врачу", "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.confidence < 0.7

@@ -21,6 +21,7 @@ window at all.
 """
 
 import logging
+import time
 from typing import Any, Awaitable, Callable, Optional
 
 from aiogram import BaseMiddleware
@@ -30,6 +31,13 @@ from bot.lexicon import get_l10n
 from bot.utils.telegram import inner_event
 
 logger = logging.getLogger(__name__)
+
+# A-25: a group with Telegram's privacy mode off (or where the bot was
+# briefly added) sees every single message, and used to get this reply on
+# EVERY one of them, forever — the module docstring already claimed "answer
+# once", which the code never actually did. Notify at most once per chat
+# per this cooldown instead.
+_RENOTIFY_AFTER_SECONDS = 3600.0
 
 
 def _chat_of(target) -> Optional[Chat]:
@@ -46,8 +54,16 @@ def _chat_of(target) -> Optional[Chat]:
 class PrivateChatOnlyMiddleware(BaseMiddleware):
     """Silently pass through update kinds with no chat to check (my_chat_member,
     poll_answer, ...) — no handler in this codebase acts on those anyway.
-    For a Message/CallbackQuery from a non-private chat, answer once and
-    stop propagation."""
+    For a Message/CallbackQuery from a non-private chat, reject it — but
+    only actually reply with the "private only" notice at most once per
+    _RENOTIFY_AFTER_SECONDS per chat (A-25), not on every single message a
+    busy group generates.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # chat_id -> monotonic time of the last notice sent to it.
+        self._last_notified: dict[int, float] = {}
 
     async def __call__(
         self,
@@ -67,6 +83,13 @@ class PrivateChatOnlyMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         logger.info("Ignored update from non-private chat %s (type=%s).", chat.id, chat.type)
+
+        now = time.monotonic()
+        last_notified = self._last_notified.get(chat.id)
+        if last_notified is not None and now - last_notified < _RENOTIFY_AFTER_SECONDS:
+            return None
+        self._last_notified[chat.id] = now
+
         from_user = getattr(target, "from_user", None)
         l10n = get_l10n(getattr(from_user, "language_code", None))
         text = l10n.get(
@@ -81,3 +104,17 @@ class PrivateChatOnlyMiddleware(BaseMiddleware):
         except Exception as e:
             logger.warning("Could not notify chat %s that Porabot is private-only: %s", chat.id, e)
         return None
+
+    def cleanup_expired(self) -> None:
+        """Drop chats whose cooldown has already elapsed — same "don't
+        grow forever" shape as RateLimitMiddleware.cleanup_expired,
+        registered as a periodic job in bot/__main__.py. A chat that
+        renotifies again later just gets a fresh entry."""
+        now = time.monotonic()
+        expired = [
+            chat_id
+            for chat_id, last_notified in self._last_notified.items()
+            if now - last_notified >= _RENOTIFY_AFTER_SECONDS
+        ]
+        for chat_id in expired:
+            del self._last_notified[chat_id]

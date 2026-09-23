@@ -34,7 +34,7 @@ async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
         answer=AsyncMock(),
     )
 
-    await callback_set_lang(callback=callback, user_dao=user_dao, user=user, state=state)
+    await callback_set_lang(callback=callback, user_dao=user_dao, user=user, state=state, l10n=get_l10n("en"))
 
     l10n = get_l10n("en")
     user_dao.update_language.assert_awaited_once_with(101, "en")

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.config import config
 from bot.database.dao.habit_event import HabitEventDAO
+from bot.database.dao.payment import PaymentDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
 from bot.lexicon import get_l10n
@@ -44,10 +45,12 @@ class DatabaseMiddleware(BaseMiddleware):
             user_dao = UserDAO(session)
             reminder_dao = ReminderDAO(session)
             habit_event_dao = HabitEventDAO(session)
+            payment_dao = PaymentDAO(session)
             data["session"] = session
             data["user_dao"] = user_dao
             data["reminder_dao"] = reminder_dao
             data["habit_event_dao"] = habit_event_dao
+            data["payment_dao"] = payment_dao
 
             tg_user: Optional[TgUser] = data.get("event_from_user")
             l10n = get_l10n(None)

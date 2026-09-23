@@ -6,9 +6,11 @@ module docstring for the full module family and why).
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import time as dt_time
 from typing import Any, Optional
 
+import pytz
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -20,6 +22,7 @@ from bot.handlers.reminders_shared import (
     _RRULE_WEEKDAY_CODES,
     _apply_repeat_change,
     _message_task_key,
+    _parse_id_suffix,
     _parse_rrule_parts,
     _remove_keyboard_after_delay,
     _render_repeat_builder,
@@ -51,7 +54,12 @@ logger = logging.getLogger(__name__)
 # open "⏳ End: ..." to layer a COUNT= or UNTIL= on top of it.
 
 async def _get_owned_or_alert(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any], prefix: str):
-    reminder_id = int(callback.data.split(prefix)[1])
+    # A-22: this helper backs ~11 rrb_*/edit_repeat_menu_ callbacks — a
+    # single guard here covers all of them.
+    reminder_id = _parse_id_suffix(callback.data, prefix)
+    if reminder_id is None:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return None
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -422,7 +430,14 @@ async def state_rrb_end_until(
         parsed_date = datetime.strptime(raw, "%d.%m.%Y").date()
     except ValueError:
         pass
-    today_local = datetime.now(timezone.utc).date()
+    # A-04: the user's own local "today", not the server's UTC date — a
+    # user east of UTC could otherwise have their local "today" rejected
+    # as not-in-the-future for another several hours.
+    try:
+        tz = pytz.timezone(user.timezone)
+    except Exception:
+        tz = pytz.UTC
+    today_local = datetime.now(tz).date()
     if parsed_date is None or parsed_date <= today_local:
         await message.answer(l10n.get("repeat_end_date_invalid", "❌ Send a future date as DD.MM.YYYY."))
         return
@@ -433,7 +448,18 @@ async def state_rrb_end_until(
         await message.answer(l10n["item_not_found"])
         return
     base = _strip_end_condition(reminder.rrule_string)
-    rrule = f"{base};UNTIL={parsed_date.strftime('%Y%m%d')}"
+    # A-04: UNTIL=<bare YYYYMMDD> is a DATE value, which dateutil/iCalendar
+    # treats as exactly 00:00:00 that day — a reminder due later THAT SAME
+    # day (the common case: someone picking "repeat until the 30th" almost
+    # always means through the end of the 30th) fell just past the
+    # deadline and got silently dropped from the series one day early.
+    # UNTIL is a DATE-TIME instead here, set to the end of the chosen
+    # local day. No "Z"/UTC marker: next_occurrence_utc always builds this
+    # rule's DTSTART as a NAIVE LOCAL datetime (see its own docstring), and
+    # dateutil requires UNTIL's awareness to match DTSTART's exactly — a
+    # UTC-marked UNTIL against a naive-local DTSTART raises ValueError.
+    until_local_end_of_day = datetime.combine(parsed_date, dt_time(23, 59, 59))
+    rrule = f"{base};UNTIL={until_local_end_of_day.strftime('%Y%m%dT%H%M%S')}"
     ok = await _apply_repeat_change(reminder, user, scheduler_service, reminder_dao, True, rrule)
     if not ok:
         await message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
@@ -472,7 +498,9 @@ async def callback_edit_nagging(
     user: User, l10n: dict[str, Any]
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_toggle_nagging_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "edit_toggle_nagging_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -542,18 +570,12 @@ async def callback_edit_delete(
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
-    # Stop the job immediately; the DB row itself is only removed once the
-    # undo window elapses (see delete_cleanup.py), so an Undo tap can still
-    # restore it without recreating the reminder.
-    scheduler_service.remove_reminder_job(reminder_id)
-    scheduler_service.remove_nagging_job(reminder_id)
-    # Persisted and committed before confirming to the user — a restart
-    # right after this is still durable (every active-reminder query
-    # excludes pending_delete_at rows), unlike the old in-memory timer.
-    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-        seconds=reminders_shared._UNDO_DELETE_WINDOW
-    )
-    await reminder_dao.session.commit()
+    # A-14: commit pending_delete_at BEFORE tearing down the scheduler job
+    # — see reminders_shared._soft_delete_reminder's docstring. A restart
+    # right after this is still durable either way (every active-reminder
+    # query excludes pending_delete_at rows), unlike the old in-memory timer.
+    if not await reminders_shared._soft_delete_reminder(reminder, reminder_dao, scheduler_service):
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(
         l10n["task_deleted"], reply_markup=get_undo_delete_keyboard(reminder_id, l10n)

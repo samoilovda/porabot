@@ -57,6 +57,15 @@ class User(Base):
     __table_args__ = (
         Index('idx_users_timezone', 'timezone'),      # For timezone-based queries
         Index('idx_users_language', 'language'),      # For language filtering
+        # A-26: UserDAO.get_by_ics_feed_token's "exactly one user per
+        # token" contract was never actually enforced at the DB level —
+        # just assumed from secrets.token_urlsafe(24)'s collision
+        # probability. A UNIQUE index turns that assumption into a real
+        # guarantee (and makes the lookup an index seek instead of a full
+        # scan). SQLite allows multiple NULLs in a UNIQUE index — the
+        # common case for a user who's never opened the feed-link screen
+        # — so this can't conflict with the column's own nullable=True.
+        Index('uq_users_ics_feed_token', 'ics_feed_token', unique=True),
     )
 
     # Telegram user ID - NOT auto-incremented, must be set from update!
@@ -211,10 +220,19 @@ class Reminder(Base):
         nullable=False  # Required - can't create empty reminders
     )
 
-    # Optional media attachment for context (photo/video)
+    # A-28: dead schema. Declared for an attach-a-photo/video-to-a-reminder
+    # feature that was never actually built — no creation flow ever
+    # populates either column, and no notification/list/export path ever
+    # reads them. Left as real, nullable, always-NULL columns rather than
+    # dropped outright: dropping a column needs a migration tool this
+    # codebase doesn't have yet (see docs/audits/2026-09-22-audit.md#a-27),
+    # and a bare SQLite `ALTER TABLE ... DROP COLUMN` on every deployment's
+    # already-live database is not something to improvise here. What WAS
+    # safe to remove — ReminderDAO.create_reminder's matching (also always-
+    # None-in-practice) parameters — is gone; nothing constructed a
+    # Reminder with an actual value for either field even once these
+    # existed.
     media_file_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-    # Media type: 'photo', 'video', etc.
     media_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # When task should fire - stored in UTC timezone!
@@ -250,6 +268,23 @@ class Reminder(Base):
     # iCalendar recurrence rule string for recurring tasks
     # Example: "FREQ=DAILY;INTERVAL=1" or "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
     rrule_string: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # A-02: the RRULE series' own fixed DTSTART (naive UTC), independent of
+    # execution_time. Before this column existed, every next_occurrence_utc
+    # call anchored the series on the CURRENT execution_time — which
+    # advances on every fire (and, worse, on every snooze) — so a
+    # "COUNT=3" repeat's count restarted from whatever cycle happened to be
+    # current instead of counting from the series' true start, and never
+    # actually stopped after 3 occurrences. Set once when a repeat rule is
+    # first applied (ReminderDAO.create_reminder,
+    # reminders_shared._apply_repeat_change) and never touched again by a
+    # fire or a snooze — see next_occurrence_utc's call sites, all of which
+    # now pass this instead of execution_time. NULL for a non-recurring
+    # reminder, or for a legacy recurring row from before this column
+    # existed until the one-time backfill in engine.py's init_db runs
+    # (falls back to execution_time at that point, same as every call site
+    # falls back to execution_time when this is still NULL).
+    rrule_dtstart: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Habit streak tracking.
     habit_streak_current: Mapped[int] = mapped_column(
@@ -440,6 +475,40 @@ class Reminder(Base):
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"<Reminder(id={self.id}, user_id={self.user_id}, time={self.execution_time})>"
+
+
+class Payment(Base):
+    """A-19: a record of every Telegram Stars payment actually completed
+    (bot/handlers/donate.py's process_successful_payment — the only writer
+    of this table). Telegram's own refundStarPayment API takes a
+    telegram_payment_charge_id, not any id of ours, so this exists mainly
+    to make that value (and what was actually paid) look-up-able again
+    later — from /paysupport, or by a human doing it manually — instead of
+    a completed Stars payment leaving no trace anywhere once its "Thank
+    you" message scrolls out of the chat.
+    """
+
+    __tablename__ = "payments"
+
+    __table_args__ = (
+        Index("idx_payments_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    # Unique per Telegram's own guarantee — this IS the refund key.
+    telegram_payment_charge_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String, nullable=False)
+    invoice_payload: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow_naive,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Payment(id={self.id}, user_id={self.user_id}, amount={self.amount} {self.currency})>"
 
 
 class HabitEvent(Base):

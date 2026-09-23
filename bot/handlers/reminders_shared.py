@@ -21,7 +21,6 @@ from aiogram.types import Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
-from bot.database.models import is_habit_like as _is_habit_like
 from bot.keyboards.inline import (
     TASKS_PAGE_SIZE,
     get_edit_keyboard,
@@ -61,15 +60,6 @@ _PARSE_CONFIDENCE_THRESHOLD = 0.7
 # source of truth shared with get_tasks_list_keyboard) — this name is kept
 # as a local alias so callers across this module family don't need touching.
 _TASKS_PAGE_SIZE = TASKS_PAGE_SIZE
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_RRULE_WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-_RRULE_WEEKDAYS_SET = {"MO", "TU", "WE", "TH", "FR"}
-_RRULE_WEEKEND_SET = {"SA", "SU"}
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +160,19 @@ def _rrule_text(reminder, l10n: dict[str, Any]) -> str:
     return base
 
 
+def _rrule_base_key(rrule_string: Optional[str]) -> tuple:
+    """*rrule_string* with COUNT=/UNTIL= stripped, as a hashable key — two
+    rrule strings that only differ by their end-condition compare equal.
+    Used by _apply_repeat_change (A-02) to tell "the user picked a new base
+    pattern" (reset the series anchor) apart from "the user only changed
+    when this same pattern stops" (keep counting COUNT= from where the
+    series actually started)."""
+    parts = _parse_rrule_parts(rrule_string or "")
+    parts.pop("COUNT", None)
+    parts.pop("UNTIL", None)
+    return tuple(sorted(parts.items()))
+
+
 async def _apply_repeat_change(
     reminder,
     user: User,
@@ -183,8 +186,20 @@ async def _apply_repeat_change(
     rrb_* repeat-builder callback in reminders_repeat.py goes through via
     _apply_and_refresh, so fixing commit-before-reply here covers all of
     them at once (2.2)."""
+    # A-02: reset the series anchor (rrule_dtstart) only when the BASE
+    # pattern actually changes (including off->on) — an end-condition-only
+    # tweak (rrb_endcount_/rrb_enduntil_/rrb_endnone_, which strip and
+    # rebuild on top of the existing base via _strip_end_condition) must
+    # keep counting COUNT= from the series' true start, not restart it from
+    # "now" on every such tweak.
+    old_base = _rrule_base_key(reminder.rrule_string) if reminder.is_recurring else None
+    new_base = _rrule_base_key(rrule_string) if is_recurring else None
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
+    if not is_recurring:
+        reminder.rrule_dtstart = None
+    elif getattr(reminder, "rrule_dtstart", None) is None or old_base != new_base:
+        reminder.rrule_dtstart = reminder.execution_time
     await reminder_dao.session.flush()
     try:
         _reschedule_current_execution(reminder, user, scheduler_service)
@@ -243,7 +258,10 @@ def _reschedule_current_execution(reminder, user: User, scheduler_service: Sched
     if reminder.is_recurring and reminder.rrule_string:
         try:
             next_run_utc_naive = next_occurrence_utc(
-                reminder.rrule_string, reminder.execution_time, user.timezone, now.replace(tzinfo=None)
+                reminder.rrule_string,
+                getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+                user.timezone,
+                now.replace(tzinfo=None),
             )
         except (ValueError, TypeError):
             next_run_utc_naive = None
@@ -293,6 +311,27 @@ def _render_tasks_list_text(shown_tasks: list, user: User, l10n: dict[str, Any],
     return "\n".join(lines)
 
 
+def _parse_id_suffix(data: str, prefix: str) -> Optional[int]:
+    """A-22: parse the trailing "<prefix><id>" shape most callback_data
+    values in this codebase use (e.g. "del_task_42" with prefix
+    "del_task_"), returning None instead of raising on a malformed value.
+
+    callback_data is client-controlled — Telegram doesn't cryptographically
+    bind it to the keyboard actually shown, so a forged or a stale value
+    from an old message (edited keyboard, changed id scheme, ...) must not
+    crash the handler. Before this helper existed, roughly a dozen call
+    sites did a bare `int(callback.data.split(prefix)[1])` with no guard —
+    an uncaught IndexError/ValueError there propagated all the way to
+    bot/__main__.py's handle_dispatcher_error, which shows the user a
+    generic "❌ Something went wrong" alert instead of the specific,
+    already-existing "invalid_action" one every guarded call site uses.
+    """
+    try:
+        return int(data.split(prefix)[1])
+    except (IndexError, ValueError):
+        return None
+
+
 def _message_task_key(message: Message) -> tuple[int, int]:
     """Use chat+message id to avoid cross-chat key collisions."""
     return (message.chat.id, message.message_id)
@@ -321,6 +360,43 @@ async def _remove_keyboard_after_delay(message: Message, delay: int = 5) -> None
 # every query that lists, schedules, sweeps, or recovers reminders excludes
 # rows with it set — and bot/services/delete_cleanup.py's minutely sweep
 # hard-deletes them once the deadline passes, restart or not.
+
+
+async def _soft_delete_reminder(
+    reminder,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+) -> bool:
+    """A-14: set pending_delete_at and commit FIRST, only remove the
+    scheduler job once that's durable. Every one of this function's three
+    call sites (callback_delete_task, callback_edit_delete, habits.py's
+    cb_del_habit) used to do this in the opposite order — remove the job,
+    THEN set pending_delete_at and commit, with no handling for that
+    commit failing. A failed commit there left the reminder genuinely
+    still active in the DB (pending_delete_at never actually set) while
+    its job had already been torn down — it would sit with no job at all,
+    silently never firing again, until the next restart's
+    reconcile_jobs_with_db happened to notice and recreate one. Same
+    "commit before anything externally visible" ordering this module's
+    other mutating flows already follow (see _save_and_show_edit's
+    comment on the same pattern).
+
+    Returns False (and rolls back) on a commit failure — callers should
+    show schedule_error and stop; nothing about the reminder or its job
+    has changed at that point.
+    """
+    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=_UNDO_DELETE_WINDOW
+    )
+    try:
+        await reminder_dao.session.commit()
+    except Exception as e:
+        logger.error("Failed to commit soft-delete for reminder %s: %s", reminder.id, e, exc_info=True)
+        await reminder_dao.session.rollback()
+        return False
+    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.remove_nagging_job(reminder.id)
+    return True
 
 
 def _reset_auto_delete(message: Message) -> None:
@@ -453,7 +529,11 @@ async def _save_and_show_edit(
             new_reminder.tags = tags_csv
             new_reminder.priority = priority
             is_snooze_mode = bool(data.get("is_snooze_mode", False))
-            if not (is_snooze_mode and _is_habit_like(new_reminder) and new_reminder.is_recurring):
+            # A-02/A-03: same widening as reminders_snooze.py's quick-snooze
+            # handler — ANY recurring reminder's execution_time must stay
+            # untouched by a snooze (custom "own time" included here), not
+            # just a habit-like one. See Reminder.rrule_dtstart's docstring.
+            if not (is_snooze_mode and new_reminder.is_recurring):
                 new_reminder.execution_time = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1

@@ -22,6 +22,7 @@ from bot.database.dao.base import BaseDAO
 
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, ReminderKind, is_habit_like
+from bot.utils.time_ext import local_day_bounds_utc, local_days_ago_utc
 
 # fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
 # containing them (e.g. "скидка 50%") must be treated as a literal, not a
@@ -68,8 +69,6 @@ class ReminderDAO(BaseDAO[Reminder]):
         text: str,
         execution_time: datetime,
         *,
-        media_file_id: Optional[str] = None,
-        media_type: Optional[str] = None,
         is_recurring: bool = False,
         rrule_string: Optional[str] = None,
         is_habit: bool = False,
@@ -122,14 +121,16 @@ class ReminderDAO(BaseDAO[Reminder]):
             user_id=user_id,
             reminder_text=text,
             execution_time=execution_time,
-            media_file_id=media_file_id,
-            media_type=media_type,
             is_recurring=is_recurring,
             rrule_string=rrule_string,
             is_habit=(is_habit or is_fluid_habit),
             is_fluid_habit=is_fluid_habit,
             fluid_mode=fluid_mode,
             habit_active_due_at=execution_time if is_habit else None,
+            # A-02: the series' fixed anchor — see Reminder.rrule_dtstart's
+            # docstring. Only meaningful (and only set) for a recurring
+            # reminder with an actual rule; NULL for a plain one-off.
+            rrule_dtstart=execution_time if (is_recurring and rrule_string) else None,
             is_nagging=is_nagging,
             nagging_max_repeats=nagging_max_repeats,
             tags=tags,
@@ -424,19 +425,11 @@ class ReminderDAO(BaseDAO[Reminder]):
             ...     status="pending"
             ... )
         """
-        try:
-            tz = pytz.timezone(user_tz_str)  # Parse timezone string
-        except Exception:
-            tz = pytz.UTC  # Fallback to UTC if invalid timezone
-
-        now_local = datetime.now(tz)  # Current time in user's local timezone
-        start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day_local = start_of_day_local + timedelta(days=1)
-
-        # Normalize to UTC (naive) for DB comparison
-        # This ensures we're comparing apples-to-apples with execution_time (stored in UTC)
-        start_utc = start_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
-        end_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        # A-20: DST-safe day boundaries — see local_day_bounds_utc's
+        # docstring for why the previous now_local.replace(hour=0, ...)
+        # arithmetic on an already-localized datetime could shift a task
+        # out of (or into) "today" on the day of a DST transition.
+        start_utc, end_utc = local_day_bounds_utc(user_tz_str)
 
         if status == "completed":
             # Completed list is based on completion moment, not current status,
@@ -531,17 +524,9 @@ class ReminderDAO(BaseDAO[Reminder]):
             Sequence[Reminder]: Completed reminders in the rolling window,
             newest first.
         """
-        try:
-            tz = pytz.timezone(user_tz_str)
-        except Exception:
-            tz = pytz.UTC
-
         days = max(1, int(days))
-        now_local = datetime.now(tz)
-        window_start_local = now_local - timedelta(days=days)
-
-        start_utc = window_start_local.astimezone(pytz.UTC).replace(tzinfo=None)
-        end_utc = now_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        # A-20: DST-safe rolling window — see local_days_ago_utc's docstring.
+        start_utc, end_utc = local_days_ago_utc(user_tz_str, days)
 
         result = await self.session.execute(
             select(Reminder)
@@ -683,17 +668,8 @@ class ReminderDAO(BaseDAO[Reminder]):
     async def get_user_reminders_this_week(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
         """3.4 "this week" filter: pending tasks due within the next 7 local
         days (today through +6 days inclusive)."""
-        try:
-            tz = pytz.timezone(user_tz_str)
-        except Exception:
-            tz = pytz.UTC
-
-        now_local = datetime.now(tz)
-        start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_local = start_of_day_local + timedelta(days=7)
-
-        start_utc = start_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
-        end_utc = end_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        # A-20: DST-safe day boundaries — see local_day_bounds_utc's docstring.
+        start_utc, end_utc = local_day_bounds_utc(user_tz_str, days=7)
 
         result = await self.session.execute(
             select(Reminder)

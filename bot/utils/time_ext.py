@@ -141,6 +141,67 @@ def local_time_tomorrow(
     return tz.localize(candidate_naive).astimezone(timezone.utc)
 
 
+def local_day_bounds_utc(
+    tz_str: str,
+    *,
+    days: int = 1,
+    now_utc: Optional[datetime] = None,
+) -> tuple[datetime, datetime]:
+    """A-20: the [start, end) local-calendar-day window covering *days*
+    whole local days starting at today's local midnight, as (start, end)
+    naive UTC — DST-safe by the same construction as the three helpers
+    above: build the naive local midnight, add whole days on that NAIVE
+    value, then localize each of the two boundaries separately.
+
+    ReminderDAO.get_today_tasks_by_status/get_user_reminders_this_week
+    used to instead do `now_local.replace(hour=0, ...) + timedelta(days=N)`
+    on an already-localized (pytz-aware) datetime — `replace()` keeps
+    `now_local`'s ORIGINAL tzinfo (a fixed UTC-offset snapshot pytz bakes
+    in at localization time) instead of resolving the correct offset for
+    the boundary's own date, and a `+= timedelta` that crosses a DST
+    transition then carries that stale offset. On the day of a DST
+    transition, that shifts the whole window an hour off — a task due in
+    the shifted hour drops out of "today" (or "this week") entirely, or a
+    task from the adjacent day wrongly appears in it.
+    """
+    tz = _safe_tz(tz_str)
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    now_local_naive = to_utc_aware(now_utc).astimezone(tz).replace(tzinfo=None)
+    start_local_naive = now_local_naive.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local_naive = start_local_naive + timedelta(days=days)
+    start_utc = tz.localize(start_local_naive).astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = tz.localize(end_local_naive).astimezone(timezone.utc).replace(tzinfo=None)
+    return start_utc, end_utc
+
+
+def local_days_ago_utc(
+    tz_str: str,
+    days: int,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> tuple[datetime, datetime]:
+    """A-20: (start, end) naive UTC for "exactly *days* local calendar days
+    ago, through now" — same DST-safe construction as local_day_bounds_utc,
+    but a rolling point-in-time window (e.g. "last 7 days") rather than a
+    calendar-day-aligned one. ReminderDAO.get_recent_completed_tasks used
+    `now_local - timedelta(days=days)` directly on an already-localized
+    datetime, which keeps `now_local`'s original (possibly now-stale)
+    UTC offset baked in across a DST transition inside that window — the
+    same class of off-by-an-hour bug local_day_bounds_utc's docstring
+    describes, here shifting the window's start boundary instead of a
+    whole calendar day.
+    """
+    tz = _safe_tz(tz_str)
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    now_local_naive = to_utc_aware(now_utc).astimezone(tz).replace(tzinfo=None)
+    start_local_naive = now_local_naive - timedelta(days=days)
+    start_utc = tz.localize(start_local_naive).astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = to_utc_aware(now_utc).replace(tzinfo=None)
+    return start_utc, end_utc
+
+
 def next_occurrence_utc(
     rrule_string: str,
     dtstart_utc_naive: datetime,

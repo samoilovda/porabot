@@ -1,12 +1,15 @@
 """A plain (non-habit) task's fired-reminder keyboard now offers a "Not
 done" action alongside Done/snooze, for a task that loses relevance while
-it's being nagged about. It deliberately reuses two already-existing
-flows instead of a new one: a one-off task's button routes to del_task_
-(soft-delete with Undo, same as the task list's Delete), a recurring
-plain task's button routes to done_skip_next_ (same as the post-Done
-follow-up keyboard's Skip next) so the series itself isn't wiped out.
-Habit-like/fluid reminders keep their existing "Not today" instead and
-must never show both.
+it's being nagged about. A one-off task's button routes to del_task_
+(soft-delete with Undo, same as the task list's Delete). A recurring
+plain task's button routes to not_relevant_ (reminders_completion.
+callback_not_relevant) — NOT done_skip_next_ (docs/audits/
+2026-09-22-audit.md#a-08): by the time this button is tapped, the
+scheduler has already advanced execution_time to the correct next
+occurrence, so done_skip_next_'s "skip the upcoming one" semantics would
+silently drop that next occurrence instead of dismissing the cycle that
+just fired. Habit-like/fluid reminders keep their existing "Not today"
+instead and must never show both.
 """
 
 from bot.keyboards.inline import get_task_done_keyboard
@@ -32,7 +35,7 @@ def test_one_off_task_gets_not_done_routed_to_soft_delete() -> None:
     assert "not_today_7" not in datas
 
 
-def test_recurring_plain_task_gets_not_done_routed_to_skip_next() -> None:
+def test_recurring_plain_task_gets_not_done_routed_to_not_relevant() -> None:
     markup = get_task_done_keyboard(
         reminder_id=8,
         l10n=RU_LEXICON,
@@ -42,8 +45,9 @@ def test_recurring_plain_task_gets_not_done_routed_to_skip_next() -> None:
     )
 
     datas = _callback_datas(markup)
-    assert "done_skip_next_8" in datas
+    assert "not_relevant_8" in datas
     assert "del_task_8" not in datas
+    assert "done_skip_next_8" not in datas
 
 
 def test_habit_keeps_not_today_and_never_shows_not_done_too() -> None:
@@ -58,11 +62,11 @@ def test_habit_keeps_not_today_and_never_shows_not_done_too() -> None:
     datas = _callback_datas(markup)
     assert "not_today_9" in datas
     assert "del_task_9" not in datas
-    assert "done_skip_next_9" not in datas
+    assert "not_relevant_9" not in datas
 
 
 def test_neither_flag_shows_no_secondary_row() -> None:
     markup = get_task_done_keyboard(reminder_id=10, l10n=RU_LEXICON)
 
     datas = _callback_datas(markup)
-    assert not any(d.startswith(("not_today_", "del_task_", "done_skip_next_")) for d in datas)
+    assert not any(d.startswith(("not_today_", "del_task_", "not_relevant_")) for d in datas)

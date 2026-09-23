@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.handlers.reminders_completion import callback_done_skip_next, callback_done_undo
+from bot.handlers.reminders_listing import callback_delete_task
 from bot.handlers.reminders_snooze import callback_snooze_act
 from bot.lexicon import get_l10n
 
@@ -156,4 +157,46 @@ async def test_done_skip_next_commit_failure_restores_prior_job() -> None:
 
     assert len(scheduled_calls) == 2
     assert removed_ids == []
+    callback.answer.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# docs/audits/2026-09-22-audit.md#a-14 — callback_delete_task (and its
+# siblings callback_edit_delete, habits.cb_del_habit) used to remove the
+# scheduler job BEFORE committing pending_delete_at — the REVERSE of every
+# other mutating flow in this codebase. A commit failure there left the
+# reminder genuinely still active in the DB while its job was already
+# gone, silently never firing again until a restart's
+# reconcile_jobs_with_db happened to notice.
+# ---------------------------------------------------------------------------
+
+async def test_delete_task_commit_failure_never_touches_the_scheduler_job() -> None:
+    reminder = SimpleNamespace(
+        id=11,
+        user_id=1,
+        pending_delete_at=None,
+    )
+    session = SimpleNamespace(commit=_failing_commit(), rollback=AsyncMock())
+    reminder_dao = SimpleNamespace(get_owned=AsyncMock(return_value=reminder), session=session)
+
+    removed_reminder_ids: list[int] = []
+    removed_nagging_ids: list[int] = []
+    scheduler_service = SimpleNamespace(
+        remove_reminder_job=lambda rid: removed_reminder_ids.append(rid),
+        remove_nagging_job=lambda rid: removed_nagging_ids.append(rid),
+    )
+
+    user = SimpleNamespace(id=1)
+    l10n = get_l10n("en")
+    callback = SimpleNamespace(data="del_task_11", answer=AsyncMock())
+
+    await callback_delete_task(callback, reminder_dao, scheduler_service, user, l10n)
+
+    # The job must survive untouched — a commit failure means
+    # pending_delete_at never actually took effect, so removing the job
+    # would have stranded an otherwise-still-active reminder with nothing
+    # scheduled for it.
+    assert removed_reminder_ids == []
+    assert removed_nagging_ids == []
+    session.rollback.assert_awaited()
     callback.answer.assert_awaited()

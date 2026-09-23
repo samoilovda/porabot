@@ -393,11 +393,16 @@ def get_task_done_keyboard(
     # habits get "Not today" (skips today, streak resets), plain tasks get
     # "Not done" instead — a task that lost relevance while nagging you
     # shouldn't have to sit through Done vs. keep-snoozing forever.
-    # "Not done" reuses two already-battle-tested flows rather than
-    # inventing a third reminder-closing path: a recurring plain task skips
-    # to its next occurrence (same as done_skip_next_ from the post-Done
-    # follow-up keyboard), a one-off task is soft-deleted with Undo (same
-    # as del_task_ from the task list).
+    # A one-off task is soft-deleted with Undo (same as del_task_ from the
+    # task list). A-08: a recurring plain task used to route to
+    # done_skip_next_ (reusing the post-Done follow-up keyboard's "Skip
+    # next") — but by the time this fresh notification's button is
+    # tapped, the scheduler has ALREADY advanced execution_time to the
+    # correct next occurrence, so done_skip_next_'s "skip the upcoming
+    # one" silently dropped that already-correct next occurrence instead
+    # of dismissing the cycle that just fired. not_relevant_ (see
+    # reminders_completion.callback_not_relevant) only closes the current
+    # nag chain and leaves the already-correct schedule untouched.
     if show_not_today:
         not_today_callback = f"not_today_{reminder_id}"
         if cycle_due_ts is not None:
@@ -409,7 +414,7 @@ def get_task_done_keyboard(
             )
         )
     elif show_not_done:
-        not_done_callback = f"done_skip_next_{reminder_id}" if is_recurring else f"del_task_{reminder_id}"
+        not_done_callback = f"not_relevant_{reminder_id}" if is_recurring else f"del_task_{reminder_id}"
         builder.row(
             InlineKeyboardButton(
                 text=l10n["btn_not_done"],
@@ -871,13 +876,19 @@ def get_settings_keyboard(
         )
     )
 
-    # 4.4: read-only .ics calendar feed link.
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_ics_feed", "📅 Calendar feed"),
-            callback_data="settings_ics_feed",
+    # 4.4: read-only .ics calendar feed link. A-17: shown only once the
+    # web server that actually serves it is both enabled and reachable
+    # from a real address — otherwise this button generates a feed token
+    # and shows the user a URL under http://localhost:{WEB_SERVER_PORT}
+    # that is not reachable from anywhere outside this host, same "don't
+    # ship a button that can never work" reasoning as MINI_APP_URL below.
+    if config.WEB_SERVER_ENABLED and config.PUBLIC_BASE_URL:
+        builder.row(
+            InlineKeyboardButton(
+                text=l10n.get("btn_ics_feed", "📅 Calendar feed"),
+                callback_data="settings_ics_feed",
+            )
         )
-    )
 
     # 4.6: Mini App entry point — only shown once a real MINI_APP_URL is
     # configured (see bot/config.py). web_app buttons require an https://

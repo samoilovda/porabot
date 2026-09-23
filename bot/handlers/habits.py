@@ -22,7 +22,9 @@ from bot.database.models import (
 from bot.handlers.reminders import (
     _UNDO_DELETE_WINDOW,
     _message_task_key,
+    _parse_id_suffix,
     _remove_keyboard_after_delay,
+    _soft_delete_reminder,
     active_auto_delete_tasks,
 )
 from bot.keyboards.inline import get_undo_delete_keyboard
@@ -775,18 +777,22 @@ async def cb_del_habit(
     sweep hard-deletes both the reminder and its habit_events once the
     undo window elapses, restart-safe by construction.
     """
-    task_id = int(callback.data.split("_")[-1])
+    task_id = _parse_id_suffix(callback.data, "del_habit_")
+    if task_id is None:
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
     reminder = await reminder_dao.get_owned(task_id, user.id)
     if not reminder:
         await callback.answer(l10n["item_not_found"], show_alert=True)
         return
     try:
-        scheduler_service.remove_reminder_job(task_id)
-        scheduler_service.remove_nagging_job(task_id)
-        reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-            seconds=_UNDO_DELETE_WINDOW
-        )
-        await reminder_dao.session.commit()
+        # A-14: commit pending_delete_at BEFORE tearing down the scheduler
+        # job — see reminders_shared._soft_delete_reminder's docstring for
+        # why the old (job-removal-first) order could leave a habit with
+        # no job at all if the commit then failed.
+        if not await _soft_delete_reminder(reminder, reminder_dao, scheduler_service):
+            await callback.answer(l10n["habit_delete_error_alert"], show_alert=True)
+            return
 
         await callback.answer(l10n["habit_deleted_alert"], show_alert=True)
         await callback.message.edit_text(

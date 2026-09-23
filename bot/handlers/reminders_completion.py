@@ -19,11 +19,11 @@ from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import ReminderKind, User
 from bot.database.models import is_habit_like as _is_habit_like
-from bot.handlers.reminders_shared import _pick_done_reply
+from bot.handlers.reminders_shared import _parse_id_suffix, _pick_done_reply
 from bot.keyboards.inline import get_done_followup_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
-from bot.utils.markdown import escape_markdown_v2
+from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
 
 router = Router(name="reminders_completion")
@@ -344,7 +344,9 @@ async def callback_done_note(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_note_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "done_note_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -388,14 +390,19 @@ async def callback_done_skip_next(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    reminder_id = int(callback.data.split("done_skip_next_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "done_skip_next_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder or not reminder.is_recurring or not reminder.rrule_string:
         return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
 
     try:
         next_run_utc_naive = next_occurrence_utc(
-            reminder.rrule_string, reminder.execution_time, user.timezone, reminder.execution_time
+            reminder.rrule_string,
+            getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+            user.timezone,
+            reminder.execution_time,
         )
         if not next_run_utc_naive:
             return await callback.answer(l10n.get("done_skip_next_failed", "❌ I couldn't skip next occurrence for this task."), show_alert=True)
@@ -439,6 +446,50 @@ async def callback_done_skip_next(
         l10n.get("done_skip_next_done", "⏭ Next occurrence skipped. New time: {time}").format(time=next_str)
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("not_relevant_"))
+async def callback_not_relevant(
+    callback: CallbackQuery,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    user: User,
+    l10n: dict[str, Any],
+) -> None:
+    """A-08: "🚫 Not applicable" on a PLAIN recurring reminder's fresh,
+    just-fired notification (get_task_done_keyboard's show_not_done
+    branch) — distinct from done_skip_next_ above, which this used to
+    reuse and must not: by the time this button is tapped,
+    _execute_reminder has already advanced execution_time (and the
+    scheduler job) to the CORRECT next occurrence for this series, as it
+    does for every recurring fire. done_skip_next_'s job is to skip that
+    ALREADY-correct upcoming occurrence and jump one further — reusing it
+    here silently dropped tomorrow's occurrence instead of dismissing
+    today's already-fired one, exactly the cycle the user tapped this
+    button about. This handler only closes today's nag chain (same
+    tracking reset as mark_habit_not_today, which this reuses even for a
+    non-habit reminder — its own logic is generic, not habit-specific) and
+    deliberately touches neither execution_time nor the main job.
+    """
+    try:
+        reminder_id = int(callback.data.split("not_relevant_")[1])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
+        return
+
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
+    if not reminder:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+
+    await reminder_dao.mark_habit_not_today(reminder.id)
+    scheduler_service.remove_nagging_job(reminder.id)
+
+    try:
+        saved_text = f"{escape_markdown(callback.message.text)}\n\n{l10n['not_relevant_saved']}"
+        await callback.message.edit_text(saved_text, reply_markup=None, parse_mode="Markdown")
+    except TelegramBadRequest:
+        pass  # Concurrent tap — safe to ignore
+    await callback.answer(l10n["not_relevant_saved"])
 
 
 @router.callback_query(F.data.startswith("done_undo_"))

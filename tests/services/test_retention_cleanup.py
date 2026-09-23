@@ -227,6 +227,64 @@ async def test_recurring_habit_survives_regardless_of_age() -> None:
         await engine.dispose()
 
 
+async def test_habit_with_repeat_turned_off_is_deleted_without_fk_violation() -> None:
+    """docs/audits/2026-09-22-audit.md#a-12 — a habit whose repeat was
+    later turned off (rrb_none, via the settings gear) becomes
+    is_recurring=False while still owning habit_events, some possibly
+    well within HABIT_EVENT_RETENTION_DAYS. Once such a habit is also
+    completed and past COMPLETED_REMINDER_RETENTION_DAYS, it qualifies for
+    deletion here — and used to violate the reminders.habit_events
+    foreign key (PRAGMA foreign_keys=ON, see bot.database.engine.create_engine)
+    every single day this job ran, rolling back the ENTIRE cleanup
+    transaction (including the unrelated age-based habit_event pruning)
+    every time.
+
+    Uses the real create_engine/init_db (not this file's bare
+    create_async_engine fixture) specifically because FK enforcement is
+    what this test is verifying survives.
+    """
+    from bot.database.engine import create_engine, dispose_engine, init_db
+
+    engine = create_engine("sqlite+aiosqlite://")
+    await init_db(engine)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        async with maker() as session:
+            session.add(User(id=1, username="u", timezone="UTC"))
+            await session.flush()
+            reminder_dao = ReminderDAO(session)
+            habit_event_dao = HabitEventDAO(session)
+            habit = await reminder_dao.create_reminder(
+                user_id=1,
+                text="Former habit",
+                execution_time=now - timedelta(days=COMPLETED_REMINDER_RETENTION_DAYS + 5),
+                is_habit=True,
+                is_recurring=False,  # repeat was turned off via rrb_none
+            )
+            habit.status = "completed"
+            habit.completed_at = now - timedelta(days=COMPLETED_REMINDER_RETENTION_DAYS + 5)
+            await session.flush()
+            # A RECENT event — well within HABIT_EVENT_RETENTION_DAYS, so
+            # the age-based prune alone would never remove it.
+            await habit_event_dao.record(
+                reminder=habit, user_tz="UTC", outcome="done", source="button",
+                local_date=now.date().isoformat(),
+            )
+            await session.commit()
+            habit_id = habit.id
+
+        await _run_cleanup(maker)
+
+        async with maker() as session:
+            reminder_dao = ReminderDAO(session)
+            assert await reminder_dao.get_by_id(habit_id) is None
+            result = await session.execute(select(HabitEvent).where(HabitEvent.reminder_id == habit_id))
+            assert result.first() is None
+    finally:
+        await dispose_engine(engine)
+
+
 async def test_still_pending_reminder_survives() -> None:
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:

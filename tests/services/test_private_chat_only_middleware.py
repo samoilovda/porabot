@@ -106,6 +106,63 @@ async def test_private_message_reaches_the_handler_unaffected() -> None:
     handler.assert_awaited_once()
 
 
+async def test_repeated_group_messages_only_get_notified_once_within_the_cooldown() -> None:
+    """docs/audits/2026-09-22-audit.md#a-25 — a group with Telegram's
+    privacy mode off sees every single message; this used to reply with
+    the "private only" notice on EVERY one of them, forever, despite the
+    module's own docstring already claiming "answer once"."""
+    middleware = PrivateChatOnlyMiddleware()
+    handler = AsyncMock(return_value="ok")
+
+    from unittest.mock import patch
+
+    with patch.object(Message, "answer", new=AsyncMock()) as mock_answer:
+        for _ in range(5):
+            result = await middleware(handler, _group_message_update(), {})
+            assert result is None
+
+    mock_answer.assert_awaited_once()  # not five times
+    handler.assert_not_awaited()
+
+
+async def test_notice_is_resent_after_the_cooldown_elapses(monkeypatch) -> None:
+    import time as time_module
+
+    middleware = PrivateChatOnlyMiddleware()
+    handler = AsyncMock(return_value="ok")
+
+    from unittest.mock import patch
+
+    fake_now = [1000.0]
+    monkeypatch.setattr(time_module, "monotonic", lambda: fake_now[0])
+
+    with patch.object(Message, "answer", new=AsyncMock()) as mock_answer:
+        await middleware(handler, _group_message_update(), {})
+        fake_now[0] += 3601.0  # just past _RENOTIFY_AFTER_SECONDS
+        await middleware(handler, _group_message_update(), {})
+
+    assert mock_answer.await_count == 2
+
+
+async def test_cleanup_expired_drops_chats_past_their_cooldown() -> None:
+    import time as time_module
+    from unittest.mock import patch
+
+    middleware = PrivateChatOnlyMiddleware()
+    handler = AsyncMock(return_value="ok")
+
+    with patch.object(Message, "answer", new=AsyncMock()):
+        await middleware(handler, _group_message_update(), {})
+
+    assert -100123 in middleware._last_notified
+    # Simulate the cooldown having already elapsed.
+    middleware._last_notified[-100123] = time_module.monotonic() - 7200.0
+
+    middleware.cleanup_expired()
+
+    assert -100123 not in middleware._last_notified
+
+
 async def test_my_chat_member_update_passes_through_untouched() -> None:
     """No handler acts on my_chat_member today — this must not crash or
     block it; inner_event returns None for it, so it's a pure pass-through."""

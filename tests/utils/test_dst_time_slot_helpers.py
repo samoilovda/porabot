@@ -13,6 +13,8 @@ fixed helpers land on the correct UTC instant instead.
 from datetime import datetime, timezone
 
 from bot.utils.time_ext import (
+    local_day_bounds_utc,
+    local_days_ago_utc,
     local_time_today_or_tomorrow,
     local_time_today_strict,
     local_time_tomorrow,
@@ -75,3 +77,61 @@ def test_unknown_timezone_falls_back_to_utc() -> None:
     later_now_utc = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
     result_rolled = local_time_today_or_tomorrow("Not/ARealZone", 9, now_utc=later_now_utc)
     assert result_rolled == datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# docs/audits/2026-09-22-audit.md#a-20 — local_day_bounds_utc/
+# local_days_ago_utc must not drift a day boundary by an hour across a DST
+# transition, the same bug class as the helpers above but for
+# ReminderDAO's "today"/"this week"/"last N days" queries.
+# ---------------------------------------------------------------------------
+
+# Europe/Berlin switches to summer time (CET, UTC+1 -> CEST, UTC+2) at
+# 2026-03-29 02:00 local. "Now" is 2026-03-29 10:00 CEST (08:00 UTC) — AFTER
+# the transition, but TODAY's own local midnight (2026-03-29 00:00) was
+# still on the CET side of it (the transition happens at 02:00, not 00:00).
+_NOW_ON_TRANSITION_DAY_UTC = datetime(2026, 3, 29, 8, 0, tzinfo=timezone.utc)
+
+
+def test_local_day_bounds_start_uses_todays_own_offset_not_nows() -> None:
+    start_utc, end_utc = local_day_bounds_utc("Europe/Berlin", now_utc=_NOW_ON_TRANSITION_DAY_UTC)
+
+    # A buggy `now_local.replace(hour=0, ...)` implementation keeps "now"'s
+    # CEST (+02:00) offset baked in, landing on 2026-03-28 22:00 UTC — one
+    # hour EARLIER than the correct 23:00 UTC (2026-03-29 00:00 CET, still
+    # +01:00 since the transition hadn't happened yet at local midnight).
+    assert start_utc == datetime(2026, 3, 28, 23, 0)
+    assert end_utc == datetime(2026, 3, 29, 22, 0)  # tomorrow's midnight, CEST (+02:00)
+
+
+def test_local_day_bounds_excludes_a_task_the_buggy_start_would_have_included() -> None:
+    """A task at 2026-03-28 22:30 UTC is 23:30 CET on March 28 local —
+    yesterday, not "today" (March 29). The old buggy start boundary
+    (22:00 UTC) would have wrongly counted it as today's."""
+    start_utc, end_utc = local_day_bounds_utc("Europe/Berlin", now_utc=_NOW_ON_TRANSITION_DAY_UTC)
+    task_utc = datetime(2026, 3, 28, 22, 30)
+
+    assert not (start_utc <= task_utc < end_utc)
+
+
+def test_local_day_bounds_week_window_is_seven_days_from_todays_midnight() -> None:
+    start_utc, end_utc = local_day_bounds_utc("Europe/Berlin", days=7, now_utc=_NOW_ON_TRANSITION_DAY_UTC)
+
+    assert start_utc == datetime(2026, 3, 28, 23, 0)
+    assert end_utc == datetime(2026, 4, 4, 22, 0)  # +7 local days, CEST by then
+
+
+def test_local_days_ago_start_uses_that_days_own_offset() -> None:
+    """"7 days ago" from 2026-03-29 10:00 CEST lands on 2026-03-22 10:00
+    CET (+01:00, well before the transition) — a buggy implementation
+    that keeps "now"'s CEST (+02:00) offset would land an hour off."""
+    start_utc, end_utc = local_days_ago_utc("Europe/Berlin", 7, now_utc=_NOW_ON_TRANSITION_DAY_UTC)
+
+    assert start_utc == datetime(2026, 3, 22, 9, 0)  # 10:00 CET == 09:00 UTC
+    assert end_utc == _NOW_ON_TRANSITION_DAY_UTC.replace(tzinfo=None)
+
+
+def test_local_day_bounds_unknown_timezone_falls_back_to_utc() -> None:
+    start_utc, end_utc = local_day_bounds_utc("Not/ARealZone", now_utc=datetime(2026, 6, 1, 15, 0, tzinfo=timezone.utc))
+    assert start_utc == datetime(2026, 6, 1, 0, 0)
+    assert end_utc == datetime(2026, 6, 2, 0, 0)

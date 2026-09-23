@@ -93,7 +93,16 @@ class RateLimitMiddleware(BaseMiddleware):
                         l10n.get("rate_limited_callback", "⏳ Too many requests — slow down."),
                         show_alert=False,
                     )
-            hits.append(now)
+            # A-25: a DROPPED update must NOT extend the window — only
+            # updates that actually reach the handler count toward it.
+            # Recording every rejected attempt here used to mean an
+            # impatient user who keeps tapping/retyping while already
+            # throttled (a very ordinary reaction to a bot that suddenly
+            # stopped responding) kept pushing the window's newest
+            # timestamp to "now" indefinitely, so `hits` never drained
+            # below max_updates as long as they kept trying — effectively
+            # locking them out until they stopped entirely for a full
+            # window_seconds, far longer than the nominal cooldown.
             return None
 
         hits.append(now)

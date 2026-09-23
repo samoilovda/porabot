@@ -7,6 +7,7 @@ bot.context.get_context() (4.2) instead of holding a reference itself. This
 is a known APScheduler tradeoff.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -44,6 +45,40 @@ SEND_RETRY_BACKOFF_MINUTES = [1, 5, 15, 60]
 # APScheduler job target (must be a top-level function, not a bound method)
 # ---------------------------------------------------------------------------
 
+# A-09: APScheduler's AsyncIOExecutor.shutdown() cancels every pending
+# future regardless of its own wait= argument — see its own source
+# (apscheduler.executors.asyncio.AsyncIOExecutor.shutdown: "There is no
+# way to honor wait=True without converting this method into a coroutine
+# method"). A reminder job cancelled mid-send-then-commit (the send
+# already went out, the commit that records last_fired_at hasn't) gets
+# redelivered after restart — reconcile_jobs_with_db sees an
+# undelivered cycle that was, in fact, already sent. Tracking in-flight
+# jobs here (populated/cleared around the one call below) lets
+# bot/__main__.py's shutdown sequence wait for them to finish on its own
+# terms, BEFORE calling scheduler.shutdown() at all — see
+# wait_for_in_flight_jobs.
+_in_flight_jobs: set[asyncio.Task] = set()
+
+
+async def wait_for_in_flight_jobs(timeout: float = 20.0) -> None:
+    """Best-effort wait for every currently-running execute_reminder_job
+    call to finish, up to *timeout* seconds. Call this BEFORE
+    scheduler.shutdown() during graceful shutdown — see _in_flight_jobs'
+    docstring for why shutdown() itself can't be trusted to wait."""
+    tasks = [t for t in _in_flight_jobs if not t.done()]
+    if not tasks:
+        return
+    logger.info("Waiting up to %.0fs for %d in-flight reminder job(s) to finish...", timeout, len(tasks))
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    if pending:
+        logger.warning(
+            "%d reminder job(s) still running after %.0fs shutdown grace period — "
+            "proceeding with shutdown anyway.",
+            len(pending),
+            timeout,
+        )
+
+
 async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
     """Called by APScheduler at the scheduled time to fire a reminder."""
     try:
@@ -51,6 +86,9 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     except RuntimeError:
         logger.error("Cannot execute reminder %s: AppContext not set.", reminder_id)
         return
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        _in_flight_jobs.add(current_task)
     job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
     try:
         await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
@@ -78,6 +116,9 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
             is_nagging_execution,
         )
         ctx.scheduler.schedule_execution_retry(reminder_id, is_nagging_execution)
+    finally:
+        if current_task is not None:
+            _in_flight_jobs.discard(current_task)
 
 
 async def remove_orphan_scheduler_jobs_job() -> None:
@@ -99,6 +140,34 @@ async def remove_orphan_scheduler_jobs_job() -> None:
         logger.error("Cannot remove orphan scheduler jobs: AppContext not set.")
         return
     await ctx.scheduler.remove_orphan_scheduler_jobs()
+
+
+async def reconcile_jobs_with_db_job() -> None:
+    """A-11: periodic wrapper for SchedulerService.reconcile_jobs_with_db,
+    same reasoning and module-level-function requirement as
+    remove_orphan_scheduler_jobs_job above (a persisted bound-method job
+    would try to pickle the whole SchedulerService, including its own
+    live AsyncIOScheduler, which explicitly refuses to be pickled).
+
+    reconcile_jobs_with_db used to run only once, at startup — the one
+    place a pending reminder can end up with no scheduler job at all
+    (after downtime spanning a misfire window, or a jobstore reset) is NOT
+    limited to "the process just started": once exhausted,
+    _schedule_send_retry/schedule_execution_retry's own backoff (see their
+    docstrings) explicitly gives up and leaves the reminder for this exact
+    function to pick back up — but a process that stays up for days
+    between deploys would otherwise never run it again, leaving such a
+    reminder (and, worse, every future occurrence of a RECURRING one)
+    silently dead until the next restart. Runs hourly, alongside — and
+    for the same "the jobstore is a cache derived from the DB, not the
+    source of truth" reason as — remove_orphan_scheduler_jobs_job.
+    """
+    try:
+        ctx = _get_context()
+    except RuntimeError:
+        logger.error("Cannot reconcile scheduler jobs: AppContext not set.")
+        return
+    await ctx.scheduler.reconcile_jobs_with_db()
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +318,10 @@ class SchedulerService:
                             user_tz = user_tz_map.get(reminder.user_id, "UTC")
                             try:
                                 next_run_utc_naive = next_occurrence_utc(
-                                    reminder.rrule_string, reminder.execution_time, user_tz, now_utc_naive
+                                    reminder.rrule_string,
+                                    getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
+                                    user_tz,
+                                    now_utc_naive,
                                 )
                             except (ValueError, TypeError) as e:
                                 logger.error(
@@ -715,7 +787,7 @@ class SchedulerService:
                     try:
                         next_run_utc_naive = next_occurrence_utc(
                             reminder.rrule_string,
-                            reminder.execution_time,
+                            getattr(reminder, "rrule_dtstart", None) or reminder.execution_time,  # A-02
                             user.timezone,
                             now_utc_naive,
                         )
@@ -734,6 +806,7 @@ class SchedulerService:
                         logger.error("Invalid rrule for reminder %s: %s — disabling recurrence.", reminder_id, e)
                         reminder.is_recurring = False
                         reminder.rrule_string = None
+                        reminder.rrule_dtstart = None
                 # Nagging reschedule with per-reminder max repeats.
                 max_nag_repeats = max(0, int(reminder.nagging_max_repeats or 0))
                 sent_nags = max(0, int(reminder.nagging_sent_count or 0))

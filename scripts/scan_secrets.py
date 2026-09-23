@@ -84,6 +84,10 @@ PLACEHOLDER_HINTS = re.compile(
     r"(?i)your[_-]?|example|placeholder|xxxx|changeme|<.*>|\{\{.*\}\}"
     r"|dummy|fake|test[_-]?key|sample|replace_with|000000|1234567890"
     r"|^\$\{|^%|user:password"
+    # aiogram's own canonical example bot token (used verbatim across its
+    # docs and this repo's tests) and the bare "test-token" conftest.py
+    # injects for every test run — both look secret-shaped but never are.
+    r"|123456:ABC-DEF|^test-token$"
 )
 
 SUSPICIOUS_FILENAMES = re.compile(

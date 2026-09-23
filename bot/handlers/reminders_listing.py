@@ -32,6 +32,7 @@ from bot.handlers.reminders_shared import (
     _format_task_line_md2,
     _message_task_key,
     _paginate_tasks_for_list,
+    _parse_id_suffix,
     _remove_keyboard_after_delay,
     _render_tasks_list_text,
     _reschedule_current_execution,
@@ -64,7 +65,9 @@ logger = logging.getLogger(__name__)
 async def callback_task_settings(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    reminder_id = int(callback.data.split("task_settings_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "task_settings_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
@@ -87,21 +90,21 @@ async def callback_delete_task(
     callback: CallbackQuery, reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
 ) -> None:
-    task_id = int(callback.data.split("del_task_")[1])
+    task_id = _parse_id_suffix(callback.data, "del_task_")
+    if task_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(task_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)
-    # Stop the job immediately; the DB row (and any habit_events, for fixed
-    # habits reachable from "My Tasks") is only removed once the undo window
-    # elapses (see delete_cleanup.py), so an Undo tap can still restore it.
-    scheduler_service.remove_reminder_job(task_id)
-    scheduler_service.remove_nagging_job(task_id)
-    # Persisted and committed before confirming to the user — see
-    # callback_edit_delete above for why this must not be an in-memory timer.
-    reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-        seconds=reminders_shared._UNDO_DELETE_WINDOW
-    )
-    await reminder_dao.session.commit()
+    # A-14: commit pending_delete_at BEFORE tearing down the scheduler job
+    # — see reminders_shared._soft_delete_reminder's docstring for why the
+    # old (job-removal-first) order could leave a reminder with no job at
+    # all if the commit then failed. The DB row (and any habit_events, for
+    # fixed habits reachable from "My Tasks") is only hard-removed once
+    # the undo window elapses (see delete_cleanup.py), so an Undo tap can
+    # still restore it either way.
+    if not await reminders_shared._soft_delete_reminder(reminder, reminder_dao, scheduler_service):
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
     await callback.answer(l10n["task_deleted"])
     await callback.message.edit_text(
         l10n["task_deleted"], reply_markup=get_undo_delete_keyboard(task_id, l10n)
@@ -115,7 +118,9 @@ async def callback_undo_delete(
     callback: CallbackQuery, reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService, user: User, l10n: dict[str, Any]
 ) -> None:
-    reminder_id = int(callback.data.split("undo_del_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "undo_del_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
 
     reminder = await reminder_dao.get_owned(reminder_id, user.id, include_pending_delete=True)
     if not reminder:
@@ -409,7 +414,10 @@ async def callback_recovery_done_all(
         if task.is_recurring and task.rrule_string:
             try:
                 next_run_utc_naive = next_occurrence_utc(
-                    task.rrule_string, task.execution_time, user.timezone, now_utc.replace(tzinfo=None)
+                    task.rrule_string,
+                    getattr(task, "rrule_dtstart", None) or task.execution_time,  # A-02
+                    user.timezone,
+                    now_utc.replace(tzinfo=None),
                 )
             except Exception:
                 next_run_utc_naive = None
@@ -479,10 +487,14 @@ async def callback_recovery_snooze_all(
     # mutated, out of sync with their now-reverted rows).
     new_time = datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1)
     for task in overdue:
-        # For habit-like recurring reminders, do not overwrite execution_time —
-        # it anchors the rrule so the next day's occurrence stays on the correct
-        # original time. Only reschedule the current job.
-        if not (_is_habit_like(task) and task.is_recurring):
+        # A-02/A-03: for ANY recurring task (not just habit-like — see
+        # reminders_snooze.py's quick-snooze handler for the same
+        # widening), do not overwrite execution_time. The series is
+        # anchored on rrule_dtstart now, not execution_time — but
+        # overwriting it here would still show the wrong "next due" time
+        # everywhere else (task list, briefs) until the next fire recomputes
+        # it. Only reschedule the current job.
+        if not task.is_recurring:
             task.execution_time = new_time
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None
@@ -518,7 +530,9 @@ async def callback_edit_set_nag_limit(
     callback: CallbackQuery, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
     _reset_auto_delete(callback.message)
-    reminder_id = int(callback.data.split("edit_set_nag_limit_")[1])
+    reminder_id = _parse_id_suffix(callback.data, "edit_set_nag_limit_")
+    if reminder_id is None:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
     reminder = await reminder_dao.get_owned(reminder_id, user.id)
     if not reminder:
         return await callback.answer(l10n["item_not_found"], show_alert=True)

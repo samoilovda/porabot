@@ -153,6 +153,13 @@ _AMBIGUOUS_HOUR_WORD_RE = re.compile(
 # Stage 4a/4c's regex fallback (which already asks for this exact trailing
 # period-of-day word and folds it into the computed hour via
 # _process_hour_expression) recomputes it, correctly, instead.
+# Clock-time shape only ("в 2 дня", "в 3 часа дня") — NOT a bare "3 дня",
+# which after "через" is a duration ("in 3 days") that dateparser handles.
+_RU_PERIOD_IN_MATCH_RE = re.compile(
+    r"(?<![^\W\d_])в\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час(?:а|ов)?\s+)?(?:утра|дня|вечера|ночи)(?![^\W\d_])",
+    re.IGNORECASE,
+)
+
 _TRAILING_PERIOD_WORD_RE = re.compile(
     r"^\s+(?:de\s+la\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche)\b",
     re.IGNORECASE,
@@ -175,9 +182,13 @@ _TRAILING_PERIOD_WORD_RE = re.compile(
 _EXPLICIT_TIME_MARKER_RE = re.compile(
     r"\d{1,2}[:.]\d{2}"
     r"|\b(?:в|at|a\s+las?)\s*\d{1,2}\b"
-    r"|утра|дня|послеобеденно|вечера|ночи|am|pm"
-    r"|(?:de|por)\s+la\s+ma[ñn]ana|\btarde\b|\bnoche\b"
-    r"|полдень|полночь|midnight|noon|mediod[ií]a|medianoche",
+    # Period-of-day words must stand alone: bare "дня" also matched inside
+    # "сегодня", so "позвонить сегодня" slipped past the date-only check.
+    # Guarded against adjacent LETTERS only (not \b), so "5pm" — a digit
+    # right before "pm" — still counts.
+    r"|(?<![^\W\d_])(?:утра|дня|послеобеденно|вечера|ночи|am|pm"
+    r"|полдень|полночь|midnight|noon|mediod[ií]a|medianoche)(?![^\W\d_])"
+    r"|(?:de|por)\s+la\s+ma[ñn]ana|\btarde\b|\bnoche\b",
     re.IGNORECASE,
 )
 
@@ -275,7 +286,7 @@ class InputParser:
             return None
 
         token = (period_token or "").lower()
-        has_pm = token in {"pm", "вечера", "послеобеденно", "tarde", "noche"}
+        has_pm = token in {"pm", "вечера", "дня", "послеобеденно", "tarde", "noche"}
         has_am = token in {"am", "утра", "ночи", "mañana"}
         is_24h = hour >= 13
 
@@ -381,6 +392,14 @@ class InputParser:
 
         dp_matches = [(s, dt) for s, dt in dp_matches if not _has_trailing_period_word(s)]
 
+        # Same bug class, opposite span: for "в 2 дня" dateparser DOES
+        # swallow the period word into its own match — and then resolves
+        # the whole thing to "right now". Russian period-of-day words are
+        # handled correctly by the regex fallback below, so a dateparser
+        # match containing one is dropped in favor of it. (English "5pm"/
+        # "at 5 pm" dateparser gets right, so those are left alone.)
+        dp_matches = [(s, dt) for s, dt in dp_matches if not _RU_PERIOD_IN_MATCH_RE.search(s)]
+
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
@@ -420,7 +439,7 @@ class InputParser:
                 # clean_text. \s* accepts that already-consumed, now-empty
                 # gap just as well as a real one when a час-word WAS
                 # present and used its own trailing space.
-                r"(?:\s*(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
+                r"(?:\s*(?:de\s+la\s+)?(утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
                 re.IGNORECASE,
             )
             hour_match = hour_pattern.search(normalized_text)
@@ -435,7 +454,13 @@ class InputParser:
                 if result_dt:
                     parsed_datetime = result_dt
                     parse_source = "regex_hour"
-                    confidence = 0.55
+                    # An explicit period-of-day word ("в 7 утра", "at 5 pm")
+                    # leaves nothing ambiguous to confirm. Since the trailing-
+                    # period fix routes exactly these phrases here instead of
+                    # through dateparser (0.75), keeping the generic 0.55
+                    # fallback score made every one of them ask for
+                    # confirmation — "в 7 утра" used to save directly.
+                    confidence = 0.75 if hour_match.group(3) else 0.55
                     clean_text = _strip_first_occurrence(clean_text, hour_match.group(0))
 
         # Stage 4b — regex fallback: "через 15 минут", "через 2 часа", "через час", "через 2 дня"
@@ -472,7 +497,7 @@ class InputParser:
             now = datetime.now(pytz.timezone(timezone))
             hour_match = re.search(
                 r"(?:в|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?\s*"
-                r"(?:de\s+la\s+)?(утра|послеобеденно|вечера|ночи|часов?|mañana|tarde|noche)?",
+                r"(?:de\s+la\s+)?(утра|дня|послеобеденно|вечера|ночи|часов?|mañana|tarde|noche)?",
                 normalized_text,
                 re.IGNORECASE,
             )

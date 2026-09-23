@@ -7,6 +7,7 @@ dedicated method here is looking one back up for /paysupport.
 from typing import Optional, Sequence
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from bot.database.dao.base import BaseDAO
 from bot.database.models import Payment
@@ -14,6 +15,46 @@ from bot.database.models import Payment
 
 class PaymentDAO(BaseDAO[Payment]):
     model = Payment
+
+    async def record_once(
+        self,
+        *,
+        user_id: int,
+        telegram_payment_charge_id: str,
+        amount: int,
+        currency: str,
+        invoice_payload: str,
+    ) -> bool:
+        """Insert a payment, idempotent per telegram_payment_charge_id.
+
+        Returns True if newly recorded, False if this charge was already
+        recorded (Telegram redelivering the same successful_payment update).
+        The insert runs inside a SAVEPOINT: a plain flush that hits the
+        UNIQUE constraint leaves the whole request session in a failed
+        state, so DatabaseMiddleware's own commit afterwards raised
+        PendingRollbackError and the user got a generic error right after
+        the "thank you". Same pattern as HabitEventDAO.record.
+        """
+        existing = await self.session.execute(
+            select(Payment.id).where(Payment.telegram_payment_charge_id == telegram_payment_charge_id)
+        )
+        if existing.first() is not None:
+            return False
+        try:
+            async with self.session.begin_nested():
+                self.session.add(
+                    Payment(
+                        user_id=user_id,
+                        telegram_payment_charge_id=telegram_payment_charge_id,
+                        amount=amount,
+                        currency=currency,
+                        invoice_payload=invoice_payload,
+                    )
+                )
+                await self.session.flush()
+        except IntegrityError:
+            return False
+        return True
 
     async def get_recent_for_user(self, user_id: int, limit: int = 5) -> Sequence[Payment]:
         """Most recent payments first — /paysupport shows these so the

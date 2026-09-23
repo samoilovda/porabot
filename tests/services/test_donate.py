@@ -177,14 +177,14 @@ async def test_successful_payment_sends_thank_you_and_records_the_payment() -> N
         ),
         answer=AsyncMock(),
     )
-    payment_dao = SimpleNamespace(create=AsyncMock())
+    payment_dao = SimpleNamespace(record_once=AsyncMock(return_value=True))
 
     await process_successful_payment(message, RU, payment_dao)
 
     message.answer.assert_awaited_once()
     text = message.answer.await_args.args[0]
     assert "Porabot" in text
-    payment_dao.create.assert_awaited_once_with(
+    payment_dao.record_once.assert_awaited_once_with(
         user_id=7,
         telegram_payment_charge_id="charge-123",
         amount=50,
@@ -207,7 +207,7 @@ async def test_successful_payment_still_thanks_user_if_recording_fails() -> None
         ),
         answer=AsyncMock(),
     )
-    payment_dao = SimpleNamespace(create=AsyncMock(side_effect=RuntimeError("db locked")))
+    payment_dao = SimpleNamespace(record_once=AsyncMock(side_effect=RuntimeError("db locked")))
 
     await process_successful_payment(message, RU, payment_dao)
 

@@ -59,6 +59,15 @@ SEND_RETRY_BACKOFF_MINUTES = [1, 5, 15, 60]
 # wait_for_in_flight_jobs.
 _in_flight_jobs: set[asyncio.Task] = set()
 
+# Reminder ids with an execute_reminder_job call currently running. APScheduler
+# removes a one-shot date job from the jobstore BEFORE running it, so between
+# that moment and the commit that records last_fired_at, a reminder being sent
+# right now looks exactly like a missed, undelivered one to
+# reconcile_jobs_with_db — which, since it also runs hourly (A-11), used to
+# schedule a duplicate catch-up send for it. A counter, not a set: a main job
+# and a nag job for the same reminder can overlap.
+_in_flight_reminder_ids: dict[int, int] = {}
+
 
 async def wait_for_in_flight_jobs(timeout: float = 20.0) -> None:
     """Best-effort wait for every currently-running execute_reminder_job
@@ -89,6 +98,7 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     current_task = asyncio.current_task()
     if current_task is not None:
         _in_flight_jobs.add(current_task)
+    _in_flight_reminder_ids[reminder_id] = _in_flight_reminder_ids.get(reminder_id, 0) + 1
     job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
     try:
         await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
@@ -119,6 +129,11 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     finally:
         if current_task is not None:
             _in_flight_jobs.discard(current_task)
+        remaining = _in_flight_reminder_ids.get(reminder_id, 1) - 1
+        if remaining > 0:
+            _in_flight_reminder_ids[reminder_id] = remaining
+        else:
+            _in_flight_reminder_ids.pop(reminder_id, None)
 
 
 async def remove_orphan_scheduler_jobs_job() -> None:
@@ -297,6 +312,11 @@ class SchedulerService:
 
             for reminder in reminders:
                 if str(reminder.id) in existing_job_ids:
+                    continue
+                if reminder.id in _in_flight_reminder_ids:
+                    # Being sent right now — its job is already gone from
+                    # the jobstore but last_fired_at isn't committed yet.
+                    # _execute_reminder itself reschedules what comes next.
                     continue
 
                 run_at_utc = to_utc_aware(reminder.execution_time)

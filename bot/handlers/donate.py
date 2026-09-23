@@ -153,13 +153,12 @@ async def process_successful_payment(
     )
     # A-19: record it — telegram_payment_charge_id is the ONLY handle
     # refundStarPayment accepts, and nothing kept it anywhere before this.
-    # unique=True on the column means a duplicate delivery of the same
-    # successful_payment update (Telegram redelivers on a missed ack) just
-    # fails this insert instead of double-recording — best-effort: the
-    # "thank you" reply below always sends either way, since a payment
+    # record_once is idempotent per charge id (Telegram redelivers an
+    # un-acked update) and keeps the request session usable either way.
+    # Best-effort: the "thank you" below always sends, since the payment
     # already actually happened regardless of whether this insert was new.
     try:
-        await payment_dao.create(
+        await payment_dao.record_once(
             user_id=message.from_user.id,
             telegram_payment_charge_id=payment.telegram_payment_charge_id,
             amount=payment.total_amount,

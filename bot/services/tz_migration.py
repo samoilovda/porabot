@@ -31,6 +31,11 @@ class HabitTzMigrationItem:
     drift_local_hhmm: str  # what that same instant reads as under the NEW zone if left alone
     new_execution_time_utc: datetime  # naive UTC — migrated execution_time
     delta: timedelta  # new_execution_time_utc - old execution_time
+    # Migrated Reminder.rrule_dtstart (naive UTC), re-localized the same way
+    # as execution_time; None when the habit has no series anchor. Without
+    # this, next_occurrence_utc kept deriving the series' time-of-day from
+    # the OLD anchor and undid the migration on the very next fire.
+    new_rrule_dtstart_utc: Optional[datetime] = None
 
 
 def _safe_tz(tz_str: str) -> pytz.BaseTzInfo:
@@ -77,6 +82,15 @@ def build_migration_plan(
     for habit in habits:
         old_local_naive = to_utc_aware(habit.execution_time).astimezone(old_tz).replace(tzinfo=None)
         new_execution_time_utc = to_utc_naive(new_tz.localize(old_local_naive))
+        # Re-localize the anchor itself (its own date's offsets), not
+        # anchor + delta: delta is computed at execution_time's date, and a
+        # DST boundary between the anchor's date and today would leave the
+        # anchor an hour off.
+        anchor = getattr(habit, "rrule_dtstart", None)
+        new_rrule_dtstart_utc = None
+        if anchor is not None:
+            anchor_local_naive = to_utc_aware(anchor).astimezone(old_tz).replace(tzinfo=None)
+            new_rrule_dtstart_utc = to_utc_naive(new_tz.localize(anchor_local_naive))
         items.append(
             HabitTzMigrationItem(
                 reminder_id=habit.id,
@@ -85,6 +99,7 @@ def build_migration_plan(
                 drift_local_hhmm=_local_hhmm(habit.execution_time, new_tz),
                 new_execution_time_utc=new_execution_time_utc,
                 delta=new_execution_time_utc - habit.execution_time,
+                new_rrule_dtstart_utc=new_rrule_dtstart_utc,
             )
         )
     return items
@@ -133,7 +148,7 @@ async def apply_migration(
                 try:
                     advanced = next_occurrence_utc(
                         reminder.rrule_string,
-                        item.new_execution_time_utc,
+                        item.new_rrule_dtstart_utc or item.new_execution_time_utc,
                         new_tz_str,
                         now_utc_naive,
                     )
@@ -153,6 +168,7 @@ async def apply_migration(
         prev_execution_time = reminder.execution_time
         prev_completed_for = reminder.completed_for_execution_time
         prev_active_due_at = reminder.habit_active_due_at
+        prev_rrule_dtstart = getattr(reminder, "rrule_dtstart", None)
         # The real shift execution_time is about to undergo — item.delta
         # alone (the tz-reinterpretation amount) undercounts it when we
         # also advanced past a now-in-the-past occurrence above; using the
@@ -161,6 +177,8 @@ async def apply_migration(
         effective_delta = scheduled_execution_time_utc - prev_execution_time
 
         reminder.execution_time = scheduled_execution_time_utc
+        if item.new_rrule_dtstart_utc is not None:
+            reminder.rrule_dtstart = item.new_rrule_dtstart_utc
         if reminder.completed_for_execution_time is not None:
             reminder.completed_for_execution_time += effective_delta
         if reminder.habit_active_due_at is not None:
@@ -180,6 +198,7 @@ async def apply_migration(
             reminder.execution_time = prev_execution_time
             reminder.completed_for_execution_time = prev_completed_for
             reminder.habit_active_due_at = prev_active_due_at
+            reminder.rrule_dtstart = prev_rrule_dtstart
             kept.append(item)
             continue
 

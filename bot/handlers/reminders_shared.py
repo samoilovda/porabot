@@ -535,6 +535,15 @@ async def _save_and_show_edit(
             # just a habit-like one. See Reminder.rrule_dtstart's docstring.
             if not (is_snooze_mode and new_reminder.is_recurring):
                 new_reminder.execution_time = execution_time
+                # A deliberate time edit (not a snooze) on a recurring
+                # reminder moves the whole series, so the anchor moves with
+                # it. Leaving rrule_dtstart alone made next_occurrence_utc
+                # rebuild the old time-of-day from the old anchor and undo
+                # the edit on the very next fire. The edited occurrence
+                # becomes the series' new start; a COUNT= limit therefore
+                # restarts from it, same as picking a new repeat rule does.
+                if new_reminder.is_recurring and new_reminder.rrule_string:
+                    new_reminder.rrule_dtstart = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1
         else:

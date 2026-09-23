@@ -147,6 +147,14 @@ def _start_polling_coro(dp: Dispatcher, bot: Bot):
     return dp.start_polling(bot, handle_signals=False)
 
 
+# Shutdown budget inside docker-compose's 30s stop_grace_period: up to this
+# long for polling to wind down, then up to wait_for_in_flight_jobs' own
+# 20s default for scheduler jobs — 28s worst case, leaving ~2s to close the
+# bot session and dispose the engine. Both usually finish in well under a
+# second.
+POLLING_STOP_TIMEOUT_SECONDS = 8.0
+
+
 async def _run_until_stopped(
     polling_coro, stop_event: asyncio.Event, dp: Optional[Dispatcher] = None
 ) -> None:
@@ -174,7 +182,17 @@ async def _run_until_stopped(
     done, pending = await asyncio.wait({polling_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
 
     if dp is not None and stop_task in done and polling_task not in done:
-        await dp.stop_polling()
+        # Bounded: stop_polling() waits for the in-flight update to finish,
+        # and a handler stuck on a call that never times out would
+        # otherwise eat docker-compose's whole 30s stop_grace_period before
+        # SIGKILL — leaving no time for wait_for_in_flight_jobs afterwards.
+        # On timeout, fall through to the hard cancel below.
+        try:
+            await asyncio.wait_for(dp.stop_polling(), timeout=POLLING_STOP_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Polling did not stop within %ss — cancelling it.", POLLING_STOP_TIMEOUT_SECONDS
+            )
         # dp.stop_polling() only returns once aiogram's own loop has
         # already finished and is about to return — polling_task should
         # already be resolved by now; the cancel below then just no-ops

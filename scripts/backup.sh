@@ -21,8 +21,15 @@ DATA_DIR="${1:-./data}"
 BACKUP_DIR="${2:-./backups}"
 RETENTION_DAYS="${3:-7}"
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-    echo "sqlite3 CLI not found — install it (apt install sqlite3) and retry." >&2
+# Prefer the sqlite3 CLI; fall back to Python's built-in sqlite3 module,
+# which exposes the same online backup API (Connection.backup) — the first
+# production deploy with this script found no sqlite3 CLI on the host.
+if command -v sqlite3 >/dev/null 2>&1; then
+    BACKUP_TOOL=cli
+elif command -v python3 >/dev/null 2>&1 && python3 -c "import sqlite3" >/dev/null 2>&1; then
+    BACKUP_TOOL=python
+else
+    echo "Neither the sqlite3 CLI nor python3 (with its sqlite3 module) is available — install one (apt install sqlite3) and retry." >&2
     exit 1
 fi
 
@@ -37,7 +44,19 @@ backup_one() {
         return 0
     fi
     local dest="$BACKUP_DIR/${name}-${timestamp}.db"
-    sqlite3 "$src" ".backup '$dest'"
+    if [ "$BACKUP_TOOL" = cli ]; then
+        sqlite3 "$src" ".backup '$dest'"
+    else
+        python3 - "$src" "$dest" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+with dst:
+    src.backup(dst)
+dst.close()
+src.close()
+PY
+    fi
     gzip "$dest"
     echo "Backed up $src -> ${dest}.gz"
 }

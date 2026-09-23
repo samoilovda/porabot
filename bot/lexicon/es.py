@@ -129,7 +129,7 @@ ES.update(
         "btn_next_page": "▶️",
         "btn_delete_prefix": "🗑 Eliminar:",
         "btn_refresh": "🔄 Actualizar",
-        "btn_close": "❌ Cerrar",
+        "btn_close": "🔼 Ocultar",
 
         # Búsqueda y filtros — 3.4
         "btn_filter_today": "📅 Hoy",
@@ -177,6 +177,7 @@ ES.update(
         "paysupport_refund_failed": "❌ No se pudo reembolsar. Puede que ya esté reembolsado.",
         "enter_task": "Escribe qué debo recordarte.\nPuedes incluir hora: *\"Llamar a mamá mañana a las 18:00\"*.",
         "parse_error": "Error al procesar el texto. Revisa el formato.",
+        "db_busy": "⏳ El bot está ocupado ahora mismo — la base de datos está bloqueada. Intenta enviar tu mensaje de nuevo en unos segundos.",
         "ask_time": "Vale, tarea: \"{text}\".\n¿Cuándo te lo recuerdo?",
         "try_again_manual": "🕒 Escribe la hora, por ejemplo `18:30` o `mañana a las 9`.",
         "time_in_past": "⏰ Esta hora ya pasó. Elige una hora futura.",

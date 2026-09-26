@@ -17,7 +17,7 @@ from bot.services.habit_reports import _send_safe
 async def test_bad_request_falls_back_to_plain_text() -> None:
     calls = []
 
-    async def _send_message(*, chat_id, text, parse_mode=None):
+    async def _send_message(*, chat_id, text, parse_mode=None, disable_notification=False):
         calls.append((text, parse_mode))
         if parse_mode == "Markdown":
             raise TelegramBadRequest(method=SimpleNamespace(), message="can't parse entities")

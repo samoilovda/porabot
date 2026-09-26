@@ -26,7 +26,8 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
-from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware
+from bot.services.notification_policy import notification_policy
+from bot.utils.time_ext import next_occurrence_utc, parse_hhmm, to_utc_aware
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -609,7 +610,12 @@ class SchedulerService:
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
-        return is_quiet_hours(user, now_local, is_habit=is_habit)
+        # Step 5 (2026-09-26 audit remediation): a regular reminder is
+        # "suppress"ed (deferred to quiet hours' end, see the caller below)
+        # under the same one notification_policy() every other scheduled
+        # message kind now goes through — unlike a brief/report, a
+        # reminder is never delivered silently instead.
+        return notification_policy(user, "reminder", now_local, is_habit=is_habit) == "suppress"
 
     def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
         """Next local time quiet hours end, as UTC.

@@ -137,7 +137,17 @@ def _build_report_text(
     scores_by_id: dict[int, int] | None = None,
 ) -> str:
     header = title.format(start=start.strftime("%d.%m"), end=end.strftime("%d.%m"))
-    lines = [header, ""]
+    # Step 7 (2026-09-26 audit remediation): "Устойчивость" (score) used to
+    # sit crammed onto the same line as the plain done/total fraction with
+    # no explanation — read as if it were just another way of expressing
+    # that same fraction, when it's actually a smoothed EMA that moves
+    # gradually instead of jumping with every single cycle. Explained once
+    # here, then given a line of its own per habit below, instead of
+    # per-line.
+    lines = [header, l10n.get(
+        "habit_score_explainer",
+        "💪 «Устойчивость» — сглаженная оценка (EMA), не совпадает с точной долей выполнений ниже.",
+    ), ""]
     scores_by_id = scores_by_id or {}
 
     total_done = 0
@@ -150,20 +160,21 @@ def _build_report_text(
     for row in shown_rows:
         streak = _current_streak_label(reminders_by_id.get(row["reminder_id"]))
         streak_suffix = f" · 🔥 {streak}" if streak > 0 else ""
-        # 3.2: EMA score next to the streak — computed from the habit's full
-        # history (scores_by_id), not just this report's window.
-        score = scores_by_id.get(row["reminder_id"])
-        score_suffix = f" · 💪 {score}%" if score is not None else ""
         lines.append(
-            l10n.get("habit_report_line", "🫧 {habit} — {done}/{total} ({rate}%){streak}").format(
+            l10n.get("habit_report_line", "🫧 {habit} — Выполнено {done} из {total} ({rate}%)").format(
                 habit=escape_markdown(preview_line(row["habit_text"])),
                 done=row["done"],
                 total=row["total"],
                 rate=row["rate"],
             )
             + streak_suffix
-            + score_suffix
         )
+        # 3.2: EMA score, computed from the habit's full history
+        # (scores_by_id), not just this report's window — shown on its own
+        # line, separate from the plain fraction above (see explainer).
+        score = scores_by_id.get(row["reminder_id"])
+        if score is not None:
+            lines.append(l10n.get("habit_report_score_line", "   💪 Устойчивость: {score}/100").format(score=score))
     if hidden_rows:
         lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_rows))
 

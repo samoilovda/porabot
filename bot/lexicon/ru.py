@@ -66,6 +66,7 @@ RU: dict[str, Any] = {
     "tz_manual_prompt": "Отправь только смещение UTC: `+5`, `0`, `-6` или известное получасовое смещение вроде `+5:30`.",
     "tz_manual_button": "⌨️ Ввести вручную",
     "tz_success": "✅ Часовой пояс: `{tz}`\n\nВремя уже созданных задач не пересчитывается — они сработают в прежнее время. При необходимости поправь их вручную.",
+    "onboarding_example_hint": "✍️ Напиши мне что-нибудь, например: «завтра в 10 позвонить маме» — и я создам напоминание.",
     "tz_invalid": "❌ Неверное смещение. Отправь `+5`, `0` или `-6` (диапазон: от -12 до +14).",
     "main_menu_hint": "👇 Меню ниже",
 
@@ -189,8 +190,8 @@ RU: dict[str, Any] = {
     # Confirmation logic -> Edit Logic
     "preview": "✅ *Задача сохранена\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Повтор:",
-    "btn_nagging_prefix": "{icon} Зуд (Nagging):",
-    "btn_nagging_repeats_prefix": "🔁 Повторы зуда: {count}",
+    "btn_nagging_prefix": "{icon} Повторно напоминать:",
+    "btn_nagging_repeats_prefix": "🔁 Максимум повторных уведомлений: {count}",
     "btn_edit_time": "🕒 Изменить время",
     "btn_delete": "🗑 Удалить",
     "btn_task_settings": "⚙️ Настройки",
@@ -309,7 +310,7 @@ RU: dict[str, Any] = {
     "task_settings_title": "⚙️ Настройки задачи: {text}",
     "nagging_limit_prompt": "Сколько повторных сообщений присылать для этой задачи? Отправь число от {min} до {max}. Сейчас: {count}.",
     "nagging_limit_invalid": "❌ Отправь число от {min} до {max}.",
-    "nagging_limit_updated": "✅ Лимит повторов зуда установлен: {count}",
+    "nagging_limit_updated": "✅ Максимум повторных уведомлений установлен: {count}",
 
     # Snooze options
     "snooze_15m": "+15м",
@@ -348,7 +349,7 @@ RU: dict[str, Any] = {
 
     # Habits
     "habits_dashboard": "🫧 *Панель привычек*:\nВыбери шаблон или создай свою ежедневную привычку.",
-    "habit_motivation": "🔥 Импульс: {weekly_done} выполнений за 7 дней · {active_count} активных привычек · серия {best_current_streak} (рекорд {best_ever_streak}) · 💪 {avg_score}%",
+    "habit_motivation": "🔥 Импульс: {weekly_done} выполнений за 7 дней · {active_count} активных привычек · серия {best_current_streak} (рекорд {best_ever_streak}) · 💪 Устойчивость {avg_score}/100",
     "habit_preset_water": "💧 Пить воду",
     "habit_preset_workout": "🧘 Тренировка",
     "habit_preset_rest": "🛌 Отдых",
@@ -374,7 +375,7 @@ RU: dict[str, Any] = {
     "habit_create_failed_internal": "❌ Внутренняя ошибка при создании привычки.",
     "habit_no_active": "📋 Активных ежедневных привычек пока нет. Нажми «➕ Своя привычка» или выбери шаблон.",
     "habit_list_header": "📋 *Твои активные ежедневные привычки:*\n",
-    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (рекорд {best}) · 💪 {score}% · {mode}",
+    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (рекорд {best}) · 💪 Устойчивость {score}/100 · {mode}",
     "habit_btn_delete_n": "❌ Удалить {index}",
     "habit_btn_back_dashboard": "🔙 Назад к панели",
     "habit_deleted_alert": "✅ Привычка удалена!",
@@ -407,7 +408,9 @@ RU: dict[str, Any] = {
     "habit_report_time_saved": "✅ Время отчёта обновлено: {time}",
     "habit_report_weekly_title": "📊 *Итоги недели*",
     "habit_report_monthly_title": "📊 *Итоги месяца*",
-    "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
+    "habit_report_line": "🫧 {habit} — Выполнено {done} из {total} ({rate}%)",
+    "habit_report_score_line": "   💪 Устойчивость: {score}/100",
+    "habit_score_explainer": "💪 «Устойчивость» — сглаженная оценка (EMA), не совпадает с точной долей выполнений ниже.",
     "habit_report_total": "*Итого:* ✅ {done} · ❌ {not_done} ({rate}%)",
     "weekday_names": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
 

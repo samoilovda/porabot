@@ -67,6 +67,7 @@ EN: dict[str, Any] = {
     "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, `-6`, or a known half-hour offset like `+5:30`.",
     "tz_manual_button": "⌨️ Enter manually",
     "tz_success": "✅ Timezone: `{tz}`\n\nExisting tasks aren't recalculated — they'll still fire at their previous time. Adjust them manually if needed.",
+    "onboarding_example_hint": "✍️ Try writing something like: \"tomorrow at 10 call mom\" — I'll turn it into a reminder.",
     "tz_invalid": "❌ Invalid offset. Please send `+5`, `0`, or `-6` (range: -12 to +14).",
     "main_menu_hint": "👇 Menu below",
 
@@ -190,8 +191,8 @@ EN: dict[str, Any] = {
     # Confirmation logic -> Edit logic
     "preview": "✅ *Task saved\\!*\n📌 {text}\n⏰ {time}",
     "btn_repeat_prefix": "🔁 Repeat:",
-    "btn_nagging_prefix": "{icon} Nagging:",
-    "btn_nagging_repeats_prefix": "🔁 Nag repeats: {count}",
+    "btn_nagging_prefix": "{icon} Keep reminding:",
+    "btn_nagging_repeats_prefix": "🔁 Max repeat notifications: {count}",
     "btn_edit_time": "🕒 Change time",
     "btn_delete": "🗑 Delete",
     "btn_task_settings": "⚙️ Settings",
@@ -310,7 +311,7 @@ EN: dict[str, Any] = {
     "task_settings_title": "⚙️ Settings for: {text}",
     "nagging_limit_prompt": "How many follow-up nag messages should I send for this task? Send a number from {min} to {max}. Current: {count}.",
     "nagging_limit_invalid": "❌ Please send a number from {min} to {max}.",
-    "nagging_limit_updated": "✅ Nagging repeats limit set to: {count}",
+    "nagging_limit_updated": "✅ Max repeat notifications set to: {count}",
 
     # Snooze options
     "snooze_15m": "+15m",
@@ -349,7 +350,7 @@ EN: dict[str, Any] = {
 
     # Habits
     "habits_dashboard": "🫧 *Habits Dashboard*:\nChoose a preset or create your own custom daily habit.",
-    "habit_motivation": "🔥 Momentum: {weekly_done} completions in 7d · {active_count} active habits · streak {best_current_streak} (best {best_ever_streak}) · 💪 {avg_score}%",
+    "habit_motivation": "🔥 Momentum: {weekly_done} completions in 7d · {active_count} active habits · streak {best_current_streak} (best {best_ever_streak}) · 💪 Score {avg_score}/100",
     "habit_preset_water": "💧 Drink water",
     "habit_preset_workout": "🧘 Workout",
     "habit_preset_rest": "🛌 Rest",
@@ -375,7 +376,7 @@ EN: dict[str, Any] = {
     "habit_create_failed_internal": "❌ Internal error creating habit.",
     "habit_no_active": "📋 You have no active daily habits. Click '➕ Custom Habit' or choose a preset to create one!",
     "habit_list_header": "📋 *Your Active Daily Habits:*\n",
-    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (best {best}) · 💪 {score}% · {mode}",
+    "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (best {best}) · 💪 Score {score}/100 · {mode}",
     "habit_btn_delete_n": "❌ Delete {index}",
     "habit_btn_back_dashboard": "🔙 Back to Dashboard",
     "habit_deleted_alert": "✅ Habit successfully deleted!",
@@ -408,7 +409,9 @@ EN: dict[str, Any] = {
     "habit_report_time_saved": "✅ Habit report time updated: {time}",
     "habit_report_weekly_title": "📊 *Weekly habit report*",
     "habit_report_monthly_title": "📊 *Monthly habit report*",
-    "habit_report_line": "🫧 {habit} — {done}/{total} ({rate}%)",
+    "habit_report_line": "🫧 {habit} — Done {done} of {total} ({rate}%)",
+    "habit_report_score_line": "   💪 Score: {score}/100",
+    "habit_score_explainer": "💪 \"Score\" is a smoothed (EMA) estimate — not the same as the exact completion rate below.",
     "habit_report_total": "*Total:* ✅ {done} · ❌ {not_done} ({rate}%)",
     "weekday_names": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
 

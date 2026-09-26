@@ -70,6 +70,7 @@ ES.update(
         "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0`, `-6`, o un desfase de media hora conocido como `+5:30`.",
         "tz_manual_button": "⌨️ Introducir manualmente",
         "tz_success": "✅ Zona horaria: `{tz}`\n\nLas tareas existentes no se recalculan — sonarán a su hora anterior. Ajústalas manualmente si es necesario.",
+        "onboarding_example_hint": "✍️ Prueba a escribir algo como: «mañana a las 10 llamar a mamá» — lo convertiré en un recordatorio.",
         "tz_invalid": "❌ Desfase inválido. Envía `+5`, `0` o `-6` (rango: -12 a +14).",
         "main_menu_hint": "👇 Menú abajo",
 
@@ -343,7 +344,7 @@ ES.update(
 
         # Habits
         "habits_dashboard": "🫧 *Panel de hábitos*:\nElige una plantilla o crea tu hábito diario.",
-        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 {avg_score}%",
+        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 Constancia {avg_score}/100",
         "habit_preset_water": "💧 Beber agua",
         "habit_preset_workout": "🧘 Entrenar",
         "habit_preset_rest": "🛌 Descansar",
@@ -367,7 +368,7 @@ ES.update(
         "habit_fluid_created": "✅ *Hábito flexible creado*\nHábito: *{habit}*\nModo: {mode}",
         "habit_no_active": "📋 No tienes hábitos diarios activos.",
         "habit_list_header": "📋 *Tus hábitos diarios activos:*\n",
-        "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (máx {best}) · 💪 {score}% · {mode}",
+        "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (máx {best}) · 💪 Constancia {score}/100 · {mode}",
         "habit_btn_delete_n": "❌ Eliminar {index}",
         "habit_btn_back_dashboard": "🔙 Volver al panel",
         "habit_deleted_alert": "✅ Hábito eliminado.",
@@ -401,6 +402,8 @@ ES.update(
         "habit_report_weekly_title": "📊 *Resumen semanal*",
         "habit_report_monthly_title": "📊 *Resumen mensual*",
         "habit_report_line": "🫧 {habit}: {done} de {total} ({rate}%)",
+        "habit_report_score_line": "   💪 Constancia: {score}/100",
+        "habit_score_explainer": "💪 «Constancia» es una estimación suavizada (EMA) — no es lo mismo que la tasa exacta de abajo.",
         "habit_report_total": "*Total:* ✅ {done} logrados · ❌ {not_done} fallados ({rate}%)",
         "weekday_names": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     }

@@ -689,6 +689,10 @@ async def callback_set_tz(
         await state.clear()
         text = l10n["cmd_start"].format(name=escape_markdown(callback.from_user.first_name))
         await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+        # Step 7 (2026-09-26 audit remediation): a worked example right
+        # where onboarding ends — the first task the user actually creates
+        # is what completes onboarding, not a screen telling them it's done.
+        await callback.message.answer(l10n["onboarding_example_hint"])
         await callback.answer()
         return
 
@@ -741,6 +745,9 @@ async def state_set_manual_timezone(
         )
         text = l10n["cmd_start"].format(name=escape_markdown(message.from_user.first_name))
         await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+        # Step 7 (2026-09-26 audit remediation) — see the button-pick branch
+        # of callback_set_tz above for why this hint belongs here.
+        await message.answer(l10n["onboarding_example_hint"])
         return
 
     async def _editor(text: str, markup) -> None:

@@ -420,10 +420,6 @@ def _cleanup_stale_timers() -> None:
             active_auto_delete_tasks.pop(key, None)
 
 
-def _format_parse_confidence(confidence: float) -> int:
-    return max(0, min(100, int(round(confidence * 100))))
-
-
 def _pick_done_reply(l10n: dict[str, Any]) -> str:
     """Return a randomized done-reply phrase with compatibility fallback."""
     options = l10n.get("task_done_replies")
@@ -462,31 +458,75 @@ async def _handle_parsed_result(
     )
 
     if result.parsed_datetime:
-        await state.update_data(execution_time=result.parsed_datetime.isoformat())
-        if float(getattr(result, "confidence", 0.0) or 0.0) < _PARSE_CONFIDENCE_THRESHOLD:
-            await state.set_state(ReminderWizard.confirming_parse)
-            parsed_time = format_time(
-                result.parsed_datetime,
-                user.timezone,
-                user.show_utc_offset,
-                "%d.%m.%Y %H:%M",
-            )
-            await source_message.answer(
-                l10n["parse_confirmation_prompt"].format(
-                    text=escape_markdown(clean_text),
-                    time=parsed_time,
-                    confidence=_format_parse_confidence(float(getattr(result, "confidence", 0.0) or 0.0)),
-                ),
-                reply_markup=get_parse_confirmation_keyboard(l10n),
-            )
-            return
-        await _save_and_show_edit(source_message, state, l10n, user, reminder_dao, scheduler_service)
+        await _resolve_time_and_respond(
+            source_message, state, user, l10n, result, reminder_dao, scheduler_service, clean_text,
+        )
         return
 
     await state.set_state(ReminderWizard.choosing_time)
     await source_message.answer(
         l10n["ask_time"].format(text=escape_markdown(clean_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+    )
+
+
+def _weekday_date_label(dt: datetime, l10n: dict[str, Any]) -> str:
+    names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    return f"{names[dt.weekday()]} {dt.strftime('%d.%m')}"
+
+
+async def _resolve_time_and_respond(
+    source_message: Message,
+    state: FSMContext,
+    user: User,
+    l10n: dict[str, Any],
+    result,
+    reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService,
+    display_text: str,
+) -> None:
+    """Single router for "the parser found a datetime — now what" (step 3,
+    2026-09-26 audit remediation), used by task creation, manual time entry
+    (state_choosing_time_text_input), and the edit-time flow (which re-enters
+    the same handler) so all three behave identically:
+
+      - confident parse            -> save outright.
+      - a day but no clock time    -> ask only for the hour, keeping that
+                                       day (never fall back to today/
+                                       tomorrow-based quick buttons).
+      - anything else low-confidence (an explicit hour the parser is only
+        somewhat sure about) -> ask the user to confirm the specific parsed
+        time. The confidence number itself is never shown to the user —
+        callers log it (see handle_task_text's logger.info) instead.
+    """
+    await state.update_data(execution_time=result.parsed_datetime.isoformat())
+    confidence = float(getattr(result, "confidence", 0.0) or 0.0)
+
+    if confidence >= _PARSE_CONFIDENCE_THRESHOLD:
+        await _save_and_show_edit(source_message, state, l10n, user, reminder_dao, scheduler_service)
+        return
+
+    if getattr(result, "date_only", False):
+        local_date = result.parsed_datetime.date()
+        await state.set_state(ReminderWizard.choosing_time)
+        await source_message.answer(
+            l10n["ask_hour_for_date"].format(
+                text=escape_markdown(display_text),
+                date=_weekday_date_label(result.parsed_datetime, l10n),
+            ),
+            reply_markup=get_time_selection_keyboard(
+                user.timezone, l10n, user.show_utc_offset, base_date=local_date,
+            ),
+        )
+        return
+
+    await state.set_state(ReminderWizard.confirming_parse)
+    parsed_time = format_time(
+        result.parsed_datetime, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M",
+    )
+    await source_message.answer(
+        l10n["parse_confirmation_prompt"].format(text=escape_markdown(display_text), time=parsed_time),
+        reply_markup=get_parse_confirmation_keyboard(l10n),
     )
 
 

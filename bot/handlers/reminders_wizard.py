@@ -24,6 +24,7 @@ from bot.handlers.reminders_shared import (
     _handle_parsed_result,
     _parse_id_suffix,
     _reset_auto_delete,
+    _resolve_time_and_respond,
     _save_and_show_edit,
 )
 from bot.keyboards.inline import get_time_selection_keyboard
@@ -240,8 +241,15 @@ async def state_choosing_time_text_input(
         )
         return
 
-    await state.update_data(execution_time=result.parsed_datetime.isoformat())
-    await _save_and_show_edit(message, state, l10n, user, reminder_dao, scheduler_service)
+    data = await state.get_data()
+    display_text = data.get("text") or l10n.get("task_untitled", "Untitled task")
+    # Same router task creation goes through (_resolve_time_and_respond) —
+    # step 3, 2026-09-26 audit remediation: typing "понедельник" here used
+    # to save outright at whatever filler time dateparser invented for the
+    # missing hour, instead of asking for one like the creation flow did.
+    await _resolve_time_and_respond(
+        message, state, user, l10n, result, reminder_dao, scheduler_service, display_text,
+    )
 
 
 @router.callback_query(ReminderWizard.choosing_time, F.data.startswith("time_"))

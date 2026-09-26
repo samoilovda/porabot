@@ -208,12 +208,24 @@ class ParsedInput:
         parse_source:    Which stage produced datetime ("dateparser", "regex_*", "none").
         rrule_string:    RRULE string when a recurrence phrase ("every day",
                          "по будням", …) was detected in the input, else None.
+        date_only:       True when a DAY was recognized ("понедельник",
+                         "tomorrow", a calendar date) with no clock time at
+                         all — parsed_datetime's time-of-day is a filler
+                         (local midnight, or a bare "tomorrow"'s
+                         now-carried-over time), not something the user
+                         actually said. Callers must ask for the hour
+                         instead of treating this like any other
+                         low-confidence-but-has-a-time result (step 3,
+                         2026-09-26 audit remediation) — see
+                         bot/handlers/reminders_shared.py's
+                         _resolve_time_and_respond.
     """
     clean_text: str
     parsed_datetime: Optional[datetime]
     confidence: float = 0.0
     parse_source: str = "none"
     rrule_string: Optional[str] = None
+    date_only: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +412,7 @@ class InputParser:
         # "at 5 pm" dateparser gets right, so those are left alone.)
         dp_matches = [(s, dt) for s, dt in dp_matches if not _RU_PERIOD_IN_MATCH_RE.search(s)]
 
+        date_only = False
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
             parsed_datetime = dt_obj
@@ -417,6 +430,7 @@ class InputParser:
             # silently saving a time the user never actually gave.
             if not _EXPLICIT_TIME_MARKER_RE.search(matched_substring):
                 confidence = min(confidence, 0.4)
+                date_only = True
             clean_text = _strip_first_occurrence(clean_text, matched_substring)
 
         # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
@@ -539,6 +553,7 @@ class InputParser:
             confidence=confidence,
             parse_source=parse_source,
             rrule_string=rrule_string,
+            date_only=date_only,
         )
 
     # ------------------------------------------------------------------

@@ -247,6 +247,27 @@ def get_edit_keyboard(
     return builder.as_markup()
 
 
+def get_saved_task_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Compact keyboard shown right after a reminder is saved (step 4,
+    2026-09-26 audit remediation) — deliberately NOT get_edit_keyboard's
+    full options menu (repeat/nagging/snooze/…), and deliberately without
+    its "cancel_wizard" button: there is no wizard in progress any more at
+    this point, so that button used to delete the just-shown confirmation
+    and claim "Reminder creation cancelled" for an already-persisted task.
+
+    "Изменить" reuses the same task_settings_ callback the task list's ⚙️
+    button opens; "Удалить" reuses del_task_'s existing soft-delete/undo
+    flow; "Закрыть" reuses done_close, which only hides this keyboard.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_edit", "✏️ Изменить"), callback_data=f"task_settings_{reminder_id}"),
+        InlineKeyboardButton(text=l10n["btn_delete"], callback_data=f"del_task_{reminder_id}"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="done_close"))
+    return builder.as_markup()
+
+
 # =============================================================================
 # REPEAT BUILDER KEYBOARDS (3.1: full RRULE construction UI)
 # =============================================================================

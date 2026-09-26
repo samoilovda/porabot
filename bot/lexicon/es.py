@@ -191,6 +191,7 @@ ES.update(
         "btn_nagging_prefix": "{icon} Insistencia:",
         "btn_nagging_repeats_prefix": "🔁 Repeticiones de insistencia: {count}",
         "btn_edit_time": "🕒 Cambiar hora",
+        "btn_edit": "✏️ Editar",
         "btn_delete": "🗑 Eliminar",
         "btn_task_settings": "⚙️ Ajustes",
         "status_on": "ACTIVO",

@@ -193,6 +193,7 @@ EN: dict[str, Any] = {
     "btn_nagging_prefix": "{icon} Nagging:",
     "btn_nagging_repeats_prefix": "🔁 Nag repeats: {count}",
     "btn_edit_time": "🕒 Change time",
+    "btn_edit": "✏️ Edit",
     "btn_delete": "🗑 Delete",
     "btn_task_settings": "⚙️ Settings",
     "status_on": "ON",

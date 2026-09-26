@@ -108,6 +108,16 @@ h2 {
   height: 12px;
   border-radius: 2px;
   background: var(--heat-0);
+  cursor: pointer;
+}
+
+/* Step 10 (2026-09-26 audit remediation): a heat-cell is now a real
+   keyboard-focusable control (role="button" tabindex="0" in app.js) —
+   give it a visible focus ring instead of relying on the browser default,
+   which most browsers suppress on a plain <div>. */
+.heat-cell:focus-visible {
+  outline: 2px solid var(--button);
+  outline-offset: 1px;
 }
 
 .heat-cell[data-level="1"] { background: var(--heat-1); }

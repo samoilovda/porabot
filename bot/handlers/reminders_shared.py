@@ -23,9 +23,9 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
     TASKS_PAGE_SIZE,
-    get_edit_keyboard,
     get_parse_confirmation_keyboard,
     get_repeat_builder_keyboard,
+    get_saved_task_keyboard,
     get_time_selection_keyboard,
 )
 from bot.lexicon import ALL_MENU_BUTTON_TEXTS
@@ -651,16 +651,12 @@ async def _save_and_show_edit(
         text=escape_markdown_v2(new_reminder.reminder_text),
         time=escape_markdown_v2(date_str),
     )
-    keyboard = get_edit_keyboard(
-        reminder_id=new_reminder.id,
-        l10n=l10n,
-        is_recurring=new_reminder.is_recurring,
-        is_nagging=new_reminder.is_nagging,
-        nagging_max_repeats=new_reminder.nagging_max_repeats,
-        rrule_text=_rrule_text(new_reminder, l10n),
-    )
-    sent_msg = await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
-
-    task = asyncio.create_task(_remove_keyboard_after_delay(sent_msg, 5))
-    active_auto_delete_tasks[_message_task_key(sent_msg)] = task
+    # Step 4 (2026-09-26 audit remediation): a compact "✅ saved" card with
+    # only Edit/Delete/Close, not get_edit_keyboard's full options menu —
+    # and, since there's no wizard in progress once a task is saved, no
+    # "cancel_wizard" escape hatch that used to delete this very
+    # confirmation and claim the (already persisted) task was cancelled.
+    # No auto-hide timer either: the card stays until the user acts on it.
+    keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
+    await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 

@@ -192,6 +192,7 @@ RU: dict[str, Any] = {
     "btn_nagging_prefix": "{icon} Зуд (Nagging):",
     "btn_nagging_repeats_prefix": "🔁 Повторы зуда: {count}",
     "btn_edit_time": "🕒 Изменить время",
+    "btn_edit": "✏️ Изменить",
     "btn_delete": "🗑 Удалить",
     "btn_task_settings": "⚙️ Настройки",
     "status_on": "ВКЛ",

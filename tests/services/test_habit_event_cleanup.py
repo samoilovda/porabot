@@ -204,7 +204,6 @@ async def test_clear_all_removes_habit_events(session) -> None:
         _callback("settings_clear_all_confirm"),
         state=SimpleNamespace(clear=AsyncMock()),
         user=user,
-        user_dao=UserDAO(session),
         reminder_dao=reminder_dao,
         habit_event_dao=habit_event_dao,
         scheduler_service=SimpleNamespace(remove_reminder_job=lambda _id: None),

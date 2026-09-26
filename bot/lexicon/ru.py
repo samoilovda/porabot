@@ -104,7 +104,7 @@ RU: dict[str, Any] = {
     "btn_clear_all": "🗑 Очистить всё",
     "btn_clear_all_confirm": "✅ Да, удалить всё",
     "btn_clear_all_cancel": "↩ Отмена",
-    "clear_all_confirm_text": "⚠️ Это навсегда удалит *все* задачи, привычки и настройки.\n\nТочно продолжить?",
+    "clear_all_confirm_text": "⚠️ Это навсегда удалит *все* задачи, привычки и настройки. История платежей сохранится — она нужна для поддержки (/paysupport).\n\nТочно продолжить?",
     "clear_all_done": "✅ Все данные удалены. Начинаем с нуля.",
 
     # Custom Daily Briefs Settings

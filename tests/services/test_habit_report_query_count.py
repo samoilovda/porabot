@@ -8,7 +8,7 @@ method — counting actual SELECTs on habit_events via a SQLAlchemy engine
 event hook, not guessing at call counts.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,6 +21,12 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
 from bot.database.models import User
 from bot.services.habit_reports import _process_user_reports
+
+# Fixed instead of datetime.now(): "today + 7 days" must stay within the
+# same month, or _process_user_reports also builds the monthly report
+# alongside the weekly one, doubling the SELECT count this test asserts —
+# it only failed on the last few days of a month.
+_FIXED_NOW = datetime(2026, 5, 10, 23, 50)
 
 
 @pytest.fixture
@@ -40,7 +46,7 @@ async def _seed_user_with_habits(session, n_habits: int = 6) -> None:
     await session.flush()
     reminder_dao = ReminderDAO(session)
     habit_event_dao = HabitEventDAO(session)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = _FIXED_NOW
 
     for i in range(n_habits):
         habit = await reminder_dao.create_reminder(
@@ -73,8 +79,7 @@ async def test_weekly_report_issues_one_select_on_habit_events_per_events_call(s
     try:
         bot = AsyncMock()
         bot.send_message = AsyncMock()
-        now_local = datetime.now(timezone.utc)
-        delivered = await _process_user_reports(s, bot, User(id=1, username="u", timezone="UTC"), now_local)
+        delivered = await _process_user_reports(s, bot, User(id=1, username="u", timezone="UTC"), _FIXED_NOW)
         assert delivered is True
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", _count_habit_event_selects)

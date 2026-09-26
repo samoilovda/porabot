@@ -6,7 +6,7 @@ do for (wrong weekday, or time not yet reached). Mirrors
 test_missed_recovery_query_count.py / test_habit_sweeper_query_count.py.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,11 +14,26 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import bot.context as context_module
+import bot.services.habit_reports as habit_reports_module
 from bot.database import models  # noqa: F401
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
 from bot.database.models import User
 from bot.services.habit_reports import process_habit_reports
+
+# Fixed instead of datetime.now(): "today + 7 days" must stay within the
+# same month, or the job also builds/sends a monthly report alongside the
+# weekly one (see _process_user_reports), doubling send_message/select
+# counts and making this test's assertions date-dependent — it only failed
+# on the last few days of a month. A Sunday, mid-month, matches the
+# convention used by test_habit_report_window_not_exact_minute.py.
+_FIXED_NOW = datetime(2026, 5, 10, 23, 50)
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return _FIXED_NOW.replace(tzinfo=tz)
 
 
 @pytest.fixture
@@ -33,7 +48,7 @@ async def session_pool():
 
 async def _seed_users(session_pool, *, n_wrong_weekday: int, n_due: int, today_weekday: int) -> None:
     maker, _ = session_pool
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = _FIXED_NOW
     wrong_weekday = (today_weekday + 1) % 7
     async with maker() as session:
         reminder_dao = ReminderDAO(session)
@@ -76,7 +91,7 @@ async def _seed_users(session_pool, *, n_wrong_weekday: int, n_due: int, today_w
 
 async def test_only_one_select_on_users_regardless_of_candidate_count(session_pool, monkeypatch) -> None:
     maker, engine = session_pool
-    today_weekday = datetime.now(timezone.utc).weekday()
+    today_weekday = _FIXED_NOW.weekday()
     await _seed_users(session_pool, n_wrong_weekday=15, n_due=2, today_weekday=today_weekday)
 
     fake_bot = AsyncMock()
@@ -84,6 +99,7 @@ async def test_only_one_select_on_users_regardless_of_candidate_count(session_po
     fake_instance.bot = fake_bot
     fake_instance.session_pool = maker
     monkeypatch.setattr(context_module, "_context", fake_instance)
+    monkeypatch.setattr(habit_reports_module, "datetime", _FrozenDatetime)
 
     select_count = 0
 

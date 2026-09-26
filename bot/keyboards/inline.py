@@ -574,9 +574,21 @@ def get_evening_wrapup_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> Inlin
 # TASK LIST KEYBOARDS
 # =============================================================================
 
-def _build_task_action_rows(tasks: list[Any], l10n: dict[str, Any]) -> list[list[InlineKeyboardButton]]:
+def _build_task_action_rows(
+    tasks: list[Any], l10n: dict[str, Any], *, return_ctx: Optional[str] = None
+) -> list[list[InlineKeyboardButton]]:
     """Per-task Done/Settings/Delete button row — shared by the plain task
-    list and the 3.4 search/filter results view."""
+    list and the 3.4 search/filter results view.
+
+    return_ctx: step 8 (2026-09-26 audit remediation) — when set (rendering
+    a quick-filter's results, see get_filtered_tasks_keyboard), appended to
+    the Done button's callback_data as a "::<ctx>" suffix so
+    callback_task_done can return to this SAME filtered page afterward
+    instead of collapsing the whole list into a single-task follow-up
+    card. Not added to Settings/Delete — those already open their own
+    dedicated screen regardless of where they were tapped from.
+    """
+    suffix = f"::{return_ctx}" if return_ctx else ""
     rows: list[list[InlineKeyboardButton]] = []
     for task in tasks:
         if hasattr(task, 'reminder_text'):
@@ -592,7 +604,7 @@ def _build_task_action_rows(tasks: list[Any], l10n: dict[str, Any]) -> list[list
             [
                 InlineKeyboardButton(
                     text=f"{l10n['btn_done_task_prefix']} {text_preview}",
-                    callback_data=f"done_task_{task_id}",
+                    callback_data=f"done_task_{task_id}{suffix}",
                 ),
                 InlineKeyboardButton(
                     text=l10n.get("btn_task_settings", "⚙️"),
@@ -607,17 +619,92 @@ def _build_task_action_rows(tasks: list[Any], l10n: dict[str, Any]) -> list[list
     return rows
 
 
-def get_filtered_tasks_keyboard(tasks: list[Any], l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """3.4: results view for /find and the quick filters (today / this week
-    / overdue / recurring) — per-task actions plus a way back to the full
-    unfiltered list, deliberately without the paging/refresh machinery of
-    get_tasks_list_keyboard since a filtered set isn't a "page" of anything."""
+def encode_filter_ctx(kind: str, tag: Optional[str], page: int) -> str:
+    """Step 8 (2026-09-26 audit remediation): compact "which filter, which
+    page" descriptor — embedded in a Done button's callback_data (see
+    _build_task_action_rows' return_ctx) and in this screen's own
+    pagination buttons (flt:<ctx> callback_data), so both round-trip
+    through bot/handlers/reminders_shared.py's decode_filter_ctx."""
+    if kind == "tag":
+        return f"tag:{tag}:{page}"
+    return f"{kind}:{page}"
+
+
+def get_filtered_tasks_keyboard(
+    tasks: list[Any],
+    l10n: dict[str, Any],
+    *,
+    kind: str = "find",
+    tag: Optional[str] = None,
+    page: int = 0,
+    total_pages: int = 1,
+) -> InlineKeyboardMarkup:
+    """Results view for /find and the quick filters (today / this week /
+    overdue / recurring / a tag) — per-task actions, real pagination for
+    a quick filter (kind != "find") that spans more than one page, and a
+    way back to the full unfiltered list.
+
+    kind="find" (the default, /find's own results) keeps the original
+    behavior: a flat first-page-worth of matches, no pagination, no
+    return-context on its Done buttons — /find isn't one of the step 8
+    quick filters and doesn't need to be reopened at a specific page.
+    """
     builder = InlineKeyboardBuilder()
-    for row in _build_task_action_rows(tasks[:TASKS_PAGE_SIZE], l10n):
+    is_quick_filter = kind != "find"
+    return_ctx = encode_filter_ctx(kind, tag, page) if is_quick_filter else None
+    for row in _build_task_action_rows(tasks[:TASKS_PAGE_SIZE], l10n, return_ctx=return_ctx):
         builder.row(*row)
+
+    if is_quick_filter and total_pages > 1:
+        page_row = []
+        if page > 0:
+            page_row.append(
+                InlineKeyboardButton(
+                    text=l10n.get("btn_prev_page", "◀️"),
+                    callback_data=f"flt:{encode_filter_ctx(kind, tag, page - 1)}",
+                )
+            )
+        page_row.append(
+            InlineKeyboardButton(
+                text=l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=page + 1, total=total_pages),
+                callback_data="noop",
+            )
+        )
+        if page < total_pages - 1:
+            page_row.append(
+                InlineKeyboardButton(
+                    text=l10n.get("btn_next_page", "▶️"),
+                    callback_data=f"flt:{encode_filter_ctx(kind, tag, page + 1)}",
+                )
+            )
+        builder.row(*page_row)
+
     builder.row(
         InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),
         InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"),
+    )
+    return builder.as_markup()
+
+
+def get_filter_menu_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Step 8 (2026-09-26 audit remediation): the quick-filter entry
+    points, moved off the task list itself (where they used to disappear
+    once the list grew past one page — see get_tasks_list_keyboard's
+    now-permanent single "Filter" button) and into their own screen."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_today", "📅 Today"), callback_data="tasks_filter_today"),
+        InlineKeyboardButton(text=l10n.get("btn_filter_week", "🗓 This week"), callback_data="tasks_filter_week"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_overdue", "⏰ Overdue"), callback_data="tasks_filter_overdue"),
+        InlineKeyboardButton(text=l10n.get("btn_filter_recurring", "🔁 Recurring"), callback_data="tasks_filter_recurring"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_tags", "🏷 Tags"), callback_data="tasks_tags_menu"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter_back", "🔙 All tasks"), callback_data="tasks_page_0"),
     )
     return builder.as_markup()
 
@@ -691,20 +778,14 @@ def get_tasks_list_keyboard(
     for row in _build_task_action_rows(tasks, l10n):
         builder.row(*row)
 
-    # 3.4: search/filter entry points — a full-text search plus quick
-    # filters over the same active task set get_user_reminders queries.
-    if total_pages <= 1:
-        builder.row(
-            InlineKeyboardButton(text=l10n.get("btn_filter_today", "📅 Today"), callback_data="tasks_filter_today"),
-            InlineKeyboardButton(text=l10n.get("btn_filter_week", "🗓 This week"), callback_data="tasks_filter_week"),
-        )
-        builder.row(
-            InlineKeyboardButton(text=l10n.get("btn_filter_overdue", "⏰ Overdue"), callback_data="tasks_filter_overdue"),
-            InlineKeyboardButton(text=l10n.get("btn_filter_recurring", "🔁 Recurring"), callback_data="tasks_filter_recurring"),
-        )
-        builder.row(
-            InlineKeyboardButton(text=l10n.get("btn_filter_tags", "🏷 Tags"), callback_data="tasks_tags_menu"),
-        )
+    # Step 8 (2026-09-26 audit remediation): a single, permanent entry
+    # point into get_filter_menu_keyboard's quick filters — this used to
+    # be 3 rows of filter buttons shown ONLY on a single-page list
+    # (`if total_pages <= 1`), so a user with enough tasks to actually
+    # need a filter was exactly the user who could never see the button.
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_filter", "🔍 Filter"), callback_data="tasks_filter_menu"),
+    )
 
     # Page navigation row — only shown when there's more than one page.
     if total_pages > 1:

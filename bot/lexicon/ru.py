@@ -129,6 +129,8 @@ RU: dict[str, Any] = {
     "btn_close": "🔼 Скрыть",
 
     # Поиск и фильтры — 3.4
+    "btn_filter": "🔍 Фильтр",
+    "filter_menu_title": "🔍 Фильтровать задачи по:",
     "btn_filter_today": "📅 Сегодня",
     "btn_filter_week": "🗓 Эта неделя",
     "btn_filter_overdue": "⏰ Просроченные",

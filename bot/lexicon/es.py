@@ -132,6 +132,8 @@ ES.update(
         "btn_close": "🔼 Ocultar",
 
         # Búsqueda y filtros — 3.4
+        "btn_filter": "🔍 Filtro",
+        "filter_menu_title": "🔍 Filtrar tareas por:",
         "btn_filter_today": "📅 Hoy",
         "btn_filter_week": "🗓 Esta semana",
         "btn_filter_overdue": "⏰ Atrasadas",

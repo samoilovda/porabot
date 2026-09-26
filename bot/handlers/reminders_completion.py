@@ -19,7 +19,13 @@ from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fixed
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import ReminderKind, User
 from bot.database.models import is_habit_like as _is_habit_like
-from bot.handlers.reminders_shared import _parse_id_suffix, _pick_done_reply
+from bot.handlers.reminders_shared import (
+    _parse_id_suffix,
+    _pick_done_reply,
+    _render_filter_screen,
+    _split_return_ctx,
+    decode_filter_ctx,
+)
 from bot.keyboards.inline import get_done_followup_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -222,7 +228,15 @@ async def callback_task_done(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    payload = callback.data[len("done_task_"):]
+    # Step 8 (2026-09-26 audit remediation): a Done button rendered from a
+    # quick filter's results (get_filtered_tasks_keyboard) carries a
+    # "::<kind>:<page>" return-context suffix — see
+    # bot/keyboards/inline.py's _build_task_action_rows — so success below
+    # can redraw that SAME filtered page instead of collapsing the whole
+    # list into a single-task follow-up card, which would otherwise lose
+    # the filter entirely.
+    data, return_ctx = _split_return_ctx(callback.data)
+    payload = data[len("done_task_"):]
     parts = payload.split("_")
     try:
         reminder_id = int(parts[0])
@@ -304,6 +318,12 @@ async def callback_task_done(
     if not reminder.is_recurring:
         scheduler_service.remove_reminder_job(reminder_id)
     scheduler_service.remove_nagging_job(reminder_id)
+
+    if return_ctx:
+        kind, tag, page = decode_filter_ctx(return_ctx)
+        await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind=kind, tag=tag, page=page)
+        await callback.answer(l10n["btn_done"])
+        return
 
     try:
         done_text = f"{escape_markdown_v2(callback.message.text)}\n\n{_pick_done_reply(l10n)}"

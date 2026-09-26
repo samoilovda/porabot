@@ -165,26 +165,41 @@ def scan_filenames(path: str, no_history: bool) -> list[dict]:
     return findings
 
 
+_PLACEHOLDER_WINDOW = 20
+
+
+def _redact_preview(content: str, start: int, end: int) -> str:
+    """Replace the matched span with its masked form before truncating, so
+    the preview we print/log never contains the raw secret."""
+    return (content[:start] + mask(content[start:end]) + content[end:]).strip()[:100]
+
+
 def _match_content(content: str, current_file: str, extra: dict) -> list[dict]:
     findings = []
-    if PLACEHOLDER_HINTS.search(content):
-        return findings
 
     for rule, pattern in KNOWN_FORMAT_PATTERNS.items():
         m = pattern.search(content)
-        if m:
-            findings.append({
-                "type": rule, "file": current_file, "match": mask(m.group(0)),
-                "preview": content.strip()[:100], **extra,
-            })
+        if not m:
+            continue
+        start, end = m.span()
+        window = content[max(0, start - _PLACEHOLDER_WINDOW):end + _PLACEHOLDER_WINDOW]
+        if PLACEHOLDER_HINTS.search(window):
+            continue
+        findings.append({
+            "type": rule, "file": current_file, "match": mask(m.group(0)),
+            "preview": _redact_preview(content, start, end), **extra,
+        })
 
     m = UNQUOTED_ASSIGN.match(content)
     if m and len(m.group(4)) >= 12 and "(" not in content and ")" not in content:
-        findings.append({
-            "type": "unquoted-secret-assignment", "file": current_file,
-            "key": m.group(1), "match": mask(m.group(4)),
-            "preview": content.strip()[:100], **extra,
-        })
+        start, end = m.span(4)
+        window = content[max(0, start - _PLACEHOLDER_WINDOW):end + _PLACEHOLDER_WINDOW]
+        if not PLACEHOLDER_HINTS.search(window):
+            findings.append({
+                "type": "unquoted-secret-assignment", "file": current_file,
+                "key": m.group(1), "match": mask(m.group(4)),
+                "preview": _redact_preview(content, start, end), **extra,
+            })
     return findings
 
 

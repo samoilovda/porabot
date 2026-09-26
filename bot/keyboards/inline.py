@@ -1123,6 +1123,18 @@ def get_quiet_hours_setup_keyboard(
     )
     builder.row(InlineKeyboardButton(text=habits_exempt_text, callback_data="quiet_habits_exempt_toggle"))
 
+    # Step 5 (2026-09-26 audit remediation): README used to promise quiet
+    # hours "suppress all notifications" — briefs/reports never actually
+    # did. A non-interactive note (reuses the existing "noop" callback,
+    # same as the task-list page indicator) instead of adding a whole
+    # separate text screen just for this one line.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("quiet_hours_briefs_note", "ℹ️ Summaries still arrive on time, just silently"),
+            callback_data="noop",
+        )
+    )
+
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()
 

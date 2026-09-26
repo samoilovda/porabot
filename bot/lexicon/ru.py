@@ -62,6 +62,7 @@ RU: dict[str, Any] = {
     "btn_quiet_weekend_end": "🌅 Конец (выходные): {time}",
     "btn_quiet_habits_exempt_on": "🔔 Привычки будят: ВКЛ",
     "btn_quiet_habits_exempt_off": "🔕 Привычки будят: ВЫКЛ",
+    "quiet_hours_briefs_note": "ℹ️ Сводки в это время приходят без звука",
     "choose_tz": "Выбери свой часовой пояс:",
     "tz_manual_prompt": "Отправь только смещение UTC: `+5`, `0`, `-6` или известное получасовое смещение вроде `+5:30`.",
     "tz_manual_button": "⌨️ Ввести вручную",

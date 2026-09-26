@@ -23,6 +23,7 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
+from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
 
@@ -178,11 +179,16 @@ async def _release_brief_claim(session, *, user, column, today_str: str) -> None
     setattr(user, column.key, None)
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None):
+async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None, disable_notification: bool = False):
     """Send a message, suppressing bot-blocked and bad-request errors.
 
     Falls back to plain text if Markdown entities fail to parse, so a stray
     unescaped character never causes the whole brief to be silently dropped.
+
+    disable_notification: step 5 (2026-09-26 audit remediation) — True when
+    notification_policy() says this brief falls inside the user's quiet
+    hours; the brief still sends at its scheduled time, just silently,
+    instead of being deferred like a regular reminder would be.
 
     Returns the sent Message (truthy) on success — callers that need the
     message_id, e.g. to pin it, can use it directly. Returns True if the
@@ -191,7 +197,10 @@ async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None):
     (network/timeout/etc.), so callers know NOT to treat this as delivered.
     """
     try:
-        return await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
+        return await bot.send_message(
+            chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=reply_markup,
+            disable_notification=disable_notification,
+        )
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping brief.", user_id)
         return True
@@ -203,6 +212,7 @@ async def _send_safe(bot: Bot, user_id: int, text: str, reply_markup=None):
                 text=strip_markdown_escapes(text),
                 parse_mode=None,
                 reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
@@ -350,10 +360,14 @@ async def process_daily_briefs() -> None:
                     local_time_str = datetime.now(tz).strftime("%H:%M")
                     # The morning/evening brief itself is exempt from quiet hours —
                     # it fires exactly at the time the user configured, so suppressing
-                    # it (e.g. default evening_brief_time == default quiet_hours_start)
-                    # would silently make the brief unreachable. Quiet hours still
-                    # apply to the ancillary fluid-habit prompts below.
+                    # or deferring it (e.g. default evening_brief_time == default
+                    # quiet_hours_start) would silently make the brief unreachable.
+                    # Step 5 (2026-09-26 audit remediation): delivered silently
+                    # instead — see notification_policy's module docstring.
+                    # Quiet hours still fully suppress the ancillary fluid-habit
+                    # prompts below (is_quiet), which aren't summaries.
                     is_quiet = is_quiet_hours(user, datetime.now(tz))
+                    brief_disable_notification = notification_policy(user, "brief", datetime.now(tz)) == "silent"
                     reminder_dao = ReminderDAO(session)
                     habit_event_dao = HabitEventDAO(session)
 
@@ -431,7 +445,10 @@ async def process_daily_briefs() -> None:
                             delivered = True
                             sent_message = None
                             if text_sections:
-                                result = await _send_safe(bot, user.id, "\n\n".join(text_sections))
+                                result = await _send_safe(
+                                    bot, user.id, "\n\n".join(text_sections),
+                                    disable_notification=brief_disable_notification,
+                                )
                                 delivered = bool(result)
                                 if isinstance(result, Message):
                                     sent_message = result
@@ -516,6 +533,7 @@ async def process_daily_briefs() -> None:
                                     user.id,
                                     text,
                                     reply_markup=get_evening_wrapup_keyboard(shown_overdue, l10n) if shown_overdue else None,
+                                    disable_notification=brief_disable_notification,
                                 )
                                 if delivered:
                                     logger.info("Evening brief sent to user %s", user.id)

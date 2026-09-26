@@ -386,8 +386,9 @@ def test_compound_date_plus_time_phrase_fully_strips_from_clean_text() -> None:
 # midnight (or, for a bare "tomorrow", to whatever time it happens to be
 # right now), and both are silently wrong for a reminder the user never
 # actually gave a time for. Confidence is capped below the confirmation
-# threshold instead, routing it through the existing "confirm this time?"
-# prompt (reminders_shared._handle_parsed_result) rather than saving blind.
+# threshold AND date_only is set, so reminders_shared._resolve_time_and_respond
+# (step 3, 2026-09-26 audit remediation) asks only for the hour — keeping
+# this recognized date — instead of the generic "confirm this time?" prompt.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -406,6 +407,7 @@ def test_date_only_phrase_gets_low_confidence_not_silently_saved(text) -> None:
 
     assert result.parsed_datetime is not None
     assert result.confidence < 0.7  # below reminders_shared._PARSE_CONFIDENCE_THRESHOLD
+    assert result.date_only is True
 
 
 @pytest.mark.parametrize(
@@ -425,6 +427,7 @@ def test_phrase_with_explicit_time_keeps_full_confidence(text, expected_hour) ->
     assert result.parsed_datetime is not None
     assert result.parsed_datetime.hour == expected_hour
     assert result.confidence >= 0.7
+    assert result.date_only is False
 
 
 def test_date_with_no_time_at_all_is_also_low_confidence() -> None:
@@ -436,3 +439,4 @@ def test_date_with_no_time_at_all_is_also_low_confidence() -> None:
 
     assert result.parsed_datetime is not None
     assert result.confidence < 0.7
+    assert result.date_only is True

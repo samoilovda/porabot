@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.handlers.settings import build_data_export, callback_export_data
-from bot.keyboards.inline import get_settings_keyboard
+from bot.keyboards.inline import get_data_group_keyboard
 from bot.lexicon.ru import RU
 
 
@@ -128,7 +128,9 @@ async def test_export_data_sends_a_document() -> None:
 
 
 def test_settings_keyboard_has_export_button_before_clear_all() -> None:
-    markup = get_settings_keyboard(RU, show_utc_offset=False)
+    # Step 9 (2026-09-26 audit remediation): both buttons now live in the
+    # "Данные и интеграции" settings group, not the top-level keyboard.
+    markup = get_data_group_keyboard(RU)
     callback_datas = [button.callback_data for row in markup.inline_keyboard for button in row]
     assert "settings_export_data" in callback_datas
     assert callback_datas.index("settings_export_data") < callback_datas.index("settings_clear_all")

@@ -20,8 +20,19 @@ from bot.lexicon import get_l10n
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# Step 9 (2026-09-26 audit remediation): settings.py split into a package —
+# each handler below now lives in one of its submodules.
+_HANDLER_MODULE = {
+    "state_set_manual_timezone": "bot/handlers/settings/locale_time.py",
+    "state_set_quiet_time": "bot/handlers/settings/notifications.py",
+    "state_briefs_set_time": "bot/handlers/settings/notifications.py",
+    "state_habit_report_set_time": "bot/handlers/settings/notifications.py",
+    "state_missed_recovery_set_time": "bot/handlers/settings/notifications.py",
+}
+
+
 def _load_handler(fn_name: str):
-    module_path = ROOT / "bot/handlers/settings.py"
+    module_path = ROOT / _HANDLER_MODULE[fn_name]
     spec = importlib.util.spec_from_file_location(f"test_{fn_name}", module_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

@@ -442,7 +442,13 @@ async def cb_habit_list(
 
     # Build an inline keyboard with delete buttons for each habit
     builder = InlineKeyboardBuilder()
-    text_lines = [l10n["habit_list_header"]]
+    # Step 7 (2026-09-26 audit remediation): explained once here rather
+    # than repeated on every habit's line below — see habit_reports.py's
+    # _build_report_text for the same wording used in weekly/monthly reports.
+    text_lines = [l10n["habit_list_header"], l10n.get(
+        "habit_score_explainer",
+        "💪 «Устойчивость» — сглаженная оценка (EMA), не совпадает с точной долей выполнений ниже.",
+    )]
 
     try:
         today_str = datetime.now(pytz.timezone(user.timezone)).date().isoformat()

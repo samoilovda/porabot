@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
 import pytz
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
@@ -62,6 +62,13 @@ class ReminderDAO(BaseDAO[Reminder]):
     # and vice versa.
     MAX_ACTIVE_REMINDERS = 200
     MAX_ACTIVE_HABITS = 50
+
+    async def delete_for_user(self, user_id: int) -> None:
+        """Drop every reminder of a user in one statement — for full
+        account reset. Caller is responsible for removing the matching
+        scheduler jobs (this DAO has no reference to SchedulerService)."""
+        await self.session.execute(delete(Reminder).where(Reminder.user_id == user_id))
+        await self.session.flush()
 
     async def create_reminder(
         self,

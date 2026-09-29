@@ -1,6 +1,6 @@
 """Inline keyboards for Porabot."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 import pytz
@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.utils.time_ext import format_time, local_time_today_or_tomorrow
+from bot.utils.time_ext import format_time, local_time_on_date, local_time_today_or_tomorrow
 
 # fix(3.3): single source of truth for the task-list page size — used both
 # to slice which tasks get rendered as buttons here and, in
@@ -40,6 +40,7 @@ def get_time_selection_keyboard(
     user_timezone: str,
     l10n: dict[str, Any],
     show_utc_offset: bool = False,
+    base_date: Optional[date] = None,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for choosing reminder time.
@@ -50,6 +51,13 @@ def get_time_selection_keyboard(
         user_timezone: User's timezone string (e.g., 'Europe/Moscow')
         l10n: Localization dictionary
         show_utc_offset: Whether to append UTC offset in parentheses
+        base_date: when the day is already known (the parser recognized
+            "понедельник"/"tomorrow" but no clock time — see
+            reminders_shared._resolve_time_and_respond), the time-of-day
+            slots land on THIS date instead of today/tomorrow, and the
+            now-relative delta/"tomorrow" buttons (which would silently
+            ignore the recognized day) are dropped — only "pick an hour
+            for that day" or manual entry make sense here.
 
     Returns:
         InlineKeyboardMarkup with time selection buttons
@@ -60,14 +68,15 @@ def get_time_selection_keyboard(
     """
     builder = InlineKeyboardBuilder()
 
-    # Row 1: Delta buttons (add X minutes/hours to now)
-    builder.row(
-        InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data="time_delta_15"),
-        InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data="time_delta_30"),
-        InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data="time_delta_60"),
-        InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data="time_delta_120"),
-        InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data="time_delta_180"),
-    )
+    if base_date is None:
+        # Row 1: Delta buttons (add X minutes/hours to now)
+        builder.row(
+            InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data="time_delta_15"),
+            InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data="time_delta_30"),
+            InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data="time_delta_60"),
+            InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data="time_delta_120"),
+            InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data="time_delta_180"),
+        )
 
     # Row 2-3: Time-of-day slots (morning, day, evening, night)
     times = [
@@ -79,9 +88,13 @@ def get_time_selection_keyboard(
 
     buttons: list[InlineKeyboardButton] = []
     for label, hour in times:
-        # 1.3: DST-safe — see local_time_today_or_tomorrow's docstring for
-        # why this replaced a plain now.replace(hour=...) + timedelta(days=1).
-        target_time = local_time_today_or_tomorrow(user_timezone, hour)
+        if base_date is not None:
+            target_time = local_time_on_date(user_timezone, base_date, hour)
+        else:
+            # 1.3: DST-safe — see local_time_today_or_tomorrow's docstring
+            # for why this replaced a plain now.replace(hour=...) +
+            # timedelta(days=1).
+            target_time = local_time_today_or_tomorrow(user_timezone, hour)
 
         callback_val = target_time.isoformat()
         time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")
@@ -96,11 +109,16 @@ def get_time_selection_keyboard(
     builder.row(*buttons[:2])
     builder.row(*buttons[2:])
 
-    # Row 4: Other options (tomorrow, manual entry)
-    builder.row(
-        InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data="time_tomorrow"),
-        InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"),
-    )
+    # Row 4: Other options (tomorrow, manual entry) — "tomorrow" only
+    # makes sense relative to today, so it's dropped once a specific day
+    # is already known.
+    if base_date is None:
+        builder.row(
+            InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data="time_tomorrow"),
+            InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"),
+        )
+    else:
+        builder.row(InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"))
 
     # Row 5: Cancel option (escape route for wizard)
     builder.row(
@@ -244,6 +262,27 @@ def get_edit_keyboard(
         )
     )
 
+    return builder.as_markup()
+
+
+def get_saved_task_keyboard(reminder_id: int, l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """Compact keyboard shown right after a reminder is saved (step 4,
+    2026-09-26 audit remediation) — deliberately NOT get_edit_keyboard's
+    full options menu (repeat/nagging/snooze/…), and deliberately without
+    its "cancel_wizard" button: there is no wizard in progress any more at
+    this point, so that button used to delete the just-shown confirmation
+    and claim "Reminder creation cancelled" for an already-persisted task.
+
+    "Изменить" reuses the same task_settings_ callback the task list's ⚙️
+    button opens; "Удалить" reuses del_task_'s existing soft-delete/undo
+    flow; "Закрыть" reuses done_close, which only hides this keyboard.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_edit", "✏️ Изменить"), callback_data=f"task_settings_{reminder_id}"),
+        InlineKeyboardButton(text=l10n["btn_delete"], callback_data=f"del_task_{reminder_id}"),
+    )
+    builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="done_close"))
     return builder.as_markup()
 
 
@@ -1203,6 +1242,18 @@ def get_quiet_hours_setup_keyboard(
         else l10n.get("btn_quiet_habits_exempt_off", "🔕 Habits can wake me: OFF")
     )
     builder.row(InlineKeyboardButton(text=habits_exempt_text, callback_data="quiet_habits_exempt_toggle"))
+
+    # Step 5 (2026-09-26 audit remediation): README used to promise quiet
+    # hours "suppress all notifications" — briefs/reports never actually
+    # did. A non-interactive note (reuses the existing "noop" callback,
+    # same as the task-list page indicator) instead of adding a whole
+    # separate text screen just for this one line.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("quiet_hours_briefs_note", "ℹ️ Summaries still arrive on time, just silently"),
+            callback_data="noop",
+        )
+    )
 
     builder.row(InlineKeyboardButton(text=l10n.get("btn_back_settings"), callback_data="settings_back"))
     return builder.as_markup()

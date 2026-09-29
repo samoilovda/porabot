@@ -1,7 +1,7 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import AsyncMock
 
 from bot.lexicon import get_l10n
 
@@ -79,10 +79,12 @@ async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
     assert "Europe/Moscow" in edit_text
     assert "UTC+" in edit_text
     state.clear.assert_awaited_once()
-    message.answer.assert_awaited_once_with(
-        l10n["cmd_start"].format(name="Bob"),
-        reply_markup=ANY,
-    )
+    # Step 7 (2026-09-26 audit remediation): onboarding now ends with a
+    # worked example, not just the main menu.
+    assert message.answer.await_count == 2
+    assert message.answer.await_args_list[0].args[0] == l10n["cmd_start"].format(name="Bob")
+    assert "reply_markup" in message.answer.await_args_list[0].kwargs
+    assert message.answer.await_args_list[1].args[0] == l10n["onboarding_example_hint"]
     callback.answer.assert_awaited_once()
 
 

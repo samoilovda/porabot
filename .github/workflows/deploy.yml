@@ -108,15 +108,38 @@ jobs:
               exit 1
             }
 
+            # The production compose (the orchestrator's, shared with other
+            # bots) may define no healthcheck for this service, in which
+            # case .State.Health is absent — waiting for "healthy" would
+            # then time out and roll back a perfectly good deploy. Use the
+            # container's own health when it has one; otherwise require it
+            # to stay Running, with an unchanged RestartCount, for ~60s.
             healthy=0
+            stable=0
+            restarts_before=""
             for _ in $(seq 1 30); do
-              status="$(docker inspect --format='{{.State.Health.Status}}' porabot 2>/dev/null || echo "starting")"
-              if [ "$status" = "healthy" ]; then
+              health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' porabot 2>/dev/null || echo missing)"
+              if [ "$health" = "healthy" ]; then
                 healthy=1
                 break
               fi
-              if [ "$status" = "unhealthy" ]; then
+              if [ "$health" = "unhealthy" ]; then
                 break
+              fi
+              if [ "$health" = "none" ]; then
+                running="$(docker inspect -f '{{.State.Running}}' porabot 2>/dev/null || echo false)"
+                restarts="$(docker inspect -f '{{.RestartCount}}' porabot 2>/dev/null || echo -1)"
+                if [ "$running" = "true" ] && { [ -z "$restarts_before" ] || [ "$restarts" = "$restarts_before" ]; }; then
+                  restarts_before="$restarts"
+                  stable=$((stable + 1))
+                else
+                  stable=0
+                  restarts_before="$restarts"
+                fi
+                if [ "$stable" -ge 6 ]; then
+                  healthy=1
+                  break
+                fi
               fi
               sleep 10
             done

@@ -22,6 +22,12 @@
     <h2 id="heatmap-title">Completion heatmap</h2>
     <div id="heatmap-legend"></div>
     <div id="heatmap"></div>
+    <!-- Step 10 (2026-09-26 audit remediation): a day's details render
+         here on click/Enter/Space instead of only a hover `title` on its
+         tiny cell. tabindex="-1" + aria-live so app.js can move focus to
+         it programmatically (announced by a screen reader) without
+         adding it to the normal Tab order. -->
+    <p id="heatmap-detail" class="status" aria-live="polite" tabindex="-1"></p>
   </section>
 
   <p id="status" class="status"></p>

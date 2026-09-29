@@ -12,8 +12,9 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
 from bot.lexicon import get_l10n
+from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
-from bot.utils.time_ext import format_time, is_quiet_hours
+from bot.utils.time_ext import format_time
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,13 @@ async def process_missed_task_recovery() -> None:
             now_local = datetime.now(tz)
             if now_local.strftime("%H:%M") < getattr(user, "missed_recovery_time", RECOVERY_LOCAL_TIME):
                 continue
-            if is_quiet_hours(user, now_local):
+            # Step 5 (2026-09-26 audit remediation): the missed-task digest
+            # is suppressed (skipped this tick, retried later — the "not
+            # recorded today" check below means it isn't lost, just
+            # delayed) under the same policy every scheduled message kind
+            # now goes through, same as before this was a bare
+            # is_quiet_hours() check.
+            if notification_policy(user, "missed_recovery", now_local) == "suppress":
                 continue
 
             today_key = now_local.strftime("%Y-%m-%d")

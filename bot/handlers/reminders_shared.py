@@ -23,9 +23,10 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
     TASKS_PAGE_SIZE,
-    get_edit_keyboard,
+    get_filtered_tasks_keyboard,
     get_parse_confirmation_keyboard,
     get_repeat_builder_keyboard,
+    get_saved_task_keyboard,
     get_time_selection_keyboard,
 )
 from bot.lexicon import ALL_MENU_BUTTON_TEXTS
@@ -33,6 +34,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.tags import extract_tags_and_priority, format_tags, priority_glyph
+from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
@@ -304,11 +306,101 @@ def _paginate_tasks_for_list(tasks: list, page: int = 0) -> tuple[list, int, int
     return shown, page, total_pages
 
 
-def _render_tasks_list_text(shown_tasks: list, user: User, l10n: dict[str, Any], page: int, total_pages: int) -> str:
-    lines = [l10n["tasks_header"]] + [_format_task_line_md2(task, user) for task in shown_tasks]
+def _render_tasks_list_text(
+    shown_tasks: list, user: User, l10n: dict[str, Any], page: int, total_pages: int,
+    *, header: Optional[str] = None,
+) -> str:
+    lines = [header if header is not None else l10n["tasks_header"]] + [
+        _format_task_line_md2(task, user) for task in shown_tasks
+    ]
     if total_pages > 1:
         lines.append(l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=page + 1, total=total_pages))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Quick filters — step 8 (2026-09-26 audit remediation): a real, paginable
+# view per filter kind, and a way for an action taken inside one (right now
+# just "Done" — see callback_task_done in reminders_completion.py) to
+# return to that same filtered page afterward instead of losing it.
+# ---------------------------------------------------------------------------
+
+_FILTER_HEADERS: dict[str, tuple[str, str]] = {
+    "today": ("filter_header_today", "📅 *Today:*\n"),
+    "week": ("filter_header_week", "🗓 *This week:*\n"),
+    "overdue": ("filter_header_overdue", "⏰ *Overdue:*\n"),
+    "recurring": ("filter_header_recurring", "🔁 *Recurring:*\n"),
+}
+
+
+def decode_filter_ctx(raw: str) -> tuple[str, Optional[str], int]:
+    """Inverse of bot.keyboards.inline.encode_filter_ctx: "today:0" or
+    "tag:work:2" -> (kind, tag_or_None, page)."""
+    parts = raw.split(":")
+    if parts[0] == "tag":
+        return "tag", parts[1], int(parts[2])
+    return parts[0], None, int(parts[1])
+
+
+def _split_return_ctx(data: str) -> tuple[str, Optional[str]]:
+    """Split a callback_data value off its optional "::<return_ctx>" suffix
+    (appended by _build_task_action_rows when rendered from a filtered
+    page). Returns (data_without_suffix, return_ctx_or_None)."""
+    if "::" in data:
+        base, _, ctx = data.partition("::")
+        return base, ctx
+    return data, None
+
+
+async def _fetch_filter_tasks(
+    reminder_dao: ReminderDAO, user: User, kind: str, tag: Optional[str]
+) -> list:
+    if kind == "today":
+        return await reminder_dao.get_user_reminders_today(user.id, user.timezone)
+    if kind == "week":
+        return await reminder_dao.get_user_reminders_this_week(user.id, user.timezone)
+    if kind == "overdue":
+        return await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0)
+    if kind == "recurring":
+        return await reminder_dao.get_user_reminders_recurring(user.id)
+    if kind == "tag":
+        return await reminder_dao.get_reminders_by_tag(user.id, tag or "")
+    return []
+
+
+async def _render_filter_screen(
+    message: Message,
+    reminder_dao: ReminderDAO,
+    user: User,
+    l10n: dict[str, Any],
+    *,
+    kind: str,
+    tag: Optional[str] = None,
+    page: int = 0,
+) -> None:
+    """Shared renderer for one quick filter's results page — used both by
+    the initial tap (page 0) and by flt:-prefixed pagination/return-from-
+    action, so every entry point shows the exact same paginated view."""
+    tasks = await _fetch_filter_tasks(reminder_dao, user, kind, tag)
+    if not tasks:
+        await safe_edit_text(
+            message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
+        )
+        return
+
+    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=page)
+    if kind == "tag":
+        header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag or ""))
+    else:
+        header_key, header_default = _FILTER_HEADERS[kind]
+        header = l10n.get(header_key, header_default)
+
+    await safe_edit_text(
+        message,
+        _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages, header=header),
+        reply_markup=get_filtered_tasks_keyboard(shown_tasks, l10n, kind=kind, tag=tag, page=page, total_pages=total_pages),
+        parse_mode="MarkdownV2",
+    )
 
 
 def _parse_id_suffix(data: str, prefix: str) -> Optional[int]:
@@ -691,16 +783,12 @@ async def _save_and_show_edit(
         text=escape_markdown_v2(new_reminder.reminder_text),
         time=escape_markdown_v2(date_str),
     )
-    keyboard = get_edit_keyboard(
-        reminder_id=new_reminder.id,
-        l10n=l10n,
-        is_recurring=new_reminder.is_recurring,
-        is_nagging=new_reminder.is_nagging,
-        nagging_max_repeats=new_reminder.nagging_max_repeats,
-        rrule_text=_rrule_text(new_reminder, l10n),
-    )
-    sent_msg = await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
-
-    task = asyncio.create_task(_remove_keyboard_after_delay(sent_msg, 5))
-    active_auto_delete_tasks[_message_task_key(sent_msg)] = task
+    # Step 4 (2026-09-26 audit remediation): a compact "✅ saved" card with
+    # only Edit/Delete/Close, not get_edit_keyboard's full options menu —
+    # and, since there's no wizard in progress once a task is saved, no
+    # "cancel_wizard" escape hatch that used to delete this very
+    # confirmation and claim the (already persisted) task was cancelled.
+    # No auto-hide timer either: the card stays until the user acts on it.
+    keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
+    await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 

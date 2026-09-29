@@ -63,22 +63,65 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Step 6 (2026-09-26 audit remediation): script_stop makes the
+          # action itself fail the step (and this job) the moment any
+          # command below returns non-zero — previously nothing here
+          # stopped on error, so a failed `git pull`, a failed backup, or
+          # `docker compose up` refusing to start still reported success.
+          script_stop: true
+          envs: DEPLOY_SHA
           script: |
-            # 1. Update the bot's source code
-            cd ${{ secrets.PROJECT_PATH }}
-            git pull origin main
+            set -euo pipefail
+
+            # 1. Fetch and check out the EXACT commit this workflow run
+            # tested — never `git pull`, which resolves to whatever main
+            # points to AT DEPLOY TIME and can silently pick up a second
+            # push that landed after this run's own checkout, deploying
+            # code this run never actually tested.
+            cd "${{ secrets.PROJECT_PATH }}"
+            PREV_SHA="$(git rev-parse HEAD)"
+            git fetch origin main
+            git checkout --detach "$DEPLOY_SHA"
 
             # 2. Back up both SQLite databases before restarting the
-            # container on new code — see A-30/scripts/backup.sh. Best
-            # effort: this action runs without script_stop, so a backup
-            # failure (e.g. no sqlite3 CLI on the host) is logged but does
-            # not block the deploy.
-            if [ -x scripts/backup.sh ]; then
-              cd "${{ secrets.ORCHESTRATOR_PATH }}"
-              "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data ./backups 14
-              cd "${{ secrets.PROJECT_PATH }}"
-            fi
+            # container on new code, and verify the backup actually
+            # restores. Both now BLOCK the deploy on failure (previously
+            # best-effort/no-op on a missing script) — a bad or unverified
+            # backup right before a restart is worse than not deploying.
+            cd "${{ secrets.ORCHESTRATOR_PATH }}"
+            "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data ./backups 14
+            "${{ secrets.PROJECT_PATH }}/scripts/verify_backup.sh" ./backups
 
-            # 3. Switch to your orchestrator directory to restart the containers
-            cd ${{ secrets.ORCHESTRATOR_PATH }}
+            # 3. Restart the containers on the new code.
             docker compose up -d --build
+
+            # 4. Wait for docker-compose.yml's own healthcheck (heartbeat
+            # file — see its comment there) to report healthy; roll back
+            # to the previous commit and restart on new code otherwise, so
+            # a bad deploy doesn't sit broken until someone notices.
+            rollback() {
+              echo "Health check failed — rolling back to $PREV_SHA" >&2
+              cd "${{ secrets.PROJECT_PATH }}"
+              git checkout --detach "$PREV_SHA"
+              cd "${{ secrets.ORCHESTRATOR_PATH }}"
+              docker compose up -d --build
+              exit 1
+            }
+
+            healthy=0
+            for _ in $(seq 1 30); do
+              status="$(docker inspect --format='{{.State.Health.Status}}' porabot 2>/dev/null || echo "starting")"
+              if [ "$status" = "healthy" ]; then
+                healthy=1
+                break
+              fi
+              if [ "$status" = "unhealthy" ]; then
+                break
+              fi
+              sleep 10
+            done
+            [ "$healthy" -eq 1 ] || rollback
+
+            echo "Deploy of $DEPLOY_SHA succeeded and is healthy."
+        env:
+          DEPLOY_SHA: ${{ github.sha }}

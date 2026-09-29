@@ -12,7 +12,7 @@ from bot.lexicon.ru import RU
 def test_ics_feed_button_absent_when_web_server_disabled(monkeypatch) -> None:
     monkeypatch.setattr(inline_module.config, "WEB_SERVER_ENABLED", False)
     monkeypatch.setattr(inline_module.config, "PUBLIC_BASE_URL", "")
-    markup = inline_module.get_settings_keyboard(RU, show_utc_offset=False)
+    markup = inline_module.get_data_group_keyboard(RU)
     texts = [b.text for row in markup.inline_keyboard for b in row]
     assert RU["btn_ics_feed"] not in texts
 
@@ -22,7 +22,7 @@ def test_ics_feed_button_absent_when_enabled_but_no_public_url(monkeypatch) -> N
     feed link would still only ever resolve to localhost."""
     monkeypatch.setattr(inline_module.config, "WEB_SERVER_ENABLED", True)
     monkeypatch.setattr(inline_module.config, "PUBLIC_BASE_URL", "")
-    markup = inline_module.get_settings_keyboard(RU, show_utc_offset=False)
+    markup = inline_module.get_data_group_keyboard(RU)
     texts = [b.text for row in markup.inline_keyboard for b in row]
     assert RU["btn_ics_feed"] not in texts
 
@@ -30,6 +30,6 @@ def test_ics_feed_button_absent_when_enabled_but_no_public_url(monkeypatch) -> N
 def test_ics_feed_button_present_when_web_server_enabled_and_public_url_set(monkeypatch) -> None:
     monkeypatch.setattr(inline_module.config, "WEB_SERVER_ENABLED", True)
     monkeypatch.setattr(inline_module.config, "PUBLIC_BASE_URL", "https://porabot.example.com")
-    markup = inline_module.get_settings_keyboard(RU, show_utc_offset=False)
+    markup = inline_module.get_data_group_keyboard(RU)
     texts = [b.text for row in markup.inline_keyboard for b in row]
     assert RU["btn_ics_feed"] in texts

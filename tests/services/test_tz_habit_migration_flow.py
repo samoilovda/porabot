@@ -28,7 +28,9 @@ def _anchor(hour_utc: int) -> datetime:
 
 
 def _load_settings_module():
-    module_path = ROOT / "bot/handlers/settings.py"
+    # Step 9 (2026-09-26 audit remediation): settings.py split into a
+    # package — the tz-migration flow now lives in its locale_time submodule.
+    module_path = ROOT / "bot/handlers/settings/locale_time.py"
     spec = importlib.util.spec_from_file_location("test_settings_tzmig", module_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

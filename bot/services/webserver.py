@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
+from bot.lexicon import DEFAULT_LANG
 from bot.services.habit_reports import compute_habit_score
 from bot.services.ics_feed import build_ics_calendar
 from bot.services.miniapp import build_heatmap_payload, build_scores_payload, validate_init_data
@@ -206,6 +207,27 @@ async def _authenticate_miniapp_request(request: web.Request, bot_token: str) ->
     return validated["user_id"]
 
 
+async def handle_miniapp_profile(request: web.Request) -> web.Response:
+    """Step 10 (2026-09-26 audit remediation): the Mini App's own language
+    toggle used to have nothing to follow — it always rendered English
+    regardless of the language the user actually set for the bot via
+    /language. Returns the bot PROFILE's language (bot/database/models.py's
+    User.language), not Telegram client's own locale from initData, which
+    is a different, unrelated setting."""
+    user_id = await _authenticate_miniapp_request(request, request.app[BOT_TOKEN_KEY])
+    if user_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    session_pool = request.app[SESSION_POOL_KEY]
+    async with session_pool() as session:
+        user_dao = UserDAO(session)
+        user = await user_dao.get_by_id(user_id)
+        if user is None:
+            return web.json_response({"error": "unknown user"}, status=404)
+
+    return web.json_response({"language": user.language or DEFAULT_LANG})
+
+
 async def handle_miniapp_scores(request: web.Request) -> web.Response:
     user_id = await _authenticate_miniapp_request(request, request.app[BOT_TOKEN_KEY])
     if user_id is None:
@@ -281,6 +303,7 @@ def create_app(session_pool, bot_token: str = "", trusted_proxy: bool = False) -
         app.router.add_get(route, _make_static_handler(filename, content_type))
     app.router.add_get("/miniapp/", _make_static_handler("index.html", "text/html"))
 
+    app.router.add_get("/api/miniapp/profile", handle_miniapp_profile)
     app.router.add_get("/api/miniapp/scores", handle_miniapp_scores)
     app.router.add_get("/api/miniapp/heatmap", handle_miniapp_heatmap)
     return app

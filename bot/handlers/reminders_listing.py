@@ -34,15 +34,18 @@ from bot.handlers.reminders_shared import (
     _paginate_tasks_for_list,
     _parse_id_suffix,
     _remove_keyboard_after_delay,
+    _render_filter_screen,
     _render_tasks_list_text,
     _reschedule_current_execution,
     _reset_auto_delete,
     _rrule_text,
     active_auto_delete_tasks,
+    decode_filter_ctx,
 )
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_edit_keyboard,
+    get_filter_menu_keyboard,
     get_filtered_tasks_keyboard,
     get_tags_menu_keyboard,
     get_tasks_list_keyboard,
@@ -266,23 +269,16 @@ async def cmd_find(
     )
 
 
-async def _show_filtered_tasks(
-    callback: CallbackQuery, tasks: list, user: User, l10n: dict[str, Any], header_key: str, header_default: str
-) -> None:
-    if not tasks:
-        await safe_edit_text(
-            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
-        )
-        await callback.answer()
-        return
-    header = l10n.get(header_key, header_default)
-    # 2.1: re-tapping the same filter (or a Back into an unchanged filter
-    # result) is an ordinary, expected no-op, not an error.
+@router.callback_query(F.data == "tasks_filter_menu")
+async def callback_tasks_filter_menu(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    """Step 8 (2026-09-26 audit remediation): the permanent "🔍 Filter"
+    button on the task list (get_tasks_list_keyboard) opens this menu,
+    which is where the actual quick filters live now — see
+    get_filter_menu_keyboard's docstring for why they moved here."""
     await safe_edit_text(
         callback.message,
-        _render_filtered_tasks_text(tasks, user, l10n, header),
-        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
-        parse_mode="MarkdownV2",
+        l10n.get("filter_menu_title", "🔍 Filter tasks by:"),
+        reply_markup=get_filter_menu_keyboard(l10n),
     )
     await callback.answer()
 
@@ -291,32 +287,32 @@ async def _show_filtered_tasks(
 async def callback_tasks_filter_today(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    tasks = await reminder_dao.get_user_reminders_today(user.id, user.timezone)
-    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_today", "📅 *Today:*\n")
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="today")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tasks_filter_week")
 async def callback_tasks_filter_week(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    tasks = await reminder_dao.get_user_reminders_this_week(user.id, user.timezone)
-    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_week", "🗓 *This week:*\n")
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="week")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tasks_filter_overdue")
 async def callback_tasks_filter_overdue(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    tasks = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0)
-    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_overdue", "⏰ *Overdue:*\n")
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="overdue")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tasks_filter_recurring")
 async def callback_tasks_filter_recurring(
     callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    tasks = await reminder_dao.get_user_reminders_recurring(user.id)
-    await _show_filtered_tasks(callback, tasks, user, l10n, "filter_header_recurring", "🔁 *Recurring:*\n")
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="recurring")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tasks_tags_menu")
@@ -344,21 +340,24 @@ async def callback_tasks_filter_by_tag(
 ) -> None:
     """4.3: results for one tag, tapped from callback_tasks_tags_menu."""
     tag = callback.data.split("tasks_tag:", 1)[1]
-    tasks = await reminder_dao.get_reminders_by_tag(user.id, tag)
-    if not tasks:
-        await safe_edit_text(
-            callback.message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
-        )
-        await callback.answer()
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="tag", tag=tag)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("flt:"))
+async def callback_filter_page(
+    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
+) -> None:
+    """Step 8: pagination within a quick filter's results — the same
+    filter kind reopened at a different page, so a filter stays a real,
+    browsable view of every match instead of a flat, silently-truncated
+    first page."""
+    try:
+        kind, tag, page = decode_filter_ctx(callback.data[len("flt:"):])
+    except (IndexError, ValueError):
+        await callback.answer(l10n["invalid_action"], show_alert=True)
         return
-    header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag))
-    # 2.1: re-tapping the same tag is an ordinary, expected no-op.
-    await safe_edit_text(
-        callback.message,
-        _render_filtered_tasks_text(tasks, user, l10n, header),
-        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
-        parse_mode="MarkdownV2",
-    )
+    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind=kind, tag=tag, page=page)
     await callback.answer()
 
 

@@ -132,6 +132,8 @@ EN: dict[str, Any] = {
     "btn_close": "🔼 Hide",
 
     # Search and filters — 3.4
+    "btn_filter": "🔍 Filter",
+    "filter_menu_title": "🔍 Filter tasks by:",
     "btn_filter_today": "📅 Today",
     "btn_filter_week": "🗓 This week",
     "btn_filter_overdue": "⏰ Overdue",

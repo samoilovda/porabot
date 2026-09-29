@@ -26,6 +26,7 @@ from bot.database.dao.user import UserDAO
 from bot.database.models import Reminder, User, is_habit_like
 from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
+from bot.services.habit_pause import first_occurrence_at_or_after, is_paused
 from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware
 
 logger = logging.getLogger(__name__)
@@ -695,6 +696,19 @@ class SchedulerService:
                         resume_utc,
                         is_nagging_execution,
                     )
+                    return
+
+                if is_paused(reminder, now_utc.replace(tzinfo=None)):
+                    # Step 13: a paused habit sends nothing. A nagging
+                    # follow-up just ends here; the main job jumps straight
+                    # to the first occurrence at/after the pause end, so
+                    # nothing inside the pause is replayed afterwards.
+                    if not is_nagging_execution:
+                        resume_naive = first_occurrence_at_or_after(reminder, user.timezone, reminder.paused_until)
+                        reminder.execution_time = resume_naive
+                        await session.commit()
+                        self.schedule_reminder(reminder.id, to_utc_aware(resume_naive), is_nagging=reminder.is_nagging)
+                    logger.info("Reminder %s is paused until %s — not notifying.", reminder_id, reminder.paused_until)
                     return
 
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)

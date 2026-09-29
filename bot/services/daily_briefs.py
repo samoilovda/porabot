@@ -23,6 +23,7 @@ from bot.keyboards.inline import (
     get_fluid_completion_keyboard,
     get_fluid_pick_time_keyboard,
 )
+from bot.services.habit_pause import is_paused
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
 
@@ -359,7 +360,9 @@ async def process_daily_briefs() -> None:
 
                     from bot.lexicon import get_l10n
                     l10n = get_l10n(user.language)
-                    fluid_habits = await reminder_dao.get_active_fluid_habits(user.id)
+                    fluid_habits = [
+                        h for h in await reminder_dao.get_active_fluid_habits(user.id) if not is_paused(h)
+                    ]  # step 13: paused habits get no fluid prompts/listing
                     today_str = datetime.now(tz).date().isoformat()
 
                     morning_brief_time = getattr(user, 'morning_brief_time', "09:00")

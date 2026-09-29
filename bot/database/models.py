@@ -299,6 +299,12 @@ class Reminder(Base):
         server_default="0",
         nullable=False,
     )
+    # Step 13 (2026-09-26 audit remediation): habit paused until this UTC-naive
+    # instant (local midnight of the chosen date). Deliberately NOT cleared
+    # when it expires: the sweeper compares each cycle's due time against it
+    # to skip cycles that fell inside the pause, so the schedule resumes
+    # without a burst of catch-up "missed" events. NULL = never paused.
+    paused_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the current active habit cycle (UTC naive).
     habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the last completed habit cycle (UTC naive).

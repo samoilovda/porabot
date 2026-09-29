@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytz
@@ -29,6 +29,7 @@ from bot.handlers.reminders import (
     active_auto_delete_tasks,
 )
 from bot.keyboards.inline import get_undo_delete_keyboard
+from bot.services.habit_pause import apply_pause, is_paused, valid_pause_date
 from bot.services.habit_reports import compute_habit_score
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
@@ -501,6 +502,12 @@ async def cb_habit_list(
             )
         row.append(
             InlineKeyboardButton(
+                text=l10n.get("habit_btn_pause", "⏸"),
+                callback_data=f"habit_pause_{h.id}",
+            )
+        )
+        row.append(
+            InlineKeyboardButton(
                 text=l10n["habit_btn_delete_n"].format(index=i),
                 callback_data=f"del_habit_{h.id}",
             )
@@ -543,6 +550,96 @@ async def cb_habit_back_dash(
         text,
         reply_markup=get_habits_keyboard(l10n).as_markup(),
         parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+# --- Step 13 (2026-09-26 audit remediation): pause a habit until a date -------
+
+def _pause_choices(user_tz: str) -> list[tuple[str, date]]:
+    """(label key, date) presets: next Monday, +1 week, +2 weeks."""
+    try:
+        today = datetime.now(pytz.timezone(user_tz)).date()
+    except Exception:
+        today = datetime.now(pytz.UTC).date()
+    next_monday = today + timedelta(days=7 - today.weekday())
+    return [
+        ("habit_pause_until_monday", next_monday),
+        ("habit_pause_1_week", today + timedelta(days=7)),
+        ("habit_pause_2_weeks", today + timedelta(days=14)),
+    ]
+
+
+@router.callback_query(F.data.startswith("habit_pause_set_"))
+async def cb_habit_pause_set(
+    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService, l10n: dict[str, Any],
+) -> None:
+    try:
+        raw_id, raw_date = callback.data[len("habit_pause_set_"):].split("_", 1)
+        habit_id, until = int(raw_id), date.fromisoformat(raw_date)
+    except ValueError:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    habit = await reminder_dao.get_owned(habit_id, user.id)
+    if not habit or not habit.is_habit:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+    if not valid_pause_date(until, user.timezone):
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    if not await apply_pause(habit, user.timezone, scheduler_service, reminder_dao.session, until):
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+    await callback.answer(l10n.get("habit_paused_until", "⏸ Paused until {date}").format(date=until.strftime("%d.%m")), show_alert=True)
+    await cb_habit_list(callback, user, reminder_dao, HabitEventDAO(reminder_dao.session), l10n)
+
+
+@router.callback_query(F.data.startswith("habit_pause_clear_"))
+async def cb_habit_pause_clear(
+    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO,
+    scheduler_service: SchedulerService, l10n: dict[str, Any],
+) -> None:
+    try:
+        habit_id = int(callback.data[len("habit_pause_clear_"):])
+    except ValueError:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    habit = await reminder_dao.get_owned(habit_id, user.id)
+    if not habit or not habit.is_habit:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+    if not await apply_pause(habit, user.timezone, scheduler_service, reminder_dao.session, None):
+        return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
+    await callback.answer(l10n.get("habit_pause_cleared", "▶️ Habit resumed"), show_alert=True)
+    await cb_habit_list(callback, user, reminder_dao, HabitEventDAO(reminder_dao.session), l10n)
+
+
+@router.callback_query(F.data.startswith("habit_pause_"))
+async def cb_habit_pause_menu(
+    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any],
+) -> None:
+    """Registered AFTER habit_pause_set_/habit_pause_clear_ — this prefix
+    filter also matches those, and aiogram tries handlers in order."""
+    try:
+        habit_id = int(callback.data[len("habit_pause_"):])
+    except ValueError:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    habit = await reminder_dao.get_owned(habit_id, user.id)
+    if not habit or not habit.is_habit:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+
+    builder = InlineKeyboardBuilder()
+    for key, until in _pause_choices(user.timezone):
+        builder.row(InlineKeyboardButton(
+            text=l10n.get(key, key).format(date=until.strftime("%d.%m")),
+            callback_data=f"habit_pause_set_{habit.id}_{until.isoformat()}",
+        ))
+    if is_paused(habit):
+        builder.row(InlineKeyboardButton(
+            text=l10n.get("habit_pause_clear", "▶️ Resume now"),
+            callback_data=f"habit_pause_clear_{habit.id}",
+        ))
+    builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_list"))
+    await safe_edit_text(
+        callback.message,
+        l10n.get("habit_pause_prompt", "⏸ Pause «{habit}» until:").format(habit=escape_markdown(preview_line(habit.reminder_text))),
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown",
     )
     await callback.answer()
 

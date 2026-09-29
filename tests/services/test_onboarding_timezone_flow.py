@@ -18,8 +18,11 @@ def _load_handler(module_rel_path: str, fn_name: str):
 
 
 callback_set_lang = _load_handler("bot/handlers/commands.py", "callback_set_lang")
-callback_set_tz = _load_handler("bot/handlers/settings.py", "callback_set_tz")
-resolve_timezone_candidate = _load_handler("bot/handlers/settings.py", "_resolve_timezone_candidate")
+# Step 9 (2026-09-26 audit remediation): settings.py split into a package —
+# callback_set_tz/_resolve_timezone_candidate now live in its locale_time
+# submodule.
+callback_set_tz = _load_handler("bot/handlers/settings/locale_time.py", "callback_set_tz")
+resolve_timezone_candidate = _load_handler("bot/handlers/settings/locale_time.py", "_resolve_timezone_candidate")
 
 
 async def test_set_lang_onboarding_prompts_timezone_selection() -> None:

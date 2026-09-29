@@ -923,23 +923,96 @@ def get_settings_keyboard(
     show_utc_offset: bool = False,
 ) -> InlineKeyboardMarkup:
     """
-    Keyboard for settings view.
-
-    Shows options to change timezone, language, and UTC offset display.
+    Top-level keyboard for the Settings screen (step 9, 2026-09-26 audit
+    remediation): three groups instead of a flat list of ~10 buttons —
+    "Уведомления" (get_notifications_group_keyboard), "Язык и время"
+    (get_locale_time_group_keyboard, UTC-offset toggle included), "Данные
+    и интеграции" (get_data_group_keyboard, export/calendar feed/Mini App/
+    clear-all). show_utc_offset is accepted for backward-compatible call
+    sites but no longer used here directly — it only matters once inside
+    the locale/time group.
 
     Args:
         l10n: Localization dictionary
-        show_utc_offset: Whether UTC offset is currently enabled
+        show_utc_offset: unused here, kept for call-site compatibility
 
     Returns:
-        InlineKeyboardMarkup with settings buttons
-
-    Example:
-        >>> markup = get_settings_keyboard(ru, show_utc_offset=True)
-        # Shows Change Timezone, Change Language, Toggle UTC Offset buttons
+        InlineKeyboardMarkup with the three settings-group buttons
     """
     builder = InlineKeyboardBuilder()
 
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_settings_group_notifications", "🔔 Notifications"),
+            callback_data="settings_group_notifications",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_settings_group_locale_time", "🌍 Language & time"),
+            callback_data="settings_group_locale_time",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_settings_group_data", "🗂 Data & integrations"),
+            callback_data="settings_group_data",
+        )
+    )
+
+    # 5.1: voluntary Telegram Stars tip jar — not gating anything, and not
+    # really a "setting", so it stays at the top level rather than moving
+    # into one of the three groups above.
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_donate", "☕ Support Porabot"),
+            callback_data="donate_open",
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_notifications_group_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """"Уведомления" settings group (step 9) — briefs/quiet hours/habit
+    reports/missed-task digest, every one of them still opened through
+    its own pre-existing, unchanged callback_data."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_briefs_setup", "📋 Briefs setup"),
+            callback_data="settings_briefs_setup"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_quiet_hours_setup", "😴 Quiet hours"),
+            callback_data="settings_quiet_setup",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_habit_reports_setup", "📊 Habit reports"),
+            callback_data="settings_habit_reports_setup",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=l10n.get("btn_missed_recovery_setup", "📎 Missed tasks"),
+            callback_data="settings_missed_recovery_setup",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_back_settings", "🔙 Back"), callback_data="settings_back")
+    )
+    return builder.as_markup()
+
+
+def get_locale_time_group_keyboard(l10n: dict[str, Any], show_utc_offset: bool = False) -> InlineKeyboardMarkup:
+    """"Язык и время" settings group (step 9) — timezone, language, and
+    (moved in from the old flat top-level list per the audit remediation
+    plan) the UTC-offset display toggle."""
+    builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
             text=l10n["btn_change_tz"],
@@ -950,7 +1023,6 @@ def get_settings_keyboard(
             callback_data="settings_change_lang"
         ),
     )
-
     utc_btn_text = l10n["btn_toggle_utc_on"] if show_utc_offset else l10n["btn_toggle_utc_off"]
     builder.row(
         InlineKeyboardButton(
@@ -958,34 +1030,17 @@ def get_settings_keyboard(
             callback_data="settings_toggle_utc"
         )
     )
-
     builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_briefs_setup", "📋 Briefs setup"),
-            callback_data="settings_briefs_setup"
-        )
+        InlineKeyboardButton(text=l10n.get("btn_back_settings", "🔙 Back"), callback_data="settings_back")
     )
+    return builder.as_markup()
 
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_quiet_hours_setup", "😴 Quiet hours"),
-            callback_data="settings_quiet_setup",
-        )
-    )
 
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_habit_reports_setup", "📊 Habit reports"),
-            callback_data="settings_habit_reports_setup",
-        )
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_missed_recovery_setup", "📎 Missed tasks"),
-            callback_data="settings_missed_recovery_setup",
-        )
-    )
+def get_data_group_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
+    """"Данные и интеграции" settings group (step 9) — export, the
+    read-only calendar feed, the Mini App entry point, and (moved in from
+    the old flat top-level list) "Clear all"."""
+    builder = InlineKeyboardBuilder()
 
     # 3.3: export before delete — psychologically easier to clear an
     # account when you can grab your data first.
@@ -1023,14 +1078,6 @@ def get_settings_keyboard(
             )
         )
 
-    # 5.1: voluntary Telegram Stars tip jar — not gating anything.
-    builder.row(
-        InlineKeyboardButton(
-            text=l10n.get("btn_donate", "☕ Support Porabot"),
-            callback_data="donate_open",
-        )
-    )
-
     builder.row(
         InlineKeyboardButton(
             text=l10n.get("btn_clear_all", "🗑 Clear all"),
@@ -1038,6 +1085,9 @@ def get_settings_keyboard(
         )
     )
 
+    builder.row(
+        InlineKeyboardButton(text=l10n.get("btn_back_settings", "🔙 Back"), callback_data="settings_back")
+    )
     return builder.as_markup()
 
 

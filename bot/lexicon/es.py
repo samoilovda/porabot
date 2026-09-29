@@ -38,6 +38,9 @@ ES.update(
         "btn_new_task": "➕ Nueva tarea",
         "btn_my_tasks": "📅 Mis tareas",
         "btn_settings": "⚙️ Ajustes",
+        "btn_settings_group_notifications": "🔔 Notificaciones",
+        "btn_settings_group_locale_time": "🌍 Idioma y hora",
+        "btn_settings_group_data": "🗂 Datos e integraciones",
         "btn_habits": "🫧 Hábitos",
 
         # Language Selection

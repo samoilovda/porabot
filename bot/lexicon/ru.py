@@ -34,6 +34,9 @@ RU: dict[str, Any] = {
     "btn_new_task": "➕ Новая задача",
     "btn_my_tasks": "📅 Мои задачи",
     "btn_settings": "⚙️ Настройки",
+    "btn_settings_group_notifications": "🔔 Уведомления",
+    "btn_settings_group_locale_time": "🌍 Язык и время",
+    "btn_settings_group_data": "🗂 Данные и интеграции",
     "btn_habits": "🫧 Привычки",
 
     # Language Selection

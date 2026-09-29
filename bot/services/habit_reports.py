@@ -17,6 +17,7 @@ from sqlalchemy import or_, select, update
 
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.models import Reminder, ReminderKind, User
+from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.pagination import limit_items, preview_line
 
@@ -29,15 +30,21 @@ logger = logging.getLogger(__name__)
 _REPORT_ROWS_LIMIT = 30
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
+async def _send_safe(bot: Bot, user_id: int, text: str, disable_notification: bool = False) -> bool:
     """Send a report message, suppressing bot-blocked / bad-request errors.
+
+    disable_notification: step 5 (2026-09-26 audit remediation) — True when
+    notification_policy() says this report falls inside the user's quiet
+    hours; still sent at its scheduled time, just silently.
 
     Returns True if this outcome is final (delivered, blocked, or a bad
     payload even after the plain-text retry) — False only for a retryable
     failure. See daily_briefs._send_safe for the rationale.
     """
     try:
-        await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        await bot.send_message(
+            chat_id=user_id, text=text, parse_mode="Markdown", disable_notification=disable_notification,
+        )
         return True
     except TelegramForbiddenError:
         logger.warning("User %s has blocked the bot — skipping habit report.", user_id)
@@ -51,7 +58,10 @@ async def _send_safe(bot: Bot, user_id: int, text: str) -> bool:
         # else ever retrying it.
         logger.error("Bad request sending habit report to %s: %s — retrying without Markdown.", user_id, e)
         try:
-            await bot.send_message(chat_id=user_id, text=strip_markdown_escapes(text), parse_mode=None)
+            await bot.send_message(
+                chat_id=user_id, text=strip_markdown_escapes(text), parse_mode=None,
+                disable_notification=disable_notification,
+            )
             return True
         except Exception as retry_e:
             logger.error("Retry without Markdown also failed for %s: %s", user_id, retry_e, exc_info=True)
@@ -193,6 +203,11 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
 
     today_local = now_local.date()
     all_delivered = True
+    # Step 5 (2026-09-26 audit remediation): delivered silently inside
+    # quiet hours instead of ignoring them outright — see
+    # notification_policy's module docstring for why a report isn't
+    # deferred like a regular reminder would be.
+    report_disable_notification = notification_policy(user, "report", now_local) == "silent"
 
     week_start = today_local - timedelta(days=6)
     weekly_events = await habit_event_dao.get_events_in_range(
@@ -220,7 +235,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                 l10n=l10n,
                 scores_by_id=scores_by_id,
             )
-            all_delivered = await _send_safe(bot, user.id, text) and all_delivered
+            all_delivered = await _send_safe(bot, user.id, text, disable_notification=report_disable_notification) and all_delivered
 
     # "+7 days lands in a different month" is the only reliable way to detect
     # the last occurrence of this weekday in the month — day-number arithmetic
@@ -249,7 +264,7 @@ async def _process_user_reports(session, bot: Bot, user: User, now_local: dateti
                     l10n=l10n,
                     scores_by_id=scores_by_id,
                 )
-                all_delivered = await _send_safe(bot, user.id, text) and all_delivered
+                all_delivered = await _send_safe(bot, user.id, text, disable_notification=report_disable_notification) and all_delivered
 
     return all_delivered
 
@@ -302,10 +317,12 @@ async def process_habit_reports() -> None:
                 tz = pytz.UTC
             now_local = datetime.now(tz)
 
-            # Habit reports intentionally ignore quiet hours: the default
+            # Habit reports are never deferred for quiet hours: the default
             # report time (23:50) falls inside the default quiet window
-            # (23:00-07:00), so honoring it would mean a user who enabled
-            # quiet hours never receives the report they explicitly set up.
+            # (23:00-07:00), so deferring it would mean a user who enabled
+            # quiet hours never receives the report they explicitly set up
+            # at that time — delivered silently instead (step 5, 2026-09-26
+            # audit remediation), see _process_user_reports' report_disable_notification.
             #
             # 1.5: "time has passed" (<), not "time matches exactly" (!=)
             # — an exact-minute match means any downtime spanning that one

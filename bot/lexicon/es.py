@@ -66,6 +66,7 @@ ES.update(
         "btn_quiet_weekend_end": "🌅 Fin (fin de semana): {time}",
         "btn_quiet_habits_exempt_on": "🔔 Los hábitos pueden despertarme: SÍ",
         "btn_quiet_habits_exempt_off": "🔕 Los hábitos pueden despertarme: NO",
+        "quiet_hours_briefs_note": "ℹ️ Los resúmenes llegan a su hora, solo que en silencio",
         "choose_tz": "Elige tu zona horaria:",
         "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0`, `-6`, o un desfase de media hora conocido como `+5:30`.",
         "tz_manual_button": "⌨️ Introducir manualmente",

@@ -63,6 +63,7 @@ EN: dict[str, Any] = {
     "btn_quiet_weekend_end": "🌅 Weekend end: {time}",
     "btn_quiet_habits_exempt_on": "🔔 Habits can wake me: ON",
     "btn_quiet_habits_exempt_off": "🔕 Habits can wake me: OFF",
+    "quiet_hours_briefs_note": "ℹ️ Summaries still arrive on time, just silently",
     "choose_tz": "Choose your timezone:",
     "tz_manual_prompt": "Send your UTC offset only: `+5`, `0`, `-6`, or a known half-hour offset like `+5:30`.",
     "tz_manual_button": "⌨️ Enter manually",

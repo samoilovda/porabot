@@ -118,6 +118,81 @@ async def handle_forwarded_task(
         await state.clear()
 
 
+_CARD_ID_PREFIXES = ("task_settings_", "del_task_", "edit_edit_", "edit_delete_")
+
+
+def _reminder_id_from_card(replied: Message | None) -> int | None:
+    """Step 12: the reminder a bot card refers to, read from the card's own
+    inline keyboard (task_settings_/del_task_/... callback_data) — no
+    message-id -> reminder mapping to store or lose on restart. None if
+    the replied message isn't one of our task cards."""
+    markup = getattr(replied, "reply_markup", None)
+    if replied is None or not markup:
+        return None
+    for row in markup.inline_keyboard:
+        for button in row:
+            data = button.callback_data or ""
+            for prefix in _CARD_ID_PREFIXES:
+                if data.startswith(prefix):
+                    return _parse_id_suffix(data, prefix)
+    return None
+
+
+@router.message(StateFilter(None), F.text, F.reply_to_message, ~F.text.startswith("/"))
+async def handle_reply_to_card(
+    message: Message, state: FSMContext, user: User, l10n: dict[str, Any],
+    reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
+) -> None:
+    """Step 12 (2026-09-26 audit remediation): replying to a task card with
+    a time phrase ("в пятницу в 18") changes THAT task's time instead of
+    creating a new task. Same parser routing as creation/manual entry
+    (_resolve_time_and_respond), so a date without an hour asks for the
+    hour rather than guessing. A reply to anything that isn't a known task
+    card of this user falls through to normal task creation."""
+    replied = message.reply_to_message
+    reminder_id = _reminder_id_from_card(replied)
+    if reminder_id is None:
+        await handle_task_text(message, state, user, l10n, reminder_dao, scheduler_service)
+        return
+
+    reminder = await reminder_dao.get_owned(reminder_id, user.id)
+    if not reminder:
+        await message.answer(l10n["item_not_found"])
+        return
+    if len(message.text) > _MAX_INPUT:
+        await message.answer(l10n.get("text_too_long", "❌ Text too long.").format(length=len(message.text), max_length=_MAX_INPUT))
+        return
+
+    try:
+        result = await parser.parse(message.text, user.timezone)
+    except OperationalError as e:
+        logger.error("DB locked parsing card reply for user %s: %s", user.id, e)
+        await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
+        return
+    except Exception as e:
+        logger.error("Parser raised %s on card reply for user %s", type(e).__name__, user.id, exc_info=True)
+        await message.answer(l10n["parse_error"])
+        return
+
+    await state.clear()
+    await state.update_data(
+        edit_reminder_id=reminder.id, text=reminder.reminder_text,
+        tags=reminder.tags, priority=reminder.priority,
+    )
+    if not result.parsed_datetime:
+        # Ambiguous: ask for the time of THIS task, never start a new one.
+        await state.set_state(ReminderWizard.choosing_time)
+        await message.answer(
+            l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        )
+        return
+
+    await _resolve_time_and_respond(
+        message, state, user, l10n, result, reminder_dao, scheduler_service, reminder.reminder_text,
+    )
+
+
 @router.message(ReminderWizard.entering_text, F.text)
 # 2.5: ~F.text.startswith("/") here (only on the StateFilter(None) idle
 # registration, not the entering_text one above — a user who explicitly

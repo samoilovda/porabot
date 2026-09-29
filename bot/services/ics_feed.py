@@ -39,6 +39,8 @@ from typing import Sequence
 
 import pytz
 
+from bot.services.habit_pause import is_paused
+
 _CRLF = "\r\n"
 _PRODID = "-//Porabot//Reminders//EN"
 
@@ -136,6 +138,8 @@ def build_ics_calendar(user, reminders: Sequence) -> str:
         "X-WR-CALNAME:Porabot",
     ]
     for reminder in reminders:
+        if is_paused(reminder):
+            continue  # step 13: a paused habit is absent from the feed until it resumes
         lines.extend(_build_vevent(reminder, tz))
     lines.append("END:VCALENDAR")
 

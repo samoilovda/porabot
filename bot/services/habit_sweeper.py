@@ -45,6 +45,8 @@ async def _sweep_fixed_habits(session, reminder_dao: ReminderDAO, habit_event_da
             continue
         if reminder.habit_last_completed_due_at == due:
             continue  # already counted as done
+        if reminder.paused_until is not None and due < reminder.paused_until:
+            continue  # cycle fell inside a pause (step 13) — never a miss
         created_at = reminder.created_at
         if created_at is not None and due < created_at:
             continue  # don't invent cycles predating the habit
@@ -83,6 +85,11 @@ async def _sweep_fluid_habits(session, reminder_dao: ReminderDAO, habit_event_da
 
         if habit.fluid_last_completed_date == yesterday_str:
             continue
+
+        if habit.paused_until is not None:
+            paused_local_date = habit.paused_until.replace(tzinfo=timezone.utc).astimezone(tz).date()
+            if yesterday_local < paused_local_date:
+                continue  # yesterday fell inside a pause (step 13) — never a miss
 
         created_at = habit.created_at
         if created_at is not None:

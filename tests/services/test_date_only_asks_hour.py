@@ -7,7 +7,7 @@ flow, since all three now go through reminders_shared._resolve_time_and_respond.
 """
 
 import importlib.util
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -34,6 +34,13 @@ def _make_state() -> FSMContext:
     return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=1, user_id=1))
 
 
+def _next_monday() -> datetime:
+    """Local-midnight of a Monday at least a week out — relative, so the
+    test doesn't rot once a hardcoded date slips into the past."""
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return today + timedelta(days=7 + (7 - today.weekday()) % 7)
+
+
 def _date_only_result(local_midnight: datetime, text: str = "приготовить обед"):
     """What InputParser.parse returns for a bare weekday/"tomorrow" phrase —
     see test_parser.py's test_date_only_phrase_gets_low_confidence_not_silently_saved."""
@@ -51,7 +58,7 @@ async def test_manual_date_only_input_asks_for_hour_instead_of_saving() -> None:
     reminders_module = _load_module("bot/handlers/reminders.py")
     ReminderWizard = reminders_module.ReminderWizard
 
-    monday = datetime(2026, 9, 28, 0, 0)  # a Monday, local-midnight filler
+    monday = _next_monday()  # a Monday, local-midnight filler
     state = _make_state()
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(text="приготовить обед")
@@ -83,7 +90,7 @@ async def test_quick_button_after_date_only_prompt_creates_task_on_the_recognize
     reminders_module = _load_module("bot/handlers/reminders.py")
     ReminderWizard = reminders_module.ReminderWizard
 
-    monday = datetime(2026, 9, 28, 0, 0)
+    monday = _next_monday()
     state = _make_state()
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(text="приготовить обед")
@@ -131,7 +138,7 @@ async def test_quick_button_after_date_only_prompt_creates_task_on_the_recognize
     kwargs = reminder_dao.create_reminder.await_args.kwargs
     # 09:00 Europe/Moscow (UTC+3) on the recognized Monday == 06:00 UTC —
     # not "today"/"tomorrow", which is what the bug this fixes would have used.
-    assert kwargs["execution_time"] == datetime(2026, 9, 28, 6, 0)
+    assert kwargs["execution_time"] == monday.replace(hour=6)
 
 
 async def test_editing_an_existing_task_time_also_asks_for_hour_on_date_only_input() -> None:
@@ -142,7 +149,7 @@ async def test_editing_an_existing_task_time_also_asks_for_hour_on_date_only_inp
     reminders_module = _load_module("bot/handlers/reminders.py")
     ReminderWizard = reminders_module.ReminderWizard
 
-    monday = datetime(2026, 9, 28, 0, 0)
+    monday = _next_monday()
     state = _make_state()
     await state.set_state(ReminderWizard.choosing_time)
     await state.update_data(text="call mom", edit_reminder_id=42)

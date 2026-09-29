@@ -105,7 +105,7 @@ EN: dict[str, Any] = {
     "btn_clear_all": "🗑 Clear all",
     "btn_clear_all_confirm": "✅ Yes, clear all",
     "btn_clear_all_cancel": "↩ Cancel",
-    "clear_all_confirm_text": "⚠️ This will delete *all* your tasks, habits, and settings permanently.\n\nAre you sure?",
+    "clear_all_confirm_text": "⚠️ This will delete *all* your tasks, habits, and settings permanently. Your payment history is kept — it's needed for /paysupport.\n\nAre you sure?",
     "clear_all_done": "✅ All your data was deleted. Let's start from scratch.",
 
     # Custom Daily Briefs Settings

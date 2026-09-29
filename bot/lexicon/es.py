@@ -108,7 +108,7 @@ ES.update(
         "btn_clear_all": "🗑 Borrar todo",
         "btn_clear_all_confirm": "✅ Sí, borrar todo",
         "btn_clear_all_cancel": "↩ Cancelar",
-        "clear_all_confirm_text": "⚠️ Esto eliminará *todas* tus tareas, hábitos y ajustes de forma permanente.\n\n¿Seguro?",
+        "clear_all_confirm_text": "⚠️ Esto eliminará *todas* tus tareas, hábitos y ajustes de forma permanente. Tu historial de pagos se conserva — se necesita para /paysupport.\n\n¿Seguro?",
         "clear_all_done": "✅ Todos tus datos se eliminaron. Empezamos desde cero.",
         "btn_briefs_setup": "📋 Configurar resúmenes",
         "btn_briefs_on": "🔔 Resúmenes diarios: ON",

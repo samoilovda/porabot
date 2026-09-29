@@ -12,6 +12,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from sqlalchemy.exc import OperationalError
 
 from bot.config import config
 from bot.database.dao.habit_event import HabitEventDAO
@@ -35,6 +36,7 @@ from bot.services.tz_migration import (
     build_migration_plan,
     migratable_habits,
 )
+from bot.services.user_data import UserDataService
 from bot.utils.markdown import escape_markdown
 
 
@@ -620,21 +622,30 @@ async def callback_clear_all_confirm(
     callback: CallbackQuery,
     state: FSMContext,
     user: User,
-    user_dao: UserDAO,
     reminder_dao: ReminderDAO,
     habit_event_dao: HabitEventDAO,
     scheduler_service: SchedulerService,
     l10n: dict[str, Any],
 ) -> None:
-    # Events reference both reminders and users, so they must go first.
-    await habit_event_dao.delete_for_user(user.id)
+    # "Clear all" is a data RESET, not account deletion: the users row
+    # survives with default settings (so the user re-onboards), and
+    # payments is never touched — see UserDataService's docstring.
+    service = UserDataService(reminder_dao, habit_event_dao)
+    try:
+        reminder_ids = await service.reset(user)
+    except OperationalError as e:
+        logger.error("DB locked resetting data for user %s: %s", user.id, e)
+        await callback.answer(
+            l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."),
+            show_alert=True,
+        )
+        return
 
-    reminders = await reminder_dao.get_all(user_id=user.id)
-    for task in reminders:
-        scheduler_service.remove_reminder_job(task.id)
-        await reminder_dao.delete_by_id(task.id)
+    # Only remove scheduler jobs once the reset actually committed — a
+    # failed commit above must leave jobs and DB state consistent.
+    for reminder_id in reminder_ids:
+        scheduler_service.remove_reminder_job(reminder_id)
 
-    await user_dao.delete_by_id(user.id)
     await state.clear()
 
     await callback.message.edit_text(

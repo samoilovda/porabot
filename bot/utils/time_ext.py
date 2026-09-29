@@ -1,6 +1,6 @@
 """Time utilities for UTC normalization and display formatting."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dt_time
 from typing import Optional
 
@@ -139,6 +139,19 @@ def local_time_tomorrow(
         hour=hour, minute=minute, second=0, microsecond=0
     )
     return tz.localize(candidate_naive).astimezone(timezone.utc)
+
+
+def local_time_on_date(tz_str: str, local_date: date, hour: int, minute: int = 0) -> datetime:
+    """Aware UTC datetime for HH:MM on a specific local calendar *date* —
+    like `local_time_tomorrow` but for an arbitrary date instead of always
+    "tomorrow". Used when a day has already been recognized (e.g. the
+    parser found "понедельник" with no clock time) and the quick time
+    buttons must land on THAT day, not today/tomorrow. Same DST-safe
+    construction: naive arithmetic, localized exactly once.
+    """
+    tz = _safe_tz(tz_str)
+    naive = datetime(local_date.year, local_date.month, local_date.day, hour, minute)
+    return tz.localize(naive).astimezone(timezone.utc)
 
 
 def local_day_bounds_utc(

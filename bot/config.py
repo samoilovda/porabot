@@ -74,10 +74,13 @@ class Settings(BaseSettings):
     # untrusted network lets any client just claim to BE any IP, defeating
     # the point of the per-IP rate limit entirely. When True, the .ics
     # feed's and Mini App API's rate limiter (bot/services/webserver.py)
-    # keys on the first X-Forwarded-For entry instead of the raw TCP peer
-    # address — without this, that peer address is always the proxy
-    # itself, and the rate limit is effectively shared by every real
-    # visitor behind it as if they were one client.
+    # keys on the LAST X-Forwarded-For entry — the one the trusted proxy
+    # itself appended (see _rate_limit_key's docstring for why the first
+    # entry, fully client-controlled, would let any client dodge the
+    # limit) — instead of the raw TCP peer address; without this, that
+    # peer address is always the proxy itself, and the rate limit is
+    # effectively shared by every real visitor behind it as if they were
+    # one client.
     TRUSTED_PROXY: bool = False
     # Publicly reachable origin for links the bot sends to the user (the
     # .ics feed URL, the Mini App web_app button). Deliberately empty by

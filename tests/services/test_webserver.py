@@ -154,6 +154,42 @@ async def test_miniapp_scores_returns_active_habits_for_authenticated_user(sessi
     ]
 
 
+async def test_miniapp_profile_rejects_missing_init_data(client) -> None:
+    resp = await client.get("/api/miniapp/profile")
+    assert resp.status == 401
+
+
+async def test_miniapp_profile_returns_the_bot_profile_language(session_pool, client) -> None:
+    """Step 10 (2026-09-26 audit remediation): the Mini App's language
+    toggle follows the bot PROFILE's language (User.language, set via
+    /language) — not Telegram client's own locale, which initData also
+    carries but is a different, unrelated setting this endpoint must not
+    be confused with."""
+    async with session_pool() as session:
+        session.add(User(id=9, username="u", timezone="UTC", language="ru"))
+        await session.flush()
+        await session.commit()
+
+    init_data = _signed_init_data(9)
+    resp = await client.get("/api/miniapp/profile", headers={"X-Telegram-Init-Data": init_data})
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload == {"language": "ru"}
+
+
+async def test_miniapp_profile_defaults_when_user_has_no_language_set(session_pool, client) -> None:
+    async with session_pool() as session:
+        session.add(User(id=10, username="u", timezone="UTC"))
+        await session.flush()
+        await session.commit()
+
+    init_data = _signed_init_data(10)
+    resp = await client.get("/api/miniapp/profile", headers={"X-Telegram-Init-Data": init_data})
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload == {"language": "ru"}  # DEFAULT_LANG
+
+
 async def test_miniapp_heatmap_rejects_missing_init_data(client) -> None:
     resp = await client.get("/api/miniapp/heatmap")
     assert resp.status == 401

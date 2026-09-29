@@ -38,6 +38,9 @@ ES.update(
         "btn_new_task": "➕ Nueva tarea",
         "btn_my_tasks": "📅 Mis tareas",
         "btn_settings": "⚙️ Ajustes",
+        "btn_settings_group_notifications": "🔔 Notificaciones",
+        "btn_settings_group_locale_time": "🌍 Idioma y hora",
+        "btn_settings_group_data": "🗂 Datos e integraciones",
         "btn_habits": "🫧 Hábitos",
 
         # Language Selection
@@ -66,10 +69,12 @@ ES.update(
         "btn_quiet_weekend_end": "🌅 Fin (fin de semana): {time}",
         "btn_quiet_habits_exempt_on": "🔔 Los hábitos pueden despertarme: SÍ",
         "btn_quiet_habits_exempt_off": "🔕 Los hábitos pueden despertarme: NO",
+        "quiet_hours_briefs_note": "ℹ️ Los resúmenes llegan a su hora, solo que en silencio",
         "choose_tz": "Elige tu zona horaria:",
         "tz_manual_prompt": "Envía solo el desfase UTC: `+5`, `0`, `-6`, o un desfase de media hora conocido como `+5:30`.",
         "tz_manual_button": "⌨️ Introducir manualmente",
         "tz_success": "✅ Zona horaria: `{tz}`\n\nLas tareas existentes no se recalculan — sonarán a su hora anterior. Ajústalas manualmente si es necesario.",
+        "onboarding_example_hint": "✍️ Prueba a escribir algo como: «mañana a las 10 llamar a mamá» — lo convertiré en un recordatorio.",
         "tz_invalid": "❌ Desfase inválido. Envía `+5`, `0` o `-6` (rango: -12 a +14).",
         "main_menu_hint": "👇 Menú abajo",
 
@@ -108,7 +113,7 @@ ES.update(
         "btn_clear_all": "🗑 Borrar todo",
         "btn_clear_all_confirm": "✅ Sí, borrar todo",
         "btn_clear_all_cancel": "↩ Cancelar",
-        "clear_all_confirm_text": "⚠️ Esto eliminará *todas* tus tareas, hábitos y ajustes de forma permanente.\n\n¿Seguro?",
+        "clear_all_confirm_text": "⚠️ Esto eliminará *todas* tus tareas, hábitos y ajustes de forma permanente. Tu historial de pagos se conserva — se necesita para /paysupport.\n\n¿Seguro?",
         "clear_all_done": "✅ Todos tus datos se eliminaron. Empezamos desde cero.",
         "btn_briefs_setup": "📋 Configurar resúmenes",
         "btn_briefs_on": "🔔 Resúmenes diarios: ON",
@@ -132,6 +137,8 @@ ES.update(
         "btn_close": "🔼 Ocultar",
 
         # Búsqueda y filtros — 3.4
+        "btn_filter": "🔍 Filtro",
+        "filter_menu_title": "🔍 Filtrar tareas por:",
         "btn_filter_today": "📅 Hoy",
         "btn_filter_week": "🗓 Esta semana",
         "btn_filter_overdue": "⏰ Atrasadas",
@@ -191,6 +198,7 @@ ES.update(
         "btn_nagging_prefix": "{icon} Insistencia:",
         "btn_nagging_repeats_prefix": "🔁 Repeticiones de insistencia: {count}",
         "btn_edit_time": "🕒 Cambiar hora",
+        "btn_edit": "✏️ Editar",
         "btn_delete": "🗑 Eliminar",
         "btn_task_settings": "⚙️ Ajustes",
         "status_on": "ACTIVO",
@@ -306,7 +314,8 @@ ES.update(
         "snooze_evening": "🌙 Tarde",
         "snooze_night": "🌌 Noche",
         "snooze_custom": "⌨️ Personalizado",
-        "parse_confirmation_prompt": "Puede que haya interpretado esto de forma ambigua.\n\n📌 Tarea: {text}\n⏰ Hora: {time}\n🎯 Confianza: {confidence}%\n\n¿Es correcto?",
+        "parse_confirmation_prompt": "Puede que haya interpretado esto de forma ambigua.\n\n📌 Tarea: {text}\n⏰ Hora: {time}\n\n¿Es correcto?",
+        "ask_hour_for_date": "Entendido: {date}. ¿A qué hora te lo recuerdo?\n\n📌 Tarea: {text}",
         "btn_parse_confirm_yes": "✅ Sí",
         "btn_parse_confirm_time": "🕒 Elegir hora",
         "btn_parse_confirm_cancel": "❌ Cancelar",
@@ -343,7 +352,7 @@ ES.update(
 
         # Habits
         "habits_dashboard": "🫧 *Panel de hábitos*:\nElige una plantilla o crea tu hábito diario.",
-        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 {avg_score}%",
+        "habit_motivation": "🔥 Impulso: {weekly_done} completadas en 7d · {active_count} hábitos activos · racha {best_current_streak} (máx {best_ever_streak}) · 💪 Constancia {avg_score}/100",
         "habit_preset_water": "💧 Beber agua",
         "habit_preset_workout": "🧘 Entrenar",
         "habit_preset_rest": "🛌 Descansar",
@@ -367,7 +376,7 @@ ES.update(
         "habit_fluid_created": "✅ *Hábito flexible creado*\nHábito: *{habit}*\nModo: {mode}",
         "habit_no_active": "📋 No tienes hábitos diarios activos.",
         "habit_list_header": "📋 *Tus hábitos diarios activos:*\n",
-        "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (máx {best}) · 💪 {score}% · {mode}",
+        "habit_list_item": "{index}. *{habit}* ({time}) · 🔥 {streak} (máx {best}) · 💪 Constancia {score}/100 · {mode}",
         "habit_pause_prompt": "⏸ Pausar «{habit}» hasta:",
         "habit_pause_until_monday": "Hasta el lunes ({date})",
         "habit_pause_1_week": "Una semana (hasta {date})",
@@ -408,6 +417,8 @@ ES.update(
         "habit_report_weekly_title": "📊 *Resumen semanal*",
         "habit_report_monthly_title": "📊 *Resumen mensual*",
         "habit_report_line": "🫧 {habit}: {done} de {total} ({rate}%)",
+        "habit_report_score_line": "   💪 Constancia: {score}/100",
+        "habit_score_explainer": "💪 «Constancia» es una estimación suavizada (EMA) — no es lo mismo que la tasa exacta de abajo.",
         "habit_report_total": "*Total:* ✅ {done} logrados · ❌ {not_done} fallados ({rate}%)",
         "weekday_names": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     }

@@ -27,7 +27,7 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Únicos y recurrentes** — diario, semanal o cualquier patrón expresable con `RRULE`
 - **Modo nagging** — recordatorio cada 5 minutos, limitado por un máximo configurable por tarea (por defecto 3)
 - **Posponer** — +15 min / +1 hora / mañana
-- **Horas silenciosas** — ventana configurable en la que se suprimen todas las notificaciones
+- **Horas silenciosas** — ventana configurable: los recordatorios normales y el resumen de tareas perdidas se posponen/suprimen, mientras que los resúmenes diarios y los informes de hábitos siguen llegando a su hora, solo que en silencio
 - **Recuperación de tareas perdidas** — tras reiniciar el bot, un resumen de tareas perdidas con botones «completar todo» o «posponer todo»
 
 ### Hábitos
@@ -41,12 +41,20 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 - **Sweeper de hábitos** — tarea en segundo plano que cada minuto detecta ciclos perdidos desde el estado de la BD, independientemente de si se envió alguna notificación
 - **Informes semanales y mensuales** — tasas agregadas de completado / hoy-no / perdido por hábito, enviadas en el día y hora configurados por el usuario
 
+### Gestión de tareas
+
+- **Etiquetas y prioridad** — `#etiqueta` y `!prioridad` directamente en el texto de la tarea, se extraen automáticamente
+- **Búsqueda y filtros rápidos** — `/find <texto>`, más filtros de un toque: hoy / esta semana / vencidas / recurrentes / por etiqueta
+- **Exportación de datos** — exportación en un toque de todas las tareas, hábitos y eventos de hábitos a JSON
+- **Feed de calendario de solo lectura** — una URL `.ics` personal y revocable para suscribirse en Google/Apple Calendar
+- **Mini App de progreso** — una pequeña Mini App de Telegram con la constancia de tus hábitos y un mapa de calor de cumplimiento
+
 ### General
 
 - **Tres idiomas** — i18n completa en ruso, inglés y español (`bot/lexicon/ru.py`, `en.py`, `es.py`); el análisis de tiempo en lenguaje natural funciona en los tres
 - **Zonas horarias** — todo almacenado en UTC; mostrado en la zona horaria local del usuario; transiciones DST correctamente gestionadas
 - **Resúmenes matutinos y nocturnos** — resumen diario a horas configurables
-- **Configuración por usuario** — zona horaria, idioma, horas silenciosas, límite de nagging, horario de informes
+- **Configuración por usuario** — zona horaria, idioma, horas silenciosas (con ventana separada para fin de semana y excepción para hábitos), límite de nagging, horario de informes
 
 ---
 
@@ -71,8 +79,10 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 ## Cobertura de tests
 
 ```
-623 tests recopilados   (python -m pytest --collect-only -q)
+python -m pytest -q
 ```
+
+La suite completa de regresión corre en cada push y PR (comando exacto en `deploy.yml`, tarea `test`). El número exacto de tests no se fija aquí porque cambia con cada PR — ejecuta `python -m pytest --collect-only -q` para ver el actual.
 
 Los tests siguen el estilo de regresión: cada test se escribió para fallar con el bug concreto que protege, y luego se aplicó la corrección. Los archivos de test viven en `tests/`, reflejando la estructura de `bot/`.
 

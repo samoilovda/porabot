@@ -8,14 +8,14 @@ from bot.lexicon.ru import RU
 
 def test_mini_app_button_absent_when_url_unset(monkeypatch) -> None:
     monkeypatch.setattr(inline_module.config, "MINI_APP_URL", "")
-    markup = inline_module.get_settings_keyboard(RU, show_utc_offset=False)
+    markup = inline_module.get_data_group_keyboard(RU)
     texts = [b.text for row in markup.inline_keyboard for b in row]
     assert RU["btn_open_mini_app"] not in texts
 
 
 def test_mini_app_button_present_when_url_set(monkeypatch) -> None:
     monkeypatch.setattr(inline_module.config, "MINI_APP_URL", "https://example.com/miniapp")
-    markup = inline_module.get_settings_keyboard(RU, show_utc_offset=False)
+    markup = inline_module.get_data_group_keyboard(RU)
     buttons = [b for row in markup.inline_keyboard for b in row]
     mini_app_buttons = [b for b in buttons if b.text == RU["btn_open_mini_app"]]
     assert len(mini_app_buttons) == 1

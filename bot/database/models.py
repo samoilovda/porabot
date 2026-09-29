@@ -144,11 +144,12 @@ class User(Base):
     # 4.4: secret, revocable token for this user's read-only .ics calendar
     # feed (GET /ics/<token>.ics). NULL until the user first opens the
     # feed-link screen in Settings — UserDAO.ensure_ics_feed_token() lazily
-    # creates it (secrets.token_urlsafe, effectively collision-free, so no
-    # DB-level UNIQUE is enforced here — this is a soft-migrated column,
-    # see engine.py, and SQLite's ALTER TABLE can't add one after the fact
-    # anyway). Regenerating it (also in Settings) invalidates the previous
-    # URL immediately, since the lookup is by exact token match.
+    # creates it (secrets.token_urlsafe(24)). Uniqueness is a real,
+    # DB-enforced guarantee, not just an assumption from the token's
+    # collision probability — see the uq_users_ics_feed_token index in
+    # __table_args__ above (A-26). Regenerating it (also in Settings)
+    # invalidates the previous URL immediately, since the lookup is by
+    # exact token match.
     ics_feed_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # 2.7: set when a my_chat_member update reports this user blocked the

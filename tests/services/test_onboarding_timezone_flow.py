@@ -1,7 +1,7 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import AsyncMock
 
 from bot.lexicon import get_l10n
 
@@ -18,8 +18,11 @@ def _load_handler(module_rel_path: str, fn_name: str):
 
 
 callback_set_lang = _load_handler("bot/handlers/commands.py", "callback_set_lang")
-callback_set_tz = _load_handler("bot/handlers/settings.py", "callback_set_tz")
-resolve_timezone_candidate = _load_handler("bot/handlers/settings.py", "_resolve_timezone_candidate")
+# Step 9 (2026-09-26 audit remediation): settings.py split into a package —
+# callback_set_tz/_resolve_timezone_candidate now live in its locale_time
+# submodule.
+callback_set_tz = _load_handler("bot/handlers/settings/locale_time.py", "callback_set_tz")
+resolve_timezone_candidate = _load_handler("bot/handlers/settings/locale_time.py", "_resolve_timezone_candidate")
 
 
 async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
@@ -79,10 +82,12 @@ async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
     assert "Europe/Moscow" in edit_text
     assert "UTC+" in edit_text
     state.clear.assert_awaited_once()
-    message.answer.assert_awaited_once_with(
-        l10n["cmd_start"].format(name="Bob"),
-        reply_markup=ANY,
-    )
+    # Step 7 (2026-09-26 audit remediation): onboarding now ends with a
+    # worked example, not just the main menu.
+    assert message.answer.await_count == 2
+    assert message.answer.await_args_list[0].args[0] == l10n["cmd_start"].format(name="Bob")
+    assert "reply_markup" in message.answer.await_args_list[0].kwargs
+    assert message.answer.await_args_list[1].args[0] == l10n["onboarding_example_hint"]
     callback.answer.assert_awaited_once()
 
 

@@ -41,12 +41,20 @@ Type a phrase; the bot parses time and extracts the task description:
 - **Habit sweeper** — background minutely job detects cycles missed while the bot was down or the user had notifications off; writes `missed` events from live DB state, independent of whether any notification was ever sent
 - **Weekly and monthly reports** — aggregated done / not-today / missed rates per habit, sent at a user-configured weekday and time
 
+### Task management
+
+- **Tags and priority** — `#tag` and `!priority` inline in the task text, extracted automatically
+- **Search and quick filters** — `/find <text>`, plus one-tap filters for today / this week / overdue / recurring / by tag
+- **Data export** — one-tap JSON export of every task, habit, and habit event
+- **Read-only calendar feed** — a personal, revocable `.ics` URL to subscribe to in Google/Apple Calendar
+- **Mini App progress view** — a small Telegram Mini App showing habit scores and a completion heatmap
+
 ### General
 
 - **Three languages** — full i18n in Russian, English, Spanish (`bot/lexicon/ru.py`, `en.py`, `es.py`); natural-language time parsing works in all three
 - **Timezone-aware** — all times stored in UTC; displayed in user's local timezone; DST transitions handled correctly
 - **Morning and evening briefs** — daily summary at configurable times
-- **Per-user settings** — timezone, language, quiet hours, nagging limit, reports schedule
+- **Per-user settings** — timezone, language, quiet hours (with a separate weekend window and a habits-can-wake-me exception), nagging limit, reports schedule
 
 ---
 
@@ -70,9 +78,7 @@ Type a phrase; the bot parses time and extracts the task description:
 
 ## Test coverage
 
-```
-623 tests collected   (python -m pytest --collect-only -q)
-```
+A full regression suite (`python -m pytest -q`) runs on every push and PR; see `deploy.yml`'s `test` job for the exact command. The count changes with every PR, so it isn't pinned here — run `python -m pytest --collect-only -q` for the current number.
 
 Tests follow the regression style: each test was written to fail on the specific bug it guards, then the fix was applied. Test files live in `tests/`, mirroring the layout of `bot/`.
 

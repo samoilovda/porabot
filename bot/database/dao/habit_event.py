@@ -89,10 +89,6 @@ class HabitEventDAO(BaseDAO[HabitEvent]):
         )
         await self.session.flush()
 
-    async def delete_for_reminder(self, reminder_id: int) -> None:
-        await self.session.execute(delete(HabitEvent).where(HabitEvent.reminder_id == reminder_id))
-        await self.session.flush()
-
     async def delete_for_user(self, user_id: int) -> None:
         """Drop every event of a user — for full account reset."""
         await self.session.execute(delete(HabitEvent).where(HabitEvent.user_id == user_id))
@@ -159,13 +155,3 @@ class HabitEventDAO(BaseDAO[HabitEvent]):
         for event in result.scalars().all():
             by_reminder.setdefault(event.reminder_id, []).append(event)
         return by_reminder
-
-    async def get_latest_done_event(self, reminder_id: int) -> Optional[HabitEvent]:
-        """Most recent 'done' event for a reminder, ordered by local_date (works for
-        both fixed habits, which set due_at, and fluid habits, which don't)."""
-        result = await self.session.execute(
-            select(HabitEvent)
-            .where(HabitEvent.reminder_id == reminder_id, HabitEvent.outcome == "done")
-            .order_by(HabitEvent.local_date.desc(), HabitEvent.id.desc())
-        )
-        return result.scalars().first()

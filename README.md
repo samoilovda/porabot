@@ -90,8 +90,8 @@ CI (`deploy.yml`) runs the full suite on every push to `main` and gates deployme
 
 Formal self-audit rounds are part of this repository's history and are kept visible on purpose — they are evidence of the development process. Earlier rounds (`AUDIT.md`, `REWORK_PLAN.md`, `REWORK_PLAN_2.md`) were removed once fully applied; the two most recent are still present:
 
-- [`REWORK_PLAN_5.md`](REWORK_PLAN_5.md) — full-codebase audit (composition root, scheduler, DAOs, handlers, webserver, parser, infra, tests), phases 1–4
-- [`REWORK_PLAN_6.md`](REWORK_PLAN_6.md) — follow-up full-codebase audit, phases 1–3, 19 findings each fixed in its own commit with a regression test
+- [`REWORK_PLAN_5.md`](docs/audits/REWORK_PLAN_5.md) — full-codebase audit (composition root, scheduler, DAOs, handlers, webserver, parser, infra, tests), phases 1–4
+- [`REWORK_PLAN_6.md`](docs/audits/REWORK_PLAN_6.md) — follow-up full-codebase audit, phases 1–3, 19 findings each fixed in its own commit with a regression test
 
 ---
 

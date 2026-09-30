@@ -56,7 +56,8 @@ async def test_typed_time_while_choosing_time_creates_the_reminder() -> None:
     user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
     message = SimpleNamespace(
-        text="в 18:30",
+        # "завтра" keeps the time in the future whatever hour the suite runs at
+        text="завтра в 18:30",
         chat=SimpleNamespace(id=1),
         answer=AsyncMock(return_value=SimpleNamespace(message_id=99, chat=SimpleNamespace(id=1))),
     )

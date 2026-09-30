@@ -94,8 +94,8 @@ CI (`deploy.yml`) ejecuta todos los tests en cada push a `main` y bloquea el des
 
 Varias rondas formales de auditoría propia forman parte del historial de este repositorio y se mantienen visibles a propósito — son evidencia del proceso de desarrollo. Las rondas más antiguas (`AUDIT.md`, `REWORK_PLAN.md`, `REWORK_PLAN_2.md`) se eliminaron una vez aplicadas por completo; las dos más recientes siguen en el repositorio:
 
-- [`REWORK_PLAN_5.md`](REWORK_PLAN_5.md) — auditoría completa del código (raíz de composición, scheduler, DAOs, handlers, webserver, parser, infraestructura, tests), fases 1–4
-- [`REWORK_PLAN_6.md`](REWORK_PLAN_6.md) — nueva auditoría completa, fases 1–3, 19 hallazgos, cada uno corregido en su propio commit con test de regresión
+- [`REWORK_PLAN_5.md`](docs/audits/REWORK_PLAN_5.md) — auditoría completa del código (raíz de composición, scheduler, DAOs, handlers, webserver, parser, infraestructura, tests), fases 1–4
+- [`REWORK_PLAN_6.md`](docs/audits/REWORK_PLAN_6.md) — nueva auditoría completa, fases 1–3, 19 hallazgos, cada uno corregido en su propio commit con test de regresión
 
 ---
 

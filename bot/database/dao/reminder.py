@@ -886,31 +886,3 @@ class ReminderDAO(BaseDAO[Reminder]):
         if (today_local - last_date).days > 1 and int(reminder.fluid_streak_current or 0) != 0:
             reminder.fluid_streak_current = 0
             await self.session.flush()
-
-
-    async def update_execution_time(
-        self, reminder_id: int, new_time: datetime
-    ) -> None:
-        """
-        Update execution_time for a reminder.
-
-        Used by recurring task reschedule logic - when APScheduler calculates
-        the next occurrence, we update this field and re-schedule the job.
-
-        Args:
-            reminder_id: Primary key of reminder to update
-            new_time: New execution time (timezone-aware datetime)
-
-        Returns:
-            None
-
-        Side Effects:
-          Updates execution_time field in database
-
-        Example:
-            >>> await dao.update_execution_time(456, datetime(2024, 3, 27, 10, 0))
-        """
-        reminder = await self.get_by_id(reminder_id)
-        if reminder:
-            reminder.execution_time = new_time
-            await self.session.flush()

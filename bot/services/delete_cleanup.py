@@ -69,8 +69,8 @@ async def process_deferred_deletes() -> None:
                     # habit_events (FK child) first, scoped through the
                     # SAME guard via subquery so it only ever deletes
                     # events for a reminder this transaction is ALSO about
-                    # to delete below — never a bare "regardless of
-                    # pending_delete_at" delete_for_reminder.
+                    # to delete below — never a bare delete-by-reminder_id
+                    # that ignores pending_delete_at.
                     await session.execute(
                         delete(HabitEvent).where(
                             HabitEvent.reminder_id == reminder_id,

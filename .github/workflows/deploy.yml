@@ -89,11 +89,11 @@ jobs:
             # best-effort/no-op on a missing script) — a bad or unverified
             # backup right before a restart is worse than not deploying.
             cd "${{ secrets.ORCHESTRATOR_PATH }}"
-            "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data ./backups 14
-            "${{ secrets.PROJECT_PATH }}/scripts/verify_backup.sh" ./backups
+            "${{ secrets.PROJECT_PATH }}/scripts/backup.sh" ./data/porabot ./backups/porabot 14
+            "${{ secrets.PROJECT_PATH }}/scripts/verify_backup.sh" ./backups/porabot
 
             # 3. Restart the containers on the new code.
-            docker compose up -d --build
+            docker compose up -d --build porabot_bot
 
             # 4. Wait for docker-compose.yml's own healthcheck (heartbeat
             # file — see its comment there) to report healthy; roll back
@@ -104,7 +104,7 @@ jobs:
               cd "${{ secrets.PROJECT_PATH }}"
               git checkout --detach "$PREV_SHA"
               cd "${{ secrets.ORCHESTRATOR_PATH }}"
-              docker compose up -d --build
+              docker compose up -d --build porabot_bot
               exit 1
             }
 

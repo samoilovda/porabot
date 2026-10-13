@@ -52,9 +52,13 @@ async def callback_set_lang(
         return await callback.answer(l10n["invalid_action"], show_alert=True)
     await user_dao.update_language(user.id, lang_code)
     user.language = lang_code
+    # FSM storage writes through a separate session to the same SQLite DB.
+    # Release this transaction's write lock before onboarding updates FSM,
+    # and make the preference durable before reporting success to Telegram.
+    await user_dao.session.commit()
     new_l10n = get_l10n(lang_code)
     await callback.message.delete()
-    await callback.message.answer(new_l10n["lang_set"])
+    await callback.message.answer(new_l10n["lang_set"], reply_markup=get_main_menu_keyboard(new_l10n))
 
     if is_onboarding:
         await state.update_data(onboarding_timezone=True)

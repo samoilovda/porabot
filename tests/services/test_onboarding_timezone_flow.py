@@ -27,7 +27,7 @@ resolve_timezone_candidate = _load_handler("bot/handlers/settings/locale_time.py
 
 async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
     user = SimpleNamespace(id=101, language=None)
-    user_dao = SimpleNamespace(update_language=AsyncMock())
+    user_dao = SimpleNamespace(update_language=AsyncMock(), session=SimpleNamespace(commit=AsyncMock()))
     state = SimpleNamespace(update_data=AsyncMock())
     message = SimpleNamespace(delete=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(

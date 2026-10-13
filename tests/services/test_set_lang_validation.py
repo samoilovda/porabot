@@ -14,7 +14,7 @@ from bot.lexicon import get_l10n
 
 async def test_forged_language_code_is_rejected_not_persisted() -> None:
     user = SimpleNamespace(id=101, language="en")
-    user_dao = SimpleNamespace(update_language=AsyncMock())
+    user_dao = SimpleNamespace(update_language=AsyncMock(), session=SimpleNamespace(commit=AsyncMock()))
     state = SimpleNamespace(update_data=AsyncMock())
     message = SimpleNamespace(delete=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(
@@ -27,6 +27,7 @@ async def test_forged_language_code_is_rejected_not_persisted() -> None:
     await callback_set_lang(callback=callback, user_dao=user_dao, user=user, state=state, l10n=get_l10n("en"))
 
     user_dao.update_language.assert_not_awaited()
+    user_dao.session.commit.assert_not_awaited()
     assert user.language == "en"  # unchanged
     message.delete.assert_not_awaited()
     callback.answer.assert_awaited_once()
@@ -35,7 +36,7 @@ async def test_forged_language_code_is_rejected_not_persisted() -> None:
 
 async def test_supported_language_code_still_works() -> None:
     user = SimpleNamespace(id=101, language=None)
-    user_dao = SimpleNamespace(update_language=AsyncMock())
+    user_dao = SimpleNamespace(update_language=AsyncMock(), session=SimpleNamespace(commit=AsyncMock()))
     state = SimpleNamespace(update_data=AsyncMock())
     message = SimpleNamespace(delete=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(

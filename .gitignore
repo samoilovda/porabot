@@ -36,3 +36,6 @@ nohup.out
 # Educational explanation
 Edu
 Edu.md
+
+# Frontend test dependencies
+node_modules/

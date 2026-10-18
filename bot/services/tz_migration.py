@@ -21,6 +21,7 @@ from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import Reminder
 from bot.services.scheduler import SchedulerService
 from bot.utils.time_ext import next_occurrence_utc, to_utc_aware, to_utc_naive
+from bot.utils.timezone import resolve_timezone
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ class HabitTzMigrationItem:
 
 def _safe_tz(tz_str: str) -> pytz.BaseTzInfo:
     try:
-        return pytz.timezone(tz_str)
+        return resolve_timezone(tz_str)
     except Exception:
         return pytz.UTC
 

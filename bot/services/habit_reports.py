@@ -20,6 +20,7 @@ from bot.database.models import Reminder, ReminderKind, User
 from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.pagination import limit_items, preview_line
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -323,7 +324,7 @@ async def process_habit_reports() -> None:
         eligible_users = []
         for user in candidates:
             try:
-                tz = pytz.timezone(user.timezone)
+                tz = resolve_timezone(user.timezone)
             except Exception:
                 tz = pytz.UTC
             now_local = datetime.now(tz)

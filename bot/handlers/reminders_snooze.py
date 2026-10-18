@@ -25,6 +25,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.time_ext import format_time, local_time_today_or_tomorrow, to_utc_aware, to_utc_naive
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="reminders_snooze")
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ async def callback_snooze_act(
         return
 
     try:
-        user_tz = pytz.timezone(user.timezone)
+        user_tz = resolve_timezone(user.timezone)
     except Exception:
         user_tz = pytz.UTC
     now = datetime.now(user_tz)
@@ -222,3 +223,8 @@ async def handle_unknown_command(message: Message, l10n: dict[str, Any]) -> None
 @router.message(StateFilter(None), ~F.text)
 async def handle_non_text_message(message: Message, l10n: dict[str, Any]) -> None:
     await message.answer(l10n.get("text_only_hint", "📝 I can only understand text right now. Send your reminder as a text message."))
+
+
+@router.callback_query()
+async def stale_callback(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    await callback.answer(l10n["context_expired"],show_alert=True)

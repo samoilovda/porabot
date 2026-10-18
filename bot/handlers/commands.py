@@ -58,7 +58,7 @@ async def callback_set_lang(
     await user_dao.session.commit()
     new_l10n = get_l10n(lang_code)
     await callback.message.delete()
-    await callback.message.answer(new_l10n["lang_set"], reply_markup=get_main_menu_keyboard(new_l10n))
+    await callback.message.answer(new_l10n["lang_set"], reply_markup=None if is_onboarding else get_main_menu_keyboard(new_l10n))
 
     if is_onboarding:
         await state.update_data(onboarding_timezone=True)
@@ -73,21 +73,41 @@ async def callback_set_lang(
 
 @router.message(Command("help"))
 async def cmd_help(message: Message, l10n: dict[str, Any]) -> None:
-    await message.answer(l10n["cmd_help"], parse_mode="Markdown")
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text=l10n["help_create_label"], callback_data="help_topic_create")
+    builder.button(text=l10n["help_edit_label"], callback_data="help_topic_edit")
+    await message.answer(l10n["cmd_help"], parse_mode="Markdown", reply_markup=builder.adjust(1).as_markup())
+
+
+async def _cancel_text(state: FSMContext, l10n: dict[str, Any]) -> str:
+    data = await state.get_data()
+    current = await state.get_state()
+    if data.get("edit_reminder_id"):
+        return l10n["cancel_edit"]
+    if current in {"ReminderWizard:entering_text", "ReminderWizard:choosing_time", "ReminderWizard:confirming_parse"}:
+        return l10n["cmd_cancel"]
+    return l10n["action_closed"]
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
+async def cmd_cancel(message: Message, state: FSMContext, l10n: dict[str, Any], reminder_dao=None, user=None) -> None:
+    data = await state.get_data()
+    text = await _cancel_text(state, l10n)
     await state.clear()
-    await message.answer(l10n.get("cmd_cancel", "Reminder creation cancelled."), reply_markup=get_main_menu_keyboard(l10n))
+    await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+    await _cancel_return(message,data,reminder_dao,user,l10n)
 
 
 @router.callback_query(F.data == "cancel_wizard")
-async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
+async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any], reminder_dao=None, user=None) -> None:
+    data = await state.get_data()
+    text = await _cancel_text(state, l10n)
     await state.clear()
-    text = l10n.get("cmd_cancel", "Reminder creation cancelled.")
-    await callback.message.delete()
+    await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
+    await _cancel_return(callback.message,data,reminder_dao,user,l10n)
+
     await callback.answer()
 
 
@@ -140,3 +160,23 @@ async def cleanup_pin_service_message(message: Message) -> None:
         await message.delete()
     except Exception as e:
         logger.debug("Could not delete pin service message %s: %s", message.message_id, e)
+
+
+@router.callback_query(F.data.in_({"help_topic_create", "help_topic_edit"}))
+async def callback_help_topic(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    await callback.message.answer(l10n["help_create"] if callback.data.endswith("create") else l10n["help_edit"], parse_mode=None)
+    await callback.answer()
+
+
+async def _cancel_return(message,data,reminder_dao,user,l10n):
+    if reminder_dao is None or user is None:
+        return
+    if data.get("nav_token"):
+        from bot.handlers.experience import return_to_list
+        await return_to_list(message,data,reminder_dao,user,l10n)
+    elif data.get("edit_reminder_id"):
+        task=await reminder_dao.get_owned(data["edit_reminder_id"],user.id)
+        if task:
+            from bot.keyboards.inline import get_saved_task_keyboard
+            from bot.utils.time_ext import format_time
+            await message.answer(task.reminder_text+"\n"+format_time(task.execution_time,user.timezone,fmt="%d.%m.%Y %H:%M"),reply_markup=get_saved_task_keyboard(task.id,l10n),parse_mode=None)

@@ -6,6 +6,8 @@ from aiogram.fsm.state import State, StatesGroup
 class ReminderWizard(StatesGroup):
     entering_text = State()
     choosing_time = State()
+    choosing_scope = State()
+    confirming_schedule = State()
     waiting_for_nag_limit = State()
     confirming_parse = State()
     waiting_for_done_note = State()

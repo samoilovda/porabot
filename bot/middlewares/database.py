@@ -60,6 +60,8 @@ class DatabaseMiddleware(BaseMiddleware):
                     user = await user_dao.get_or_create(
                         user_id=tg_user.id, username=tg_user.username, timezone=config.TZ
                     )
+                    # FSM writes use another SQLite session; release bootstrap/username locks first.
+                    await session.commit()
                     data["user"] = user
                     l10n = get_l10n(user.language)
                 except Exception as e:

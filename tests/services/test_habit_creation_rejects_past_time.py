@@ -95,7 +95,7 @@ async def test_habit_created_with_future_time_is_unaffected() -> None:
         "habit_create_failed_long": "failed",
         "habit_create_failed_internal": "internal error",
     }
-    message = SimpleNamespace(text="in 2 hours", answer=AsyncMock())
+    message = SimpleNamespace(text=future_local.strftime("%H:%M"), answer=AsyncMock())
 
     await habits_module.state_habit_time(message, state, user, reminder_dao, scheduler_service, l10n)
 

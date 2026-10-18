@@ -32,6 +32,7 @@ from bot.lexicon import DEFAULT_LANG
 from bot.services.habit_reports import compute_habit_score
 from bot.services.ics_feed import build_ics_calendar
 from bot.services.miniapp import build_heatmap_payload, build_scores_payload, validate_init_data
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,7 @@ async def handle_miniapp_heatmap(request: web.Request) -> web.Response:
         if user is None:
             return web.json_response({"error": "unknown user"}, status=404)
         try:
-            tz = pytz.timezone(user.timezone)
+            tz = resolve_timezone(user.timezone)
         except Exception:
             tz = pytz.UTC
         today_local = datetime.now(tz).date()

@@ -50,7 +50,6 @@ from bot.handlers.settings.data import router as _data_router
 
 # --- locale_time: timezone/language/UTC-offset, re-exported for tests ---
 from bot.handlers.settings.locale_time import (  # noqa: F401
-    _HALF_HOUR_TZ_MAP,
     _MAX_TZMIG_SUMMARY_LINES,
     _load_tzmig_plan,
     _render_tz_migration_offer,

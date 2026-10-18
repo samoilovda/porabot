@@ -14,6 +14,7 @@ from typing import Optional
 import pytz
 
 from bot.utils.time_ext import next_occurrence_utc
+from bot.utils.timezone import resolve_timezone
 
 MAX_PAUSE_DAYS = 366
 
@@ -25,7 +26,7 @@ def _now_naive() -> datetime:
 def pause_end_utc_naive(tz_str: str, until: date) -> datetime:
     """Local midnight at the start of *until*, as naive UTC (DST-safe)."""
     try:
-        tz = pytz.timezone(tz_str)
+        tz = resolve_timezone(tz_str)
     except Exception:
         tz = pytz.UTC
     local = tz.localize(datetime(until.year, until.month, until.day))
@@ -41,7 +42,7 @@ def is_paused(reminder, now_utc_naive: Optional[datetime] = None) -> bool:
 
 def valid_pause_date(until: date, tz_str: str) -> bool:
     try:
-        tz = pytz.timezone(tz_str)
+        tz = resolve_timezone(tz_str)
     except Exception:
         tz = pytz.UTC
     today = datetime.now(tz).date()

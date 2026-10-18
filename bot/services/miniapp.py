@@ -134,6 +134,9 @@ def build_scores_payload(habits_with_events: list[tuple[Any, Any]], score_fn) ->
                 "id": reminder.id,
                 "text": reminder.reminder_text,
                 "score": score,
+                "history_count": len(events),
+                "done_count": sum(e.outcome == "done" for e in events),
+                "missed_count": sum(e.outcome != "done" for e in events),
                 "streak_current": max(0, int(current or 0)),
                 "streak_best": max(0, int(best or 0)),
             }

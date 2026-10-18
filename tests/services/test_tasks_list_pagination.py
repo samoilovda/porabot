@@ -141,12 +141,12 @@ async def test_my_tasks_menu_button_shows_first_page_with_nav() -> None:
 
     sent_text = message.answer.await_args.args[0]
     markup = message.answer.await_args.kwargs["reply_markup"]
-    assert l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=1, total=2) in sent_text
+    assert "1/5" in sent_text
     task_button_rows = [
         row for row in markup.inline_keyboard
-        if any((btn.callback_data or "").startswith("done_task_") for btn in row)
+        if any(":done:" in (btn.callback_data or "") for btn in row)
     ]
-    assert len(task_button_rows) == 25
+    assert len(task_button_rows) == 8
 
 
 async def test_refresh_button_targets_the_current_page_not_page_zero() -> None:

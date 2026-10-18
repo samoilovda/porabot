@@ -17,6 +17,7 @@ from sqlalchemy import select
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import Reminder, User
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ async def _sweep_fixed_habits(session, reminder_dao: ReminderDAO, habit_event_da
 
 async def _sweep_fluid_habits(session, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, user: User) -> None:
     try:
-        tz = pytz.timezone(user.timezone)
+        tz = resolve_timezone(user.timezone)
     except Exception:
         tz = pytz.UTC
 

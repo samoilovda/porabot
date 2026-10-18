@@ -37,7 +37,7 @@ class Base(DeclarativeBase):
 
 def create_engine(database_url: str) -> AsyncEngine:
     """Create an async engine from *database_url*. Call once at startup."""
-    engine = create_async_engine(database_url, echo=False)
+    engine = create_async_engine(database_url, echo=False, hide_parameters=True)
 
     if engine.dialect.name == "sqlite":
         # WAL mode lets a writer and readers proceed concurrently instead of

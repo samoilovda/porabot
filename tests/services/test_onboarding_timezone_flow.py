@@ -54,9 +54,10 @@ async def test_set_lang_onboarding_prompts_timezone_selection() -> None:
 
 async def test_set_timezone_onboarding_finishes_with_main_menu() -> None:
     user = SimpleNamespace(id=202, timezone="UTC")
-    user_dao = SimpleNamespace(update_timezone=AsyncMock())
+    user_dao = SimpleNamespace(update_timezone=AsyncMock(),session=SimpleNamespace(commit=AsyncMock()))
     state = SimpleNamespace(
-        get_data=AsyncMock(return_value={"onboarding_timezone": True}),
+        get_data=AsyncMock(return_value={"onboarding_timezone": True,"timezone_confirmed":True}),
+        update_data=AsyncMock(),
         clear=AsyncMock(),
     )
     message = SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock())
@@ -98,12 +99,11 @@ def test_manual_timezone_offset_resolution() -> None:
 
 
 def test_manual_timezone_offset_resolution_half_hour() -> None:
-    # W8: known half/quarter-hour offsets resolve to a real (DST-aware) zone,
-    # not a fixed Etc/GMT offset — several accepted spellings for the same input.
-    assert resolve_timezone_candidate("+5:30") == "Asia/Kolkata"
-    assert resolve_timezone_candidate("+5.5") == "Asia/Kolkata"
-    assert resolve_timezone_candidate("5:30") == "Asia/Kolkata"
-    assert resolve_timezone_candidate("-3:30") == "America/St_Johns"
+    # Numeric offsets stay fixed; named IANA regions retain seasonal behavior.
+    assert resolve_timezone_candidate("+5:30") == "UTC+05:30"
+    assert resolve_timezone_candidate("+5.5") == "UTC+05:30"
+    assert resolve_timezone_candidate("5:30") == "UTC+05:30"
+    assert resolve_timezone_candidate("-3:30") == "UTC-03:30"
 
 
 def test_manual_timezone_offset_resolution_unknown_half_hour_rejected() -> None:
@@ -111,4 +111,4 @@ def test_manual_timezone_offset_resolution_unknown_half_hour_rejected() -> None:
     import pytz
 
     with pytest.raises(pytz.UnknownTimeZoneError):
-        resolve_timezone_candidate("+1:15")
+        resolve_timezone_candidate("+14:15")

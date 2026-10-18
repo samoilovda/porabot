@@ -73,10 +73,10 @@ async def test_set_tz_offers_migration_choice_when_habits_exist() -> None:
     l10n = get_l10n("en")
 
     user = SimpleNamespace(id=1, timezone="Europe/Moscow")
-    user_dao = SimpleNamespace(update_timezone=AsyncMock())
+    user_dao = SimpleNamespace(update_timezone=AsyncMock(),session=SimpleNamespace(commit=AsyncMock()))
     habits = [_habit(1, "Zaryadka", 6)]  # 09:00 Moscow
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=habits))
-    state = _state_with({})
+    state = _state_with({"timezone_confirmed":True})
     message = SimpleNamespace(edit_text=AsyncMock())
     callback = SimpleNamespace(
         data="set_tz_America/New_York", message=message, from_user=SimpleNamespace(first_name="Bob"), answer=AsyncMock()
@@ -101,9 +101,9 @@ async def test_set_tz_skips_offer_when_no_habits() -> None:
     l10n = get_l10n("en")
 
     user = SimpleNamespace(id=1, timezone="Europe/Moscow")
-    user_dao = SimpleNamespace(update_timezone=AsyncMock())
+    user_dao = SimpleNamespace(update_timezone=AsyncMock(),session=SimpleNamespace(commit=AsyncMock()))
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[]))
-    state = _state_with({})
+    state = _state_with({"timezone_confirmed":True})
     message = SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock())
     callback = SimpleNamespace(
         data="set_tz_America/New_York", message=message, from_user=SimpleNamespace(first_name="Bob"), answer=AsyncMock()

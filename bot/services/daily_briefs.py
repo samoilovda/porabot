@@ -27,6 +27,7 @@ from bot.services.habit_pause import is_paused
 from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time, is_quiet_hours
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ async def process_daily_briefs() -> None:
                 # resend on the next tick.
                 try:
                     try:
-                        tz = pytz.timezone(user.timezone)
+                        tz = resolve_timezone(user.timezone)
                     except Exception:
                         logger.warning("Invalid timezone '%s' for user %s, using UTC", user.timezone, user.id)
                         tz = pytz.UTC

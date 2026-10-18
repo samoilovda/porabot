@@ -15,6 +15,7 @@ from bot.lexicon import get_l10n
 from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.time_ext import format_time
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ async def process_missed_task_recovery() -> None:
         eligible_users = []
         for user in candidates:
             try:
-                tz = pytz.timezone(user.timezone)
+                tz = resolve_timezone(user.timezone)
             except Exception:
                 tz = pytz.UTC
             now_local = datetime.now(tz)

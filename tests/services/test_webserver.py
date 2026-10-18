@@ -150,7 +150,7 @@ async def test_miniapp_scores_returns_active_habits_for_authenticated_user(sessi
     assert resp.status == 200
     payload = await resp.json()
     assert payload["habits"] == [
-        {"id": habit_id, "text": "Meditate", "score": 0, "streak_current": 0, "streak_best": 0}
+        {"id": habit_id, "text": "Meditate", "score": 0, "history_count": 0, "done_count": 0, "missed_count": 0, "streak_current": 0, "streak_best": 0}
     ]
 
 

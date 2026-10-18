@@ -68,6 +68,7 @@ async def _run_edit(*, is_snooze_mode: bool, new_time: datetime):
         execution_time=new_time.replace(tzinfo=timezone.utc).isoformat(),
         edit_reminder_id=1,
         is_snooze_mode=is_snooze_mode,
+        series_confirmed=True,
     )
     user = SimpleNamespace(id=1, timezone="Europe/Moscow", show_utc_offset=False)
     message = SimpleNamespace(answer=AsyncMock())

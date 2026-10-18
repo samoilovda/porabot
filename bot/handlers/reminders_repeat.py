@@ -42,6 +42,7 @@ from bot.keyboards.inline import (
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="reminders_repeat")
 logger = logging.getLogger(__name__)
@@ -434,7 +435,7 @@ async def state_rrb_end_until(
     # user east of UTC could otherwise have their local "today" rejected
     # as not-in-the-future for another several hours.
     try:
-        tz = pytz.timezone(user.timezone)
+        tz = resolve_timezone(user.timezone)
     except Exception:
         tz = pytz.UTC
     today_local = datetime.now(tz).date()

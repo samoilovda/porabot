@@ -28,11 +28,8 @@ from aiogram.types import Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
-from bot.handlers.habits import _habit_motivation_text, get_habits_keyboard
-from bot.handlers.reminders import _paginate_tasks_for_list, _render_tasks_list_text
 from bot.handlers.settings import _render_settings_text
-from bot.keyboards.inline import get_settings_keyboard, get_tasks_list_keyboard
-from bot.keyboards.reply import get_main_menu_keyboard
+from bot.keyboards.inline import get_settings_keyboard
 from bot.lexicon import MENU_BUTTON_TEXTS_BY_KEY
 from bot.states.reminder import ReminderWizard
 
@@ -42,7 +39,7 @@ router = Router(name="menu")
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_new_task"]))
 @router.message(Command("newtask"))
 async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]) -> None:
-    await state.clear()
+    await _leave_flow(message,state,l10n)
     await state.set_state(ReminderWizard.entering_text)
     await message.answer(l10n["enter_task"], parse_mode="Markdown")
 
@@ -52,25 +49,15 @@ async def btn_new_task(message: Message, state: FSMContext, l10n: dict[str, Any]
 async def btn_my_tasks(
     message: Message, state: FSMContext, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
 ) -> None:
-    await state.clear()
-    tasks = await reminder_dao.get_user_reminders(user.id)
-    if not tasks:
-        await message.answer(l10n["no_tasks"], reply_markup=get_main_menu_keyboard(l10n))
-        return
-
-    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks)
-    safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
-    await message.answer(
-        safe_text,
-        reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
-        parse_mode="MarkdownV2",
-    )
+    await _leave_flow(message,state,l10n)
+    from bot.handlers.experience import open_list
+    await open_list(message,reminder_dao,user,l10n)
 
 
 @router.message(F.text.in_(MENU_BUTTON_TEXTS_BY_KEY["btn_settings"]))
 @router.message(Command("settings"))
 async def btn_settings(message: Message, state: FSMContext, user: User, l10n: dict[str, Any]) -> None:
-    await state.clear()  # Reset FSM if user navigates here mid-wizard
+    await _leave_flow(message,state,l10n)  # Reset FSM if user navigates here mid-wizard
     text = _render_settings_text(user, l10n)
     await message.answer(text, reply_markup=get_settings_keyboard(l10n, user.show_utc_offset), parse_mode="Markdown")
 
@@ -85,14 +72,12 @@ async def btn_habits(
     user: User,
 ) -> None:
     """Show the habits dashboard."""
+    await _leave_flow(message,state,l10n)
+    from bot.handlers.experience import open_list
+    await open_list(message,reminder_dao,user,l10n,kind="habits")
+
+
+async def _leave_flow(message, state, l10n):
+    if await state.get_state():
+        await message.answer(l10n["action_closed"])
     await state.clear()
-    stats = await reminder_dao.get_habit_motivation_stats(user.id, user.timezone, days=7)
-    motivation = _habit_motivation_text(l10n, stats)
-    text = l10n["habits_dashboard"]
-    if motivation.strip():
-        text = f"{text}\n\n{motivation}"
-    await message.answer(
-        text,
-        reply_markup=get_habits_keyboard(l10n).as_markup(),
-        parse_mode="Markdown",
-    )

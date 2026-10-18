@@ -3,12 +3,12 @@
 from datetime import date, datetime
 from typing import Any, Optional
 
-import pytz
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
 from bot.utils.time_ext import format_time, local_time_on_date, local_time_today_or_tomorrow
+from bot.utils.timezone import resolve_timezone
 
 # fix(3.3): single source of truth for the task-list page size — used both
 # to slice which tasks get rendered as buttons here and, in
@@ -22,7 +22,7 @@ TASKS_PAGE_SIZE = 25
 def _format_utc_offset(tz_name: str) -> str:
     """Return current UTC offset label like UTC+03:00 for a timezone."""
     try:
-        tz = pytz.timezone(tz_name)
+        tz = resolve_timezone(tz_name)
         now_local = datetime.now(tz)
         raw = now_local.strftime("%z")  # +HHMM
         if raw and len(raw) == 5:
@@ -100,7 +100,7 @@ def get_time_selection_keyboard(
         time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")
         buttons.append(
             InlineKeyboardButton(
-                text=f"{label} ({time_str})",
+                text=f"{label} {format_time(target_time, user_timezone, fmt='%d.%m')} ({time_str})",
                 callback_data=f"time_fixed_{callback_val}",
             )
         )
@@ -161,10 +161,11 @@ def get_timezone_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
     # Manual entry first, then popular presets.
     builder.row(
         InlineKeyboardButton(
-            text=l10n.get("tz_manual_button", "⌨️ Enter manually"),
+            text=l10n["tz_fixed"],
             callback_data="set_tz_manual"
         )
     )
+    builder.row(InlineKeyboardButton(text=l10n["tz_region"], callback_data="timezone_region"))
     for tz, label in zones:
         offset = _format_utc_offset(tz)
         builder.row(InlineKeyboardButton(text=f"{label} ({offset})", callback_data=f"set_tz_{tz}"))
@@ -202,6 +203,8 @@ def get_edit_keyboard(
         # Shows repeat toggle, nagging status, delete button
     """
     builder = InlineKeyboardBuilder()
+
+    builder.row(InlineKeyboardButton(text=l10n.get("rename_button","Name"),callback_data=f"rename_task_{reminder_id}"))
 
     # Toggle recurrence. Shown for every task, not just already-recurring
     # ones — every new task is created with is_recurring=False, so gating
@@ -257,8 +260,8 @@ def get_edit_keyboard(
     # Cancel option (escape route)
     builder.row(
         InlineKeyboardButton(
-            text=l10n.get("btn_cancel", "❌ Отмена"),
-            callback_data="cancel_wizard"
+            text=l10n.get("close_settings", l10n.get("btn_close", "Close")),
+            callback_data=f"task_view_{reminder_id}"
         )
     )
 
@@ -1352,3 +1355,8 @@ def get_tz_migration_pick_keyboard(
         InlineKeyboardButton(text=l10n.get("btn_tz_migrate_back", "🔙 Back"), callback_data="tzmig_back"),
     )
     return builder.as_markup()
+
+
+def callback_button(text: str, data: str) -> InlineKeyboardButton:
+    """An explicitly typed inline action shared by the experience screens."""
+    return InlineKeyboardButton(text=text,callback_data=data)

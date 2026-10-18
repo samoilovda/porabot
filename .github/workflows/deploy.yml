@@ -32,6 +32,15 @@ jobs:
           pip install "setuptools<81" wheel
           pip install -r requirements.lock
           pip install pytest pytest-asyncio ruff
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install frontend test dependencies
+        run: npm ci
+      - name: Frontend DOM and Chromium tests
+        # Ubuntu hosted runners include Chrome; tests also honor CHROMIUM_PATH.
+        run: npm test
       - name: Lint (ruff check)
         run: ruff check .
       - name: Run tests

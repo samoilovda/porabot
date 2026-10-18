@@ -141,10 +141,10 @@ def test_build_scores_payload_uses_fluid_streaks_for_fluid_habits() -> None:
         fluid_streak_current=5, fluid_streak_best=9,
         habit_streak_current=0, habit_streak_best=0,
     )
-    events = ["e1", "e2"]
+    events = [SimpleNamespace(outcome="done"), SimpleNamespace(outcome="missed")]
     payload = build_scores_payload([(reminder, events)], score_fn=lambda evs: 77)
     assert payload["habits"] == [
-        {"id": 1, "text": "Meditate", "score": 77, "streak_current": 5, "streak_best": 9}
+        {"id": 1, "text": "Meditate", "score": 77, "history_count": 2, "done_count": 1, "missed_count": 1, "streak_current": 5, "streak_best": 9}
     ]
 
 

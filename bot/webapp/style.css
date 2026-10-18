@@ -1,145 +1,191 @@
-/* 4.6: minimal, dependency-free styling. Colors default to a plain
-   light/dark scheme via prefers-color-scheme, then app.js overrides the
-   CSS variables below with Telegram.WebApp.themeParams when available so
-   the Mini App matches the user's Telegram theme instead of clashing
-   with it. */
-
 :root {
-  --bg: #ffffff;
+  color-scheme: light dark;
+  --bg: #fff;
   --text: #1c1c1e;
-  --hint: #6d6d72;
+  --hint: #555;
   --secondary-bg: #f2f2f7;
-  --button: #2481cc;
-  --button-text: #ffffff;
-  --heat-0: #ebedf0;
-  --heat-1: #9be9a8;
-  --heat-2: #40c463;
-  --heat-3: #30a14e;
-  --heat-4: #216e39;
+  --button: #1769aa;
+  --button-text: #fff;
+  --heat-0: #e9ecef;
+  --heat-1: #ffd7ab;
+  --heat-2: #9be9a8;
+  --heat-3: #216e39;
 }
-
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #17212b;
     --text: #f5f5f5;
-    --hint: #8a99a5;
+    --hint: #b1becd;
     --secondary-bg: #232e3c;
     --button: #5288c1;
-    --button-text: #ffffff;
-    --heat-0: #2d333b;
-    --heat-1: #0e4429;
-    --heat-2: #006d32;
-    --heat-3: #26a641;
-    --heat-4: #39d353;
+    --heat-0: #303a45;
+    --heat-1: #65421e;
+    --heat-2: #126a38;
+    --heat-3: #216e39;
   }
 }
-
 * {
   box-sizing: border-box;
 }
-
 body {
   margin: 0;
   padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
 }
-
+main {
+  max-width: 640px;
+  margin: auto;
+}
 h1 {
-  font-size: 1.4rem;
-  margin: 0 0 12px;
+  font-size: 1.5rem;
 }
-
 h2 {
-  font-size: 1rem;
-  color: var(--hint);
-  margin: 20px 0 8px;
+  font-size: 1.15rem;
+  margin-top: 24px;
 }
-
+h3 {
+  font-size: 1rem;
+}
+p {
+  overflow-wrap: anywhere;
+}
+button {
+  font: inherit;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: var(--secondary-bg);
+  color: var(--text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button:focus-visible {
+  outline: 3px solid var(--button);
+  outline-offset: 2px;
+}
+button[aria-pressed="true"] {
+  outline: 2px solid var(--button);
+  outline-offset: -2px;
+}
 #scores {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
-
 .habit-card {
-  background: var(--secondary-bg);
+  padding: 12px 16px;
   border-radius: 12px;
-  padding: 10px 14px;
+  background: var(--secondary-bg);
 }
-
-.habit-card .habit-name {
-  font-weight: 600;
-  margin-bottom: 6px;
+.habit-name {
+  overflow-wrap: anywhere;
+  margin: 0;
 }
-
-.habit-card .habit-meta {
-  font-size: 0.85rem;
-  color: var(--hint);
-  margin-top: 4px;
+.habit-meta {
+  font-size: 0.95rem;
 }
-
 .score-bar-track {
-  width: 100%;
   height: 8px;
-  border-radius: 4px;
   background: var(--heat-0);
+  border-radius: 4px;
   overflow: hidden;
 }
-
 .score-bar-fill {
   height: 100%;
   background: var(--button);
 }
-
-#heatmap {
-  display: grid;
-  grid-template-rows: repeat(7, 1fr);
-  grid-auto-flow: column;
-  grid-auto-columns: 12px;
-  gap: 3px;
-  overflow-x: auto;
-  padding: 4px 0 8px;
-}
-
-.heat-cell {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--heat-0);
-  cursor: pointer;
-}
-
-/* Step 10 (2026-09-26 audit remediation): a heat-cell is now a real
-   keyboard-focusable control (role="button" tabindex="0" in app.js) —
-   give it a visible focus ring instead of relying on the browser default,
-   which most browsers suppress on a plain <div>. */
-.heat-cell:focus-visible {
-  outline: 2px solid var(--button);
-  outline-offset: 1px;
-}
-
-.heat-cell[data-level="1"] { background: var(--heat-1); }
-.heat-cell[data-level="2"] { background: var(--heat-2); }
-.heat-cell[data-level="3"] { background: var(--heat-3); }
-.heat-cell[data-level="4"] { background: var(--heat-4); }
-
-#heatmap-legend {
+#view-controls,
+#month-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
-  color: var(--hint);
-  margin-bottom: 4px;
+  justify-content: space-between;
+  gap: 8px;
 }
-
-.status {
-  font-size: 0.85rem;
-  color: var(--hint);
+#view-controls {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+#month-label {
   text-align: center;
+  flex: 1;
+}
+#heatmap-legend {
+  font-size: 0.875rem;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(24px, 1fr));
+  gap: 4px;
+}
+.weekday {
+  text-align: center;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.heat-cell {
+  padding: 4px;
+  min-width: 24px;
+  min-height: 36px;
+  border: 1px solid var(--hint);
+}
+.heat-cell[data-level="0"] {
+  background: var(--heat-0);
+}
+.heat-cell[data-level="1"] {
+  background: var(--heat-1);
+}
+.heat-cell[data-level="2"] {
+  background: var(--heat-2);
+}
+.heat-cell[data-level="3"] {
+  background: var(--heat-3);
+  color: #fff;
+}
+.days-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.days-list button {
+  min-height: 44px;
+  text-align: left;
+}
+.status:empty {
+  display: none;
+}
+.status {
+  padding: 8px 0;
+}
+.status p {
+  margin: 4px 0 8px;
+}
+@media (min-width: 380px) {
+  .heat-cell {
+    min-height: 44px;
+  }
 }
 
-.status.error {
-  color: #e53935;
+:root[data-theme="dark"] {
+  --bg: #17212b;
+  --text: #f5f5f5;
+  --hint: #b1becd;
+  --secondary-bg: #232e3c;
+  --button: #5288c1;
+  --heat-0: #303a45;
+  --heat-1: #65421e;
+  --heat-2: #126a38;
+  --heat-3: #216e39;
 }

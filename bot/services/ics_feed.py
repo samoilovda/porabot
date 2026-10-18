@@ -40,6 +40,7 @@ from typing import Sequence
 import pytz
 
 from bot.services.habit_pause import is_paused
+from bot.utils.timezone import resolve_timezone
 
 _CRLF = "\r\n"
 _PRODID = "-//Porabot//Reminders//EN"
@@ -104,7 +105,8 @@ def _build_vevent(reminder, tz: pytz.BaseTzInfo) -> list[str]:
         # limited rule exports the correct TOTAL occurrence count instead
         # of one restarted from "now".
         dtstart_utc_naive = getattr(reminder, "rrule_dtstart", None) or reminder.execution_time
-        dtstart_line = f"DTSTART;TZID={tz.zone}:{_format_local(dtstart_utc_naive, tz)}"
+        tzid = f'"{tz.zone}"' if ":" in tz.zone else tz.zone
+        dtstart_line = f"DTSTART;TZID={tzid}:{_format_local(dtstart_utc_naive, tz)}"
     else:
         dtstart_line = f"DTSTART:{_format_utc(reminder.execution_time)}"
 
@@ -125,7 +127,7 @@ def build_ics_calendar(user, reminders: Sequence) -> str:
     """Render *reminders* (already filtered/ordered by the caller — see
     ReminderDAO.get_active_for_ics) into a full VCALENDAR document."""
     try:
-        tz = pytz.timezone(user.timezone)
+        tz = resolve_timezone(user.timezone)
     except Exception:
         tz = pytz.UTC
 
@@ -137,6 +139,9 @@ def build_ics_calendar(user, reminders: Sequence) -> str:
         "METHOD:PUBLISH",
         "X-WR-CALNAME:Porabot",
     ]
+    if getattr(user,"timezone", "UTC").startswith("UTC") and getattr(user,"timezone", "UTC") != "UTC":
+        offset = datetime.now(tz).strftime("%z")
+        lines.extend(["BEGIN:VTIMEZONE", f"TZID:{getattr(user,'timezone','UTC')}", "BEGIN:STANDARD", "DTSTART:19700101T000000", f"TZOFFSETFROM:{offset}", f"TZOFFSETTO:{offset}", "END:STANDARD", "END:VTIMEZONE"])
     for reminder in reminders:
         if is_paused(reminder):
             continue  # step 13: a paused habit is absent from the feed until it resumes

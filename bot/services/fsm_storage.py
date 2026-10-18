@@ -25,7 +25,7 @@ from aiogram.fsm.storage.base import BaseStorage, StateType, StorageKey
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from bot.database.models import FsmState
+from bot.database.models import FsmState, UiContext
 
 logger = logging.getLogger(__name__)
 
@@ -169,4 +169,5 @@ async def cleanup_stale_fsm_state() -> None:
     cutoff = _utcnow_naive() - STALE_STATE_AGE
     async with ctx.session_pool() as session:
         await session.execute(delete(FsmState).where(FsmState.updated_at < cutoff))
+        await session.execute(delete(UiContext).where(UiContext.expires_at <= _utcnow_naive()))
         await session.commit()

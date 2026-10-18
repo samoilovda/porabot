@@ -3,6 +3,22 @@
 from typing import Any
 
 EN: dict[str, Any] = {
+    'action_closed': 'Action closed. Saved tasks are unchanged.',
+    'cancel_edit': 'Edit cancelled. The saved task is unchanged.',
+    'close_settings': 'Back to task',
+    'habit_choose_hour': 'Starting {date}. What time should I remind you every day?',
+    'habit_confirm_time': 'Every day, starting {time}. One notification. Save?',
+    'confirm_save': 'Save',
+    'scope_prompt': 'What should change for “{text}”?',
+    'scope_one': 'Snooze this reminder only',
+    'scope_all': 'Change the schedule',
+    'series_confirm': 'Schedule changes: {rule}. Next: {time}. COUNT will restart from this date. Save?',
+    'series_expired': 'This time is beyond the schedule end. Choose another date or edit the rule.',
+    'tz_preview': 'Timezone: {zone}\nYour time now: {time}. Regions follow seasonal changes; UTC offsets stay fixed. Apply?',
+    'tz_region': 'City / region',
+    'tz_fixed': 'Fixed UTC offset',
+    'tz_region_prompt': 'Enter an IANA zone (Asia/Tashkent) or city: Tashkent, Moscow, London, New York.',
+    'tz_fixed_prompt': 'Enter a fixed UTC offset: +5, -3:30, +5:45. No seasonal clock changes.',
     # Menu & Commands
     "cmd_start": "👋 Hi, {name}!\nI'm *Porabot*. I'll help you stop procrastinating.\n\nChoose an action from the menu 👇",
     "cmd_help": (
@@ -438,3 +454,65 @@ EN: dict[str, Any] = {
     "rate_limited_message": "⏳ Too many messages — please slow down and try again in a few seconds.",
     "rate_limited_callback": "⏳ Too many requests — slow down.",
 }
+
+
+EN.update(
+{'daily_title': 'Today: tasks and habits',
+ 'search_button': 'Search',
+ 'search_prompt': 'What are you looking for? Up to 300 characters. /cancel to close.',
+ 'context_expired': 'This view has expired. Open the list again.',
+ 'rename_button': 'Name',
+ 'rename_prompt': 'Enter a new name (up to 1000 characters). Time and recurrence stay unchanged.',
+ 'rename_saved': 'Name updated.',
+ 'back_results': 'Return to results',
+ 'batch_preview': 'Mark the selected tasks as done ({count})? New tasks will not be included.',
+ 'batch_apply': 'Confirm completion',
+ 'batch_done_label': 'Mark as done…'}
+)
+
+EN.update(
+{'notification_offer': 'How would you like notifications? You can change this in Settings.',
+ 'notify_only': 'Reminders only',
+ 'notify_summaries': 'Reminders and summaries',
+ 'notify_custom': 'Customize',
+ 'notify_preview_only': 'Daily briefs, habit reports and missed-task digests will be off. Reminders and '
+                        'quiet hours stay unchanged. Apply?',
+ 'notify_preview_summaries': 'Daily briefs, habit reports and missed-task digests will be on at their '
+                             'configured times. Reminders and quiet hours stay unchanged. Apply?',
+ 'notify_saved': 'Notification settings saved.',
+ 'parse_error': 'Could not process this message. Try again; the task name is kept while choosing a time.',
+ 'btn_not_today': 'Skip today (ends the streak)',
+ 'clear_all_done': 'Tasks, habits and settings deleted. Payment history is retained for support '
+                   '(/paysupport).',
+ 'help_topics': 'Help by topic',
+ 'help_create_label': 'Create and schedule',
+ 'help_edit_label': 'Edit and find',
+ 'help_create': 'Send: “tomorrow at 18 call mom”. Without a time, I will ask when to remind you. /cancel '
+                'closes the current input.\n'
+                '#tag adds a label, !1 sets high priority.',
+ 'help_edit': 'Reply to a task card: “tomorrow at 9” to change its time. For recurring tasks, choose one '
+              'reminder or the schedule.\n'
+              '/find text searches tasks; the list also has Search. Open a card to rename it.'}
+)
+
+EN.update(
+{'fluid_mode_edit': 'Morning mode',
+ 'fluid_mode_change_note': 'How should this flexible habit be planned from tomorrow morning? Today’s '
+                           'selected reminder stays unchanged.',
+ 'cmd_start': '👋 Hi, {name}! Send what to do and when to remind you, or open your task list.'}
+)
+
+EN.update(
+{'series_confirm': 'New schedule: {rule}. Next: {time}. {limit_note} Save?',
+ 'series_restart_count': 'The limited number of repetitions will restart from this date.',
+ 'habit_score_explainer': 'Strength grows with check-ins and gradually decreases with missed days. It is not '
+                          'a completion percentage.'}
+)
+
+EN.update({'habits_daily_title': 'Habits: today and schedule', 'daily_remaining': 'Remaining today: {tasks} tasks · {habits} habits', 'add_habit': '➕ Add habit'})
+
+EN.update({'batch_skipped': 'Changed or already closed tasks skipped: {count}.'})
+
+EN.update({'habit_detail_progress': 'Strength: {score}/100 · streak {current} · best {best}'})
+
+EN.update({'habit_btn_pause': '⏸ Pause'})

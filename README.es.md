@@ -146,7 +146,7 @@ pip install -r requirements.lock
 ## Limitaciones conocidas
 
 - **Jobs minutales O(usuarios).** Cuatro tareas cron (resúmenes, recuperación de perdidos, sweeper de hábitos, informes) escanean a todos los usuarios cada minuto. Aceptable para un bot personal; no escala a miles de usuarios sin indexación adicional.
-- **La entrada manual de zona horaria admite los desplazamientos de media/cuarto de hora más comunes, no todas las zonas IANA.** El onboarding acepta desplazamientos UTC enteros (ej. `+3`) y un conjunto mapeado de desplazamientos de media/cuarto de hora (`+5:30`, `+5:45`, etc. — India, Nepal, Irán y otros); cualquier otro caso sigue requiriendo configuración manual en `.env`.
+- **Las regiones y los desplazamientos fijos tienen comportamientos distintos.** Elige una región/ciudad IANA para los cambios estacionales automáticos o introduce un desplazamiento UTC fijo como `-3:30` o `+5:45`. La vista previa muestra la hora local actual antes de guardar. Las regiones ya guardadas conservan su comportamiento.
 - **La whitelist está implementada pero desactivada por defecto.** `WhitelistMiddleware` existe en `bot/middlewares/whitelist.py`. Activarla en `bot/__main__.py` antes de un despliegue público.
 
 ---

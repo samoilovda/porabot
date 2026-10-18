@@ -1,11 +1,14 @@
 """Time utilities for UTC normalization and display formatting."""
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as dt_time
 from typing import Optional
 
 import pytz
 from dateutil.rrule import rrulestr
+
+from bot.utils.timezone import resolve_timezone
 
 
 def parse_hhmm(raw: str, fallback: str) -> dt_time:
@@ -60,7 +63,7 @@ def is_quiet_hours(user, now_local: datetime, *, is_habit: bool = False) -> bool
 
 def _safe_tz(tz_str: str) -> pytz.BaseTzInfo:
     try:
-        return pytz.timezone(tz_str)
+        return resolve_timezone(tz_str)
     except Exception:
         return pytz.UTC
 
@@ -135,9 +138,7 @@ def local_time_tomorrow(
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
     now_local_naive = to_utc_aware(now_utc).astimezone(tz).replace(tzinfo=None)
-    candidate_naive = (now_local_naive + timedelta(days=1)).replace(
-        hour=hour, minute=minute, second=0, microsecond=0
-    )
+    candidate_naive = (now_local_naive + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
     return tz.localize(candidate_naive).astimezone(timezone.utc)
 
 
@@ -230,7 +231,7 @@ def next_occurrence_utc(
     the rrule math in local time keeps the local wall-clock time stable.
     """
     try:
-        user_tz = pytz.timezone(user_tz_str)
+        user_tz = resolve_timezone(user_tz_str)
     except Exception:
         user_tz = pytz.UTC
 
@@ -278,7 +279,7 @@ def format_time(
         format_time(utc_dt, "Europe/Moscow", fmt="%d.%m")  → '27.03'
     """
     try:
-        user_tz = pytz.timezone(tz_str)
+        user_tz = resolve_timezone(tz_str)
     except pytz.UnknownTimeZoneError:
         user_tz = pytz.UTC
 
@@ -295,3 +296,14 @@ def format_time(
     sign = "-" if offset_seconds < 0 else "+"
     hours, mins = divmod(int(abs(offset_seconds)), 3600)
     return f"{base_str} (UTC{sign}{hours:02d}:{mins // 60:02d})"
+
+
+def is_clock_input(value: str) -> bool:
+    """A clock-only follow-up inherits a previously recognized calendar day."""
+    return bool(
+        re.fullmatch(
+            r"(?:в|at|a\s+las?)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|утра|вечера|ночи|дня|de la mañana|de la tarde|de la noche)?",
+            (value or "").strip(),
+            re.IGNORECASE,
+        )
+    )

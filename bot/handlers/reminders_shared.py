@@ -591,15 +591,26 @@ async def _resolve_time_and_respond(
         time. The confidence number itself is never shown to the user —
         callers log it (see handle_task_text's logger.info) instead.
     """
+    from datetime import date
+    from types import SimpleNamespace
+
+    from bot.utils.time_ext import is_clock_input, local_time_on_date
+    from bot.utils.timezone import resolve_timezone
+    data = await state.get_data()
+    if data.get("time_base_date") and is_clock_input(getattr(source_message,"text","")) and not getattr(result,"date_only",False):
+        local = result.parsed_datetime.astimezone(resolve_timezone(user.timezone)) if result.parsed_datetime.tzinfo else result.parsed_datetime
+        corrected = local_time_on_date(user.timezone,date.fromisoformat(data["time_base_date"]),local.hour,local.minute)
+        result = SimpleNamespace(**{**vars(result),"parsed_datetime":corrected})
     await state.update_data(execution_time=result.parsed_datetime.isoformat())
     confidence = float(getattr(result, "confidence", 0.0) or 0.0)
 
-    if confidence >= _PARSE_CONFIDENCE_THRESHOLD:
+    if confidence >= _PARSE_CONFIDENCE_THRESHOLD and not getattr(result,"date_only",False):
         await _save_and_show_edit(source_message, state, l10n, user, reminder_dao, scheduler_service)
         return
 
     if getattr(result, "date_only", False):
         local_date = result.parsed_datetime.date()
+        await state.update_data(time_base_date=local_date.isoformat())
         await state.set_state(ReminderWizard.choosing_time)
         await source_message.answer(
             l10n["ask_hour_for_date"].format(
@@ -657,6 +668,28 @@ async def _save_and_show_edit(
     if edit_reminder_id:
         new_reminder = await reminder_dao.get_owned(edit_reminder_id, user.id)
         if new_reminder:
+            if new_reminder.is_recurring and new_reminder.rrule_string and not data.get("is_snooze_mode"):
+                try:
+                    next_run = next_occurrence_utc(new_reminder.rrule_string, execution_time, user.timezone, execution_time - timedelta(seconds=1))
+                except (ValueError, TypeError):
+                    next_run = None
+                if next_run is None:
+                    await source_message.answer(l10n["series_expired"])
+                    await state.set_state(ReminderWizard.choosing_time)
+                    return
+                execution_time = next_run
+                if not data.get("series_confirmed"):
+                    await state.update_data(execution_time=execution_time.isoformat())
+                    from aiogram.utils.keyboard import InlineKeyboardBuilder
+                    builder = InlineKeyboardBuilder()
+                    import secrets
+                    nonce=secrets.token_hex(4)
+                    await state.update_data(series_nonce=nonce,series_rule=new_reminder.rrule_string,series_zone=user.timezone)
+                    builder.button(text=l10n["confirm_save"], callback_data=f"series_confirm:{nonce}")
+                    builder.button(text=l10n["btn_cancel"], callback_data="cancel_wizard")
+                    await state.set_state(ReminderWizard.confirming_schedule)
+                    await source_message.answer(l10n["series_confirm"].format(rule=_rrule_text(new_reminder, l10n), time=format_time(execution_time, user.timezone, fmt="%d.%m.%Y %H:%M"), limit_note=l10n["series_restart_count"] if "COUNT=" in new_reminder.rrule_string.upper() else ""), reply_markup=builder.adjust(1).as_markup(), parse_mode=None)
+                    return
             new_reminder.reminder_text = text
             new_reminder.tags = tags_csv
             new_reminder.priority = priority
@@ -792,3 +825,6 @@ async def _save_and_show_edit(
     keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
     await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 
+    if data.get("nav_token"):
+        from bot.handlers.experience import return_to_list
+        await return_to_list(source_message,data,reminder_dao,user,l10n)

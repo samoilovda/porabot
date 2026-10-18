@@ -86,6 +86,19 @@ CI (`deploy.yml`) runs the full suite on every push to `main` and gates deployme
 
 ---
 
+## UI development checks
+
+The Mini App stays plain JavaScript/CSS and needs no build step. Frontend test tools are development dependencies:
+
+```bash
+npm ci
+npm test
+```
+
+Use Node 22 or newer and an installed Chromium/Chrome browser. Tests find `/usr/bin/chromium` or `/usr/bin/google-chrome`; set `CHROMIUM_PATH` for another location. The tests use synthetic Telegram data and intercepted HTTP responses, including keyboard navigation, 320px layout, enlarged text, dark theme and API failures. They do not send Telegram messages. CI runs these alongside pytest.
+
+The October UI/UX implementation and migration notes are recorded in [the completion report](docs/plans/2026-10-18-ui-ux-implementation.md). Stages A–D cover reliable editing, persistent list navigation, the Mini App and daily habits. Weekly targets and undated inbox items remain separate follow-up stages.
+
 ## Process artifacts
 
 Formal self-audit rounds are part of this repository's history and are kept visible on purpose — they are evidence of the development process. Earlier rounds (`AUDIT.md`, `REWORK_PLAN.md`, `REWORK_PLAN_2.md`) were removed once fully applied; the two most recent are still present:
@@ -142,7 +155,7 @@ pip install -r requirements.lock
 ## Known limitations
 
 - **O(users) minutely jobs.** Four cron jobs (daily briefs, missed recovery, habit sweeper, habit reports) scan all users every minute. Intentional and acceptable for a personal bot; does not scale to thousands of users without additional indexing.
-- **Manual timezone entry supports common half/quarter-hour offsets, not every IANA zone.** The onboarding flow accepts whole-hour offsets (`+3`) and a mapped set of half/quarter-hour offsets (`+5:30`, `+5:45`, etc. — India, Nepal, Iran, and others); anything outside that map still needs `.env` configuration.
+- **Timezone regions and fixed offsets have different behavior.** Choose an IANA region/city for automatic seasonal clock changes, or enter a fixed UTC offset such as `-3:30` or `+5:45`. The preview shows the current local time before applying it. Existing saved regions keep their behavior.
 - **Whitelist is implemented but disabled by default.** `WhitelistMiddleware` exists in `bot/middlewares/whitelist.py`. Enable it in `bot/__main__.py` before deploying publicly.
 
 ---

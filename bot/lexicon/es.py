@@ -7,6 +7,22 @@ from bot.lexicon.en import EN
 ES: dict[str, Any] = dict(EN)
 ES.update(
     {
+    'action_closed': 'Acción cerrada. Las tareas guardadas no han cambiado.',
+    'cancel_edit': 'Edición cancelada. La tarea guardada no ha cambiado.',
+    'close_settings': 'Volver a la tarea',
+    'habit_choose_hour': 'Desde {date}. ¿A qué hora te aviso cada día?',
+    'habit_confirm_time': 'Cada día, a partir de {time}. Una notificación. ¿Guardar?',
+    'confirm_save': 'Guardar',
+    'scope_prompt': '¿Qué cambiar de «{text}»?',
+    'scope_one': 'Posponer solo este aviso',
+    'scope_all': 'Cambiar el horario',
+    'series_confirm': 'Nuevo horario: {rule}. Próximo: {time}. COUNT vuelve a empezar. ¿Guardar?',
+    'series_expired': 'La fecha está fuera del horario. Elige otra fecha o cambia la regla.',
+    'tz_preview': 'Zona: {zone}\nTu hora actual: {time}. Las regiones ajustan el horario estacional; los desfases UTC son fijos. ¿Aplicar?',
+    'tz_region': 'Ciudad / región',
+    'tz_fixed': 'Desfase UTC fijo',
+    'tz_region_prompt': 'Escribe una zona IANA (Asia/Tashkent) o ciudad: Taskent, Moscú, Londres, Nueva York.',
+    'tz_fixed_prompt': 'Escribe un desfase UTC fijo: +5, -3:30, +5:45. Sin cambios estacionales.',
         # Menu & Commands
         "cmd_start": "👋 Hola, {name}!\nSoy *Porabot*. Te ayudaré a procrastinar menos.\n\nElige una acción del menú 👇",
         "cmd_help": (
@@ -423,3 +439,68 @@ ES.update(
         "weekday_names": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     }
 )
+
+
+ES.update(
+{'daily_title': 'Hoy: tareas y hábitos',
+ 'search_button': 'Buscar',
+ 'search_prompt': '¿Qué buscas? Hasta 300 caracteres. /cancel para cerrar.',
+ 'context_expired': 'Esta vista ha caducado. Abre la lista de nuevo.',
+ 'rename_button': 'Nombre',
+ 'rename_prompt': 'Escribe un nombre nuevo (hasta 1000 caracteres). La fecha y repetición no cambian.',
+ 'rename_saved': 'Nombre actualizado.',
+ 'back_results': 'Volver a los resultados',
+ 'batch_preview': '¿Marcar las tareas elegidas como hechas ({count})? No se añadirán tareas nuevas.',
+ 'batch_apply': 'Confirmar finalización',
+ 'batch_done_label': 'Marcar como hechas…'}
+)
+
+ES.update(
+{'notification_offer': '¿Cómo quieres las notificaciones? Puedes cambiarlo en Ajustes.',
+ 'notify_only': 'Solo recordatorios',
+ 'notify_summaries': 'Recordatorios y resúmenes',
+ 'notify_custom': 'Personalizar',
+ 'notify_preview_only': 'Se desactivan resúmenes diarios, informes de hábitos y tareas pendientes. Los '
+                        'recordatorios y horas de silencio no cambian. ¿Aplicar?',
+ 'notify_preview_summaries': 'Se activan resúmenes diarios, informes de hábitos y tareas pendientes a las '
+                             'horas configuradas. Los recordatorios y horas de silencio no cambian. '
+                             '¿Aplicar?',
+ 'notify_saved': 'Preferencias de notificaciones guardadas.',
+ 'parse_error': 'No se pudo procesar el mensaje. Inténtalo de nuevo; el nombre se conserva al elegir la '
+                'hora.',
+ 'btn_not_today': 'Omitir hoy (rompe la racha)',
+ 'clear_all_done': 'Tareas, hábitos y ajustes eliminados. Se conserva el historial de pagos para soporte '
+                   '(/paysupport).',
+ 'help_topics': 'Ayuda por tema',
+ 'help_create_label': 'Crear y programar',
+ 'help_edit_label': 'Editar y buscar',
+ 'help_create': 'Escribe: «mañana a las 18 llamar a mamá». Sin hora, te preguntaré cuándo avisarte. /cancel '
+                'cierra la entrada actual.\n'
+                '#etiqueta añade una etiqueta, !1 indica prioridad alta.',
+ 'help_edit': 'Responde a una tarjeta: «mañana a las 9» para cambiar la hora. Si se repite, elige un aviso o '
+              'todo el horario.\n'
+              '/find texto busca tareas; también hay Buscar en la lista. Abre una tarjeta para cambiar el '
+              'nombre.'}
+)
+
+ES.update(
+{'fluid_mode_edit': 'Modo de mañana',
+ 'fluid_mode_change_note': '¿Cómo planificar este hábito flexible desde mañana? El aviso elegido para hoy se '
+                           'conserva.',
+ 'cmd_start': '👋 ¡Hola, {name}! Escribe qué hacer y cuándo avisarte, o abre tu lista de tareas.'}
+)
+
+ES.update(
+{'series_confirm': 'Nuevo horario: {rule}. Próximo: {time}. {limit_note} ¿Guardar?',
+ 'series_restart_count': 'El recuento de repeticiones limitadas vuelve a empezar.',
+ 'habit_score_explainer': 'La constancia crece con los registros y disminuye gradualmente con las omisiones. '
+                          'No es un porcentaje de cumplimiento.'}
+)
+
+ES.update({'habits_daily_title': 'Hábitos: hoy y horarios', 'daily_remaining': 'Pendientes hoy: {tasks} tareas · {habits} hábitos', 'add_habit': '➕ Añadir hábito'})
+
+ES.update({'batch_skipped': 'Tareas cambiadas o ya cerradas omitidas: {count}.'})
+
+ES.update({'habit_detail_progress': 'Constancia: {score}/100 · racha {current} · récord {best}'})
+
+ES.update({'habit_btn_pause': '⏸ Pausar'})

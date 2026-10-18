@@ -7,6 +7,7 @@ docstring for the full module family and why.
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 import pytz
@@ -14,6 +15,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.dao.user import UserDAO
@@ -35,76 +37,34 @@ from bot.services.tz_migration import (
     migratable_habits,
 )
 from bot.utils.markdown import escape_markdown
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="settings_locale_time")
 logger = logging.getLogger(__name__)
 
-# Half/quarter-hour UTC offsets mapped to a real IANA zone that actually uses
-# that offset today, so users in these regions get correct DST behavior
-# instead of a frozen fixed offset. Not exhaustive — offsets with no matching
-# well-known zone are rejected rather than silently approximated.
-_HALF_HOUR_TZ_MAP: dict[str, str] = {
-    "+3:30": "Asia/Tehran",
-    "+4:30": "Asia/Kabul",
-    "+5:30": "Asia/Kolkata",
-    "+5:45": "Asia/Kathmandu",
-    "+6:30": "Asia/Yangon",
-    "+8:45": "Australia/Eucla",
-    "+9:30": "Australia/Darwin",
-    "+10:30": "Australia/Lord_Howe",
-    "+12:45": "Pacific/Chatham",
-    "-3:30": "America/St_Johns",
-    "-9:30": "Pacific/Marquesas",
-}
-
-
 def _resolve_timezone_candidate(raw: str) -> str:
-    """
-    Normalize manual timezone input from UTC offset to a canonical IANA timezone.
-
-    Supported manual formats:
-      - +5, -6, 0                    → whole-hour offset
-      - +5:30, -3:30, +5:45, etc.    → known half/quarter-hour offset (see
-                                        _HALF_HOUR_TZ_MAP)
-
-    Whole-hour offsets resolve to Etc/GMT±N, a *fixed* offset with no DST —
-    accurate today, but a user in a DST-observing region will drift by an
-    hour when their local clocks change. The keyboard presets (real IANA
-    city zones) don't have this problem; manual entry is a deliberate
-    trade-off for regions not covered by the preset list.
-
-    Returns:
-      - UTC for 0
-      - Etc/GMT-5 for +5, Etc/GMT+6 for -6 (note the reversed IANA sign)
-      - a real IANA zone for known half/quarter-hour offsets
-    """
-    candidate = (raw or "").strip().replace(",", ".")
-    # Accept "+5.5" / "-3.5" as an alternate spelling of "+5:30" / "-3:30".
-    half_match = re.fullmatch(r"([+-]?\d{1,2})\.5", candidate)
-    if half_match:
-        candidate = f"{half_match.group(1)}:30"
-    if not candidate.startswith(("+", "-")) and ":" in candidate:
-        candidate = f"+{candidate}"
-
-    if ":" in candidate:
-        mapped = _HALF_HOUR_TZ_MAP.get(candidate)
-        if mapped is None:
-            raise pytz.UnknownTimeZoneError(raw)
-        return mapped
-
-    if not re.fullmatch(r"[+-]?\d{1,2}", candidate):
+    """Accept a named IANA region or a genuinely fixed numeric offset."""
+    candidate = (raw or "").strip()
+    cities = {"ташкент": "Asia/Tashkent", "tashkent": "Asia/Tashkent", "taskent": "Asia/Tashkent", "москва": "Europe/Moscow", "moscow": "Europe/Moscow", "moscú": "Europe/Moscow", "лондон": "Europe/London", "london": "Europe/London", "londres": "Europe/London", "нью-йорк": "America/New_York", "new york": "America/New_York", "nueva york": "America/New_York"}
+    if candidate in pytz.all_timezones_set or candidate.casefold() in cities:
+        return cities.get(candidate.casefold(), candidate)
+    candidate = candidate.replace(",", ".")
+    half = re.fullmatch(r"([+-]?\d{1,2})\.5", candidate)
+    if half:
+        candidate = half.group(1) + ":30"
+    m = re.fullmatch(r"([+-]?)(\d{1,2})(?::(\d{2}))?", candidate)
+    if not m:
         raise pytz.UnknownTimeZoneError(raw)
-
-    hours = int(candidate)
-    if hours < -12 or hours > 14:
+    sign, hh, mm = m.groups()
+    minutes = int(hh) * 60 + int(mm or 0)
+    minutes *= -1 if sign == "-" else 1
+    if int(mm or 0) > 59 or not -720 <= minutes <= 840:
         raise pytz.UnknownTimeZoneError(raw)
-
-    if hours == 0:
+    if minutes == 0:
         return "UTC"
-
-    # NOTE: IANA Etc/GMT has reversed sign semantics by convention.
-    sign = "-" if hours > 0 else "+"
-    return f"Etc/GMT{sign}{abs(hours)}"
+    if minutes % 60 == 0:
+        return f"Etc/GMT{'-' if minutes > 0 else '+'}{abs(minutes) // 60}"
+    return f"UTC{'+' if minutes > 0 else '-'}{abs(minutes)//60:02}:{abs(minutes)%60:02}"
 
 
 @router.callback_query(F.data == "settings_group_locale_time")
@@ -452,23 +412,29 @@ async def callback_set_tz(
     action = callback.data.split("set_tz_")[1]
     if action == "manual":
         await state.set_state(SettingsState.waiting_for_timezone)
-        await callback.message.edit_text(l10n["tz_manual_prompt"])
+        await callback.message.edit_text(l10n["tz_fixed_prompt"])
         await callback.answer()
         return
 
     # 32: callback_data is client-controlled — Telegram doesn't cryptographically
     # bind it to the keyboard actually shown, so a forged "set_tz_<garbage>"
     # must not persist an unparseable zone. A stored invalid timezone later
-    # makes pytz.timezone() raise deep inside InputParser._parse_sync()
+    # makes resolve_timezone() raise deep inside InputParser._parse_sync()
     # instead of returning a parse result, breaking reminder creation for
     # that user until they fix it via manual entry.
     try:
-        pytz.timezone(action)
+        resolve_timezone(action)
     except pytz.UnknownTimeZoneError:
         return await callback.answer(l10n["invalid_action"], show_alert=True)
 
+    if not state_data.get("timezone_confirmed"):
+        await _preview_timezone(callback.message, state, user_dao, action, l10n)
+        await callback.answer()
+        return
+    await state.update_data(timezone_confirmed=False)
     old_tz = user.timezone
     await user_dao.update_timezone(user.id, action)
+    await user_dao.session.commit()
     user.timezone = action
 
     if is_onboarding_tz:
@@ -517,30 +483,33 @@ async def state_set_manual_timezone(
         )
         return
 
-    state_data = await state.get_data()
-    is_onboarding_tz = bool(state_data.get("onboarding_timezone"))
+    await _preview_timezone(message, state, user_dao, resolved_tz, l10n)
 
-    old_tz = user.timezone
-    await user_dao.update_timezone(user.id, resolved_tz)
-    user.timezone = resolved_tz
-    await state.clear()
 
-    if is_onboarding_tz:
-        await message.answer(
-            l10n["tz_success"].format(tz=_format_tz_display_label(resolved_tz)),
-            parse_mode="Markdown",
-        )
-        text = l10n["cmd_start"].format(name=escape_markdown(message.from_user.first_name))
-        await message.answer(text, reply_markup=get_main_menu_keyboard(l10n))
-        await message.answer(l10n["onboarding_example_hint"])
-        return
+async def _preview_timezone(message, state, user_dao, zone, l10n):
+    # Release pending user writes before SQLite FSM writes in another session.
+    await user_dao.session.commit()
+    await state.update_data(pending_timezone=zone, timezone_confirmed=False)
+    builder = InlineKeyboardBuilder()
+    builder.button(text=l10n["confirm_save"], callback_data="timezone_apply")
+    builder.button(text=l10n["btn_cancel"], callback_data="cancel_wizard")
+    await message.answer(l10n["tz_preview"].format(zone=zone, time=datetime.now(resolve_timezone(zone)).strftime("%d.%m.%Y %H:%M")), reply_markup=builder.adjust(1).as_markup(), parse_mode=None)
 
-    async def _editor(text: str, markup) -> None:
-        await message.answer(text, reply_markup=markup)
 
-    async def _resend_menu() -> None:
-        await message.answer(l10n.get("main_menu_hint", "👇"), reply_markup=get_main_menu_keyboard(l10n))
+@router.callback_query(F.data == "timezone_apply")
+async def callback_timezone_apply(callback: CallbackQuery, state: FSMContext, user_dao: UserDAO, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any]) -> None:
+    data = await state.get_data()
+    zone = data.get("pending_timezone")
+    if not zone:
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    await state.update_data(timezone_confirmed=True, pending_timezone=None)
+    # Reuse the application/migration path without trusting client-supplied zones.
+    forwarded = callback.model_copy(update={"data": "set_tz_" + zone})
+    await callback_set_tz(forwarded, user_dao, user, l10n, state, reminder_dao)
 
-    await _render_tz_migration_offer(
-        _editor, _resend_menu, user=user, old_tz=old_tz, new_tz=resolved_tz, reminder_dao=reminder_dao, state=state, l10n=l10n
-    )
+
+@router.callback_query(F.data == "timezone_region")
+async def callback_timezone_region(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
+    await state.set_state(SettingsState.waiting_for_timezone)
+    await callback.message.answer(l10n["tz_region_prompt"])
+    await callback.answer()

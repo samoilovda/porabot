@@ -31,6 +31,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="reminders_completion")
 logger = logging.getLogger(__name__)
@@ -186,7 +187,7 @@ async def callback_wrapup_not_done(
         record_kwargs: dict[str, Any] = {}
         if is_fluid:
             try:
-                tz = pytz.timezone(user.timezone)
+                tz = resolve_timezone(user.timezone)
             except Exception:
                 tz = pytz.UTC
             record_kwargs["local_date"] = datetime.now(tz).date().isoformat()
@@ -274,7 +275,7 @@ async def callback_task_done(
             await callback.answer(l10n.get("already_done", "Already done ✅"))
             return
         try:
-            tz = pytz.timezone(user.timezone)
+            tz = resolve_timezone(user.timezone)
         except Exception:
             tz = pytz.UTC
         await habit_event_dao.record(

@@ -23,6 +23,7 @@ from bot.database.dao.base import BaseDAO
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, ReminderKind, is_habit_like
 from bot.utils.time_ext import local_day_bounds_utc, local_days_ago_utc
+from bot.utils.timezone import resolve_timezone
 
 # fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
 # containing them (e.g. "скидка 50%") must be treated as a literal, not a
@@ -728,7 +729,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         """
         days = max(1, int(days))
         try:
-            tz = pytz.timezone(user_tz_str)
+            tz = resolve_timezone(user_tz_str)
         except Exception:
             tz = pytz.UTC
 
@@ -835,7 +836,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             return False
 
         try:
-            tz = pytz.timezone(user_tz_str)
+            tz = resolve_timezone(user_tz_str)
         except Exception:
             tz = pytz.UTC
 
@@ -873,7 +874,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             return
 
         try:
-            tz = pytz.timezone(user_tz_str)
+            tz = resolve_timezone(user_tz_str)
         except Exception:
             tz = pytz.UTC
 

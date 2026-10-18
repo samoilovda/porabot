@@ -86,7 +86,7 @@ async def test_my_tasks_button_not_swallowed_by_settings_brief_time_state() -> N
         # The "no tasks" branch of menu.btn_my_tasks fired — proof dispatch
         # reached the menu router, not settings' brief-time text validator
         # (which would have replied with a "invalid format" error instead).
-        assert sent.text == l10n["no_tasks"]
+        assert l10n["no_tasks"] in sent.text
         # btn_my_tasks calls state.clear() — the stale settings wizard state
         # must not survive the menu button tap.
         assert await _shared_storage.get_state(key) is None
@@ -190,7 +190,7 @@ async def test_find_command_reaches_cmd_find_not_the_task_wizard() -> None:
         sent = mock_call.await_args.args[0]
         # cmd_find's own "nothing found" reply, not the unknown-command or
         # task-creation-prompt text.
-        assert sent.text == l10n["find_no_results"].format(query="milk")
+        assert l10n["find_no_results"].format(query="milk") in sent.text
     finally:
         await telegram_bot.session.close()
 
@@ -281,7 +281,7 @@ async def test_tasks_command_reaches_same_handler_as_the_button() -> None:
             )
 
         sent = mock_call.await_args.args[0]
-        assert sent.text == l10n["no_tasks"]
+        assert l10n["no_tasks"] in sent.text
         assert await _shared_storage.get_state(key) is None
     finally:
         await telegram_bot.session.close()
@@ -329,7 +329,8 @@ async def test_habits_command_reaches_the_habits_dashboard() -> None:
             )
 
         sent = mock_call.await_args.args[0]
-        assert l10n["habits_dashboard"] in sent.text
+        assert l10n["habits_daily_title"] in sent.text
+        assert l10n["habit_no_active"] in sent.text
     finally:
         await telegram_bot.session.close()
 

@@ -29,6 +29,7 @@ from bot.lexicon import get_l10n
 from bot.services.habit_pause import first_occurrence_at_or_after, is_paused
 from bot.services.notification_policy import notification_policy
 from bot.utils.time_ext import next_occurrence_utc, parse_hhmm, to_utc_aware
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 NAGGING_INTERVAL_MINUTES = 5
@@ -607,7 +608,7 @@ class SchedulerService:
 
     def _is_quiet_hours_now(self, user, now_utc: datetime, *, is_habit: bool = False) -> bool:
         try:
-            user_tz = pytz.timezone(user.timezone)
+            user_tz = resolve_timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
         now_local = now_utc.astimezone(user_tz)
@@ -631,7 +632,7 @@ class SchedulerService:
         (bot/utils/time_ext.py) already avoids the same way.
         """
         try:
-            user_tz = pytz.timezone(user.timezone)
+            user_tz = resolve_timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
         now_local_naive = now_utc.astimezone(user_tz).replace(tzinfo=None)
@@ -674,6 +675,22 @@ class SchedulerService:
                     # did) delete.
                     logger.info("Reminder %s pending delete — skipping.", reminder_id)
                     return
+                if (reminder.is_recurring and reminder.rrule_string and not is_nagging_execution
+                        and getattr(reminder, "completed_for_execution_time", None) is not None
+                        and reminder.completed_for_execution_time == reminder.execution_time):
+                    user = await UserDAO(session).get_by_id(reminder.user_id)
+                    if user is None or user.bot_blocked_at is not None:
+                        return
+                    next_run = next_occurrence_utc(reminder.rrule_string, reminder.rrule_dtstart or reminder.execution_time,
+                                                   user.timezone, reminder.execution_time)
+                    if next_run is not None:
+                        if is_habit_like(reminder):
+                            reminder.habit_active_due_at = reminder.execution_time
+                        reminder.execution_time = next_run
+                        reminder.completed_for_execution_time = None
+                        await session.commit()
+                        self.schedule_reminder(reminder.id,to_utc_aware(next_run),is_nagging=reminder.is_nagging)
+                    return
                 if is_nagging_execution and not reminder.is_nagging:
                     logger.info("Skipping stale nagging execution for reminder %s (nagging disabled).", reminder_id)
                     return
@@ -685,6 +702,8 @@ class SchedulerService:
                     return
 
                 now_utc = datetime.now(timezone.utc)
+                if reminder.is_fluid_habit and reminder.fluid_last_completed_date == datetime.now(resolve_timezone(user.timezone)).date().isoformat():
+                    return
                 if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_like(reminder)):
                     job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
                     resume_utc = self._next_quiet_end_utc(user, now_utc)

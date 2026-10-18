@@ -1,93 +1,153 @@
-/* 4.6: Porabot Mini App frontend — vanilla JS, no build step, no framework.
- *
- * Auth: every API call sends the raw Telegram.WebApp.initData string in the
- * X-Telegram-Init-Data header. The server (bot/services/miniapp.py's
- * validate_init_data, called from bot/services/webserver.py) is the only
- * place that verifies it — this file never trusts anything about "who the
- * user is" beyond what Telegram.WebApp itself reports for display purposes.
- *
- * Step 10 (2026-09-26 audit remediation): this used to be English-only
- * regardless of the language the user actually set for the bot (/language),
- * with no <html lang>, and a heatmap day's only way to see its numbers was
- * a hover title — unreachable on the touch-only Telegram mobile client this
- * is mostly opened from. Now: strings come from STRINGS[lang] below (lang
- * fetched from /api/miniapp/profile, the bot PROFILE's language — NOT
- * Telegram client's own locale, a different, unrelated setting), dates
- * format via Intl.DateTimeFormat, and a heatmap cell is a focusable,
- * keyboard-activatable button that shows its details in a real on-screen
- * element instead of only a title tooltip.
- */
+/* Profile language is display-only; the server authenticates every API request. */
 (function () {
   "use strict";
-
   var STRINGS = {
+    en: {
+      scoresTitle: "Habit strength",
+      heatmapTitle: "Recorded activity",
+      loading: "Loading…",
+      empty: "No active habits yet. Add one from Habits in the bot.",
+      noHistory: "No check-ins yet",
+      strength: "Strength",
+      explain:
+        "A smoothed score of recorded check-ins, not a completion percentage.",
+      history: "Recorded history",
+      done: "done",
+      missed: "missed or skipped",
+      streak: "Current streak",
+      best: "best",
+      noRecords: "No records",
+      open: "Open this app from inside Telegram.",
+      error: "Could not load this section.",
+      timeout: "The request took too long.",
+      auth: "Close this app and open it again from the bot to sign in.",
+      rate: "Please wait before trying again.",
+      retry: "Try again",
+      calendar: "Calendar",
+      list: "List of days",
+      previous: "Previous month",
+      next: "Next month",
+      date: "Date",
+      profileError:
+        "Profile language could not be loaded. Your data is still available.",
+    },
     ru: {
       scoresTitle: "Устойчивость привычек",
-      heatmapTitle: "Карта выполнения",
-      noHabits: "Пока нет активных привычек.",
-      openInTelegram: "Открой эту страницу внутри Telegram, чтобы увидеть свои данные.",
+      heatmapTitle: "Записанные отметки",
       loading: "Загрузка…",
-      failedToLoad: "Не удалось загрузить данные: ",
-      less: "Меньше",
-      more: "Больше",
-      habitMeta: function (habit) {
-        return habit.score + "% · 🔥 " + habit.streak_current + " (рекорд " + habit.streak_best + ")";
-      },
-      dayDetail: function (dateLabel, day) {
-        return dateLabel + ": выполнено " + day.done + " из " + day.total;
-      },
-      dayAriaLabel: function (dateLabel, day) {
-        return dateLabel + ", выполнено " + day.done + " из " + day.total;
-      },
+      empty: "Активных привычек пока нет. Добавь привычку в боте.",
+      noHistory: "Пока нет отметок",
+      strength: "Устойчивость",
+      explain:
+        "Сглаженная оценка по истории отметок, а не процент выполненного.",
+      history: "Записанная история",
+      done: "выполнено",
+      missed: "пропущено",
+      streak: "Текущая серия",
+      best: "рекорд",
+      noRecords: "Нет записей",
+      open: "Открой приложение из Telegram.",
+      error: "Не удалось загрузить этот раздел.",
+      timeout: "Слишком долго ждём ответа.",
+      auth: "Закрой приложение и открой его заново из бота, чтобы войти.",
+      rate: "Подожди перед следующей попыткой.",
+      retry: "Повторить",
+      calendar: "Календарь",
+      list: "Список дней",
+      previous: "Предыдущий месяц",
+      next: "Следующий месяц",
+      date: "Дата",
+      profileError:
+        "Не удалось загрузить язык профиля. Доступные данные показаны ниже.",
     },
-    en: {
-      scoresTitle: "Habit scores",
-      heatmapTitle: "Completion heatmap",
-      noHabits: "No active habits yet.",
-      openInTelegram: "Open this page from inside Telegram to see your data.",
-      loading: "Loading…",
-      failedToLoad: "Failed to load data: ",
-      less: "Less",
-      more: "More",
-      habitMeta: function (habit) {
-        return habit.score + "% · 🔥 " + habit.streak_current + " (best " + habit.streak_best + ")";
-      },
-      dayDetail: function (dateLabel, day) {
-        return dateLabel + ": " + day.done + "/" + day.total + " done";
-      },
-      dayAriaLabel: function (dateLabel, day) {
-        return dateLabel + ": " + day.done + " of " + day.total + " done";
-      },
+    es: {
+      scoresTitle: "Constancia de los hábitos",
+      heatmapTitle: "Actividad registrada",
+      loading: "Cargando…",
+      empty: "Aún no hay hábitos activos. Añade uno desde el bot.",
+      noHistory: "Aún no hay registros",
+      strength: "Constancia",
+      explain:
+        "Una puntuación suavizada del historial, no un porcentaje de cumplimiento.",
+      history: "Historial registrado",
+      done: "hecho",
+      missed: "omitido",
+      streak: "Racha actual",
+      best: "récord",
+      noRecords: "Sin registros",
+      open: "Abre esta aplicación desde Telegram.",
+      error: "No se pudo cargar esta sección.",
+      timeout: "La solicitud tardó demasiado.",
+      auth: "Cierra la aplicación y ábrela de nuevo desde el bot para entrar.",
+      rate: "Espera antes de volver a intentarlo.",
+      retry: "Reintentar",
+      calendar: "Calendario",
+      list: "Lista de días",
+      previous: "Mes anterior",
+      next: "Mes siguiente",
+      date: "Fecha",
+      profileError:
+        "No se pudo cargar el idioma del perfil. Los datos disponibles se muestran abajo.",
     },
   };
-
-  var DEFAULT_LANG = "en";
-  var lang = DEFAULT_LANG;
-  var t = STRINGS[DEFAULT_LANG];
-  var dateFormatter = new Intl.DateTimeFormat(DEFAULT_LANG, { dateStyle: "medium" });
-
-  function applyLanguage(languageCode) {
-    lang = Object.prototype.hasOwnProperty.call(STRINGS, languageCode) ? languageCode : DEFAULT_LANG;
-    t = STRINGS[lang];
-    dateFormatter = new Intl.DateTimeFormat(lang, { dateStyle: "medium" });
-    document.documentElement.lang = lang;
-    document.getElementById("scores-title").textContent = t.scoresTitle;
-    document.getElementById("heatmap-title").textContent = t.heatmapTitle;
-  }
-
   var tg = window.Telegram && window.Telegram.WebApp;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    applyThemeParams(tg.themeParams || {});
-    if (tg.onEvent) {
-      tg.onEvent("themeChanged", function () {
-        applyThemeParams(tg.themeParams || {});
-      });
-    }
+  var preliminary =
+    tg &&
+    tg.initDataUnsafe &&
+    tg.initDataUnsafe.user &&
+    tg.initDataUnsafe.user.language_code;
+  var lang = STRINGS[preliminary] ? preliminary : "en";
+  var t = STRINGS[lang];
+  var payloads = {},
+    states = {},
+    controllers = {},
+    generations = {},
+    errors = {},
+    retryAfter = {};
+  var month = null,
+    selectedDate = null,
+    view = "calendar",
+    expired = false;
+  function el(id) {
+    return document.getElementById(id);
   }
-
-  function applyThemeParams(theme) {
+  function node(tag, text, className) {
+    var n = document.createElement(tag);
+    if (text !== undefined) n.textContent = text;
+    if (className) n.className = className;
+    return n;
+  }
+  function button(text, onClick) {
+    var b = node("button", text);
+    b.type = "button";
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function applyLanguage(value) {
+    lang = STRINGS[value] ? value : lang;
+    t = STRINGS[lang];
+    document.documentElement.lang = lang;
+    el("scores-title").textContent = t.scoresTitle;
+    el("heatmap-title").textContent = t.heatmapTitle;
+    el("score-explanation").textContent = t.explain;
+    el("calendar-view").textContent = t.calendar;
+    el("list-view").textContent = t.list;
+    el("month-prev").setAttribute("aria-label", t.previous);
+    el("month-next").setAttribute("aria-label", t.next);
+    Object.keys(states).forEach(renderStatus);
+    if (payloads.scores) renderScores();
+    if (payloads.heatmap) renderCalendar();
+  }
+  function theme(params) {
+    if (/^#[0-9a-f]{6}$/i.test(params.bg_color || "")) {
+      var hex = params.bg_color.slice(1);
+      var brightness =
+        0.299 * parseInt(hex.slice(0, 2), 16) +
+        0.587 * parseInt(hex.slice(2, 4), 16) +
+        0.114 * parseInt(hex.slice(4, 6), 16);
+      document.documentElement.dataset.theme =
+        brightness < 128 ? "dark" : "light";
+    }
     var map = {
       bg_color: "--bg",
       text_color: "--text",
@@ -96,155 +156,370 @@
       button_color: "--button",
       button_text_color: "--button-text",
     };
-    var root = document.documentElement.style;
-    Object.keys(map).forEach(function (key) {
-      if (theme[key]) {
-        root.setProperty(map[key], theme[key]);
-      }
+    Object.keys(map).forEach(function (k) {
+      if (params[k])
+        document.documentElement.style.setProperty(map[k], params[k]);
     });
   }
-
-  function initData() {
-    return tg ? tg.initData || "" : "";
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    theme(tg.themeParams || {});
+    if (tg.onEvent)
+      tg.onEvent("themeChanged", function () {
+        theme(tg.themeParams || {});
+      });
   }
-
-  function setStatus(text, isError) {
-    var el = document.getElementById("status");
-    el.textContent = text || "";
-    el.className = "status" + (isError ? " error" : "");
-  }
-
-  function apiFetch(path) {
-    return fetch(path, {
-      headers: { "X-Telegram-Init-Data": initData() },
-    }).then(function (resp) {
-      if (!resp.ok) {
-        throw new Error("HTTP " + resp.status);
-      }
-      return resp.json();
-    });
-  }
-
-  function renderScores(payload) {
-    var container = document.getElementById("scores");
-    container.innerHTML = "";
-    if (!payload.habits.length) {
-      container.textContent = t.noHabits;
+  function renderStatus(section) {
+    var target = el(section + "-status");
+    target.replaceChildren();
+    target.setAttribute(
+      "aria-busy",
+      states[section] === "loading" ? "true" : "false",
+    );
+    if (states[section] === "loading") {
+      target.textContent = t.loading;
       return;
     }
-    payload.habits.forEach(function (habit) {
-      var card = document.createElement("div");
-      card.className = "habit-card";
-
-      var name = document.createElement("div");
-      name.className = "habit-name";
-      name.textContent = habit.text;
-      card.appendChild(name);
-
-      var track = document.createElement("div");
-      track.className = "score-bar-track";
-      var fill = document.createElement("div");
-      fill.className = "score-bar-fill";
+    if (states[section] !== "error") return;
+    var error = errors[section] || {};
+    var text =
+      error.status === 401
+        ? t.auth
+        : error.status === 429
+          ? t.rate
+          : error.timeout
+            ? t.timeout
+            : section === "profile"
+              ? t.profileError
+              : t.error;
+    target.appendChild(node("p", text));
+    if (error.status !== 401 && !expired) {
+      var retry = button(t.retry, function () {
+        if (Date.now() >= (retryAfter[section] || 0)) load(section);
+      });
+      retry.disabled = Date.now() < (retryAfter[section] || 0);
+      if (retry.disabled) {
+        var wait = Math.max(0, retryAfter[section] - Date.now());
+        setTimeout(function () {
+          if (!expired && retry.isConnected) retry.disabled = false;
+        }, wait);
+      }
+      target.appendChild(retry);
+    }
+  }
+  async function request(section, path) {
+    if (controllers[section]) controllers[section].abort();
+    var controller = new AbortController();
+    controllers[section] = controller;
+    var timedOut = false;
+    var timer = setTimeout(function () {
+      timedOut = true;
+      controller.abort();
+    }, 10000);
+    try {
+      var response = await fetch(path, {
+        headers: { "X-Telegram-Init-Data": tg.initData },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        var err = new Error("request failed");
+        err.status = response.status;
+        if (response.status === 429) {
+          var raw = response.headers.get("Retry-After");
+          var seconds = Number(raw);
+          retryAfter[section] =
+            Number.isFinite(seconds) && raw
+              ? Date.now() + Math.max(1, seconds) * 1000
+              : Math.max(Date.now() + 1000, Date.parse(raw) || 0);
+        }
+        throw err;
+      }
+      return await response.json();
+    } catch (error) {
+      if (timedOut) error.timeout = true;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function load(section) {
+    if (expired || Date.now() < (retryAfter[section] || 0)) return;
+    var generation = (generations[section] || 0) + 1;
+    generations[section] = generation;
+    states[section] = "loading";
+    renderStatus(section);
+    var paths = {
+      profile: "/api/miniapp/profile",
+      scores: "/api/miniapp/scores",
+      heatmap: "/api/miniapp/heatmap?days=365",
+    };
+    try {
+      var data = await request(section, paths[section]);
+      if (generation !== generations[section] || expired) return;
+      payloads[section] = data;
+      states[section] = "ready";
+      if (section === "profile") applyLanguage(data.language);
+      if (section === "scores") renderScores();
+      if (section === "heatmap") {
+        if (!month) month = data.end.slice(0, 7);
+        if (!selectedDate) selectedDate = data.end;
+        renderCalendar();
+      }
+    } catch (error) {
+      if (generation !== generations[section]) return;
+      if (error.status === 401) expired = true;
+      errors[section] = { status: error.status, timeout: !!error.timeout };
+      states[section] = "error";
+    }
+    renderStatus(section);
+  }
+  function renderScores() {
+    var container = el("scores");
+    container.replaceChildren();
+    var habits = payloads.scores.habits;
+    if (!habits.length) {
+      container.textContent = t.empty;
+      return;
+    }
+    habits.forEach(function (habit) {
+      var card = node("article", undefined, "habit-card");
+      card.appendChild(node("h3", habit.text, "habit-name"));
+      var hasHistory =
+        habit.history_count !== undefined
+          ? habit.history_count > 0
+          : habit.score > 0 || habit.streak_best > 0;
+      card.appendChild(
+        node(
+          "p",
+          hasHistory ? t.strength + ": " + habit.score + "/100" : t.noHistory,
+        ),
+      );
+      var bar = node("div", undefined, "score-bar-track");
+      bar.setAttribute("role", "meter");
+      bar.setAttribute("aria-label", t.strength);
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      bar.setAttribute("aria-valuenow", String(habit.score));
+      var fill = node("div", undefined, "score-bar-fill");
       fill.style.width = Math.max(0, Math.min(100, habit.score)) + "%";
-      track.appendChild(fill);
-      card.appendChild(track);
-
-      var meta = document.createElement("div");
-      meta.className = "habit-meta";
-      meta.textContent = t.habitMeta(habit);
-      card.appendChild(meta);
-
+      bar.appendChild(fill);
+      card.appendChild(bar);
+      card.appendChild(
+        node(
+          "p",
+          t.streak +
+            ": " +
+            habit.streak_current +
+            " · " +
+            t.best +
+            ": " +
+            habit.streak_best,
+          "habit-meta",
+        ),
+      );
+      if (habit.history_count !== undefined && hasHistory)
+        card.appendChild(
+          node(
+            "p",
+            t.history +
+              ": " +
+              habit.done_count +
+              " " +
+              t.done +
+              ", " +
+              habit.missed_count +
+              " " +
+              t.missed,
+            "habit-meta",
+          ),
+        );
       container.appendChild(card);
     });
   }
-
-  function heatLevel(day) {
-    if (day.total === 0) return 0;
-    var ratio = day.done / day.total;
-    if (ratio <= 0) return 1;
-    if (ratio < 0.5) return 2;
-    if (ratio < 1) return 3;
-    return 4;
+  function dateLabel(value) {
+    return new Intl.DateTimeFormat(lang, {
+      dateStyle: "long",
+      timeZone: "UTC",
+    }).format(new Date(value + "T12:00:00Z"));
   }
-
-  function showDayDetail(day) {
-    var dateLabel = dateFormatter.format(new Date(day.date + "T00:00:00"));
-    var detail = document.getElementById("heatmap-detail");
-    detail.textContent = t.dayDetail(dateLabel, day);
-    // Step 10: move focus to the detail element so a keyboard/screen-reader
-    // user actually notices it changed — a hover title never reached them
-    // in the first place, and a text update alone is easy to miss.
-    detail.focus();
+  function details(day) {
+    return (
+      dateLabel(day.date) +
+      ": " +
+      (day.total
+        ? day.done +
+          " " +
+          t.done +
+          ", " +
+          (day.missed + day.not_today) +
+          " " +
+          t.missed
+        : t.noRecords)
+    );
   }
-
-  function renderHeatmap(payload) {
-    var container = document.getElementById("heatmap");
-    container.innerHTML = "";
-    payload.days.forEach(function (day) {
-      var cell = document.createElement("div");
-      cell.className = "heat-cell";
-      cell.dataset.level = String(heatLevel(day));
-      // Step 10: a day's details used to be reachable only via a hover
-      // `title` — unreachable on a touch-only client (Telegram mobile,
-      // where this Mini App mostly opens) and to keyboard/screen-reader
-      // users everywhere. Now a real, focusable, Enter/Space-activatable
-      // control that shows its details in an on-screen element.
-      var dateLabel = dateFormatter.format(new Date(day.date + "T00:00:00"));
-      cell.setAttribute("role", "button");
-      cell.setAttribute("tabindex", "0");
-      cell.setAttribute("aria-label", t.dayAriaLabel(dateLabel, day));
-      cell.addEventListener("click", function () {
-        showDayDetail(day);
-      });
-      cell.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
-          event.preventDefault();
-          showDayDetail(day);
-        }
-      });
-      container.appendChild(cell);
-    });
-
-    var legend = document.getElementById("heatmap-legend");
-    legend.innerHTML = "";
-    var lessLabel = document.createElement("span");
-    lessLabel.textContent = t.less;
-    legend.appendChild(lessLabel);
-    [0, 1, 2, 3, 4].forEach(function (level) {
-      var swatch = document.createElement("div");
-      swatch.className = "heat-cell";
-      swatch.dataset.level = String(level);
-      legend.appendChild(swatch);
-    });
-    var moreLabel = document.createElement("span");
-    moreLabel.textContent = t.more;
-    legend.appendChild(moreLabel);
+  function selectDay(day) {
+    selectedDate = day.date;
+    el("heatmap-detail").textContent = details(day);
+    Array.from(el("heatmap").querySelectorAll("button[data-date]")).forEach(
+      function (b) {
+        b.tabIndex = b.dataset.date === selectedDate ? 0 : -1;
+        b.setAttribute("aria-pressed", String(b.dataset.date === selectedDate));
+      },
+    );
   }
-
-  function boot() {
-    if (!initData()) {
-      // No initData at all means we can't authenticate to fetch the bot
-      // profile's language either — falls back to DEFAULT_LANG, same as
-      // opening this page outside Telegram always has.
-      setStatus(t.openInTelegram, true);
+  function changeMonth(delta) {
+    var date = new Date(month + "-01T12:00:00Z");
+    date.setUTCMonth(date.getUTCMonth() + delta);
+    var candidate = date.toISOString().slice(0, 7),
+      data = payloads.heatmap;
+    if (candidate < data.start.slice(0, 7) || candidate > data.end.slice(0, 7))
       return;
-    }
-    setStatus(t.loading);
-    Promise.all([
-      apiFetch("/api/miniapp/profile"),
-      apiFetch("/api/miniapp/scores"),
-      apiFetch("/api/miniapp/heatmap?days=90"),
-    ])
-      .then(function (results) {
-        applyLanguage(results[0].language);
-        renderScores(results[1]);
-        renderHeatmap(results[2]);
-        setStatus("");
-      })
-      .catch(function (err) {
-        setStatus(t.failedToLoad + err.message, true);
-      });
+    month = candidate;
+    selectedDate = month + "-01";
+    if (selectedDate < data.start) selectedDate = data.start;
+    renderCalendar();
   }
-
-  boot();
+  function renderCalendar() {
+    var data = payloads.heatmap;
+    el("month-label").textContent = new Intl.DateTimeFormat(lang, {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(month + "-01T12:00:00Z"));
+    el("month-prev").disabled = month <= data.start.slice(0, 7);
+    el("month-next").disabled = month >= data.end.slice(0, 7);
+    el("calendar-view").setAttribute(
+      "aria-pressed",
+      String(view === "calendar"),
+    );
+    el("list-view").setAttribute("aria-pressed", String(view === "list"));
+    var grid = el("heatmap");
+    grid.replaceChildren();
+    grid.className = view === "list" ? "days-list" : "calendar-grid";
+    var days = {};
+    data.days.forEach(function (d) {
+      days[d.date] = d;
+    });
+    var first = new Date(month + "-01T12:00:00Z"),
+      weekday = (first.getUTCDay() + 6) % 7;
+    var count = new Date(
+      first.getUTCFullYear(),
+      first.getUTCMonth() + 1,
+      0,
+    ).getDate();
+    if (view === "calendar") {
+      for (var k = 0; k < 7; k++) {
+        var label = new Date(Date.UTC(2026, 0, 5 + k, 12));
+        grid.appendChild(
+          node(
+            "span",
+            new Intl.DateTimeFormat(lang, {
+              weekday: "short",
+              timeZone: "UTC",
+            }).format(label),
+            "weekday",
+          ),
+        );
+      }
+      for (var blank = 0; blank < weekday; blank++)
+        grid.appendChild(node("span", ""));
+    }
+    if (!selectedDate || selectedDate.slice(0, 7) !== month)
+      selectedDate = month + "-01";
+    for (var index = 1; index <= count; index++) {
+      var key = month + "-" + String(index).padStart(2, "0");
+      var day = days[key] || {
+        date: key,
+        done: 0,
+        missed: 0,
+        not_today: 0,
+        total: 0,
+      };
+      (function (item, num) {
+        var cell = button(
+          view === "list" ? details(item) : String(num),
+          function () {
+            selectDay(item);
+          },
+        );
+        cell.className = "heat-cell";
+        cell.dataset.date = item.date;
+        cell.disabled = item.date < data.start || item.date > data.end;
+        cell.dataset.level = String(
+          item.total === 0
+            ? 0
+            : item.done === 0
+              ? 1
+              : item.done < item.total
+                ? 2
+                : 3,
+        );
+        cell.setAttribute("aria-label", details(item));
+        cell.setAttribute("aria-pressed", String(item.date === selectedDate));
+        cell.setAttribute("tabindex", item.date === selectedDate ? "0" : "-1");
+        cell.addEventListener("keydown", function (event) {
+          var shifts = {
+            ArrowLeft: -1,
+            ArrowRight: 1,
+            ArrowUp: -7,
+            ArrowDown: 7,
+          };
+          if (shifts[event.key] === undefined) return;
+          event.preventDefault();
+          var next = new Date(item.date + "T12:00:00Z");
+          next.setUTCDate(next.getUTCDate() + shifts[event.key]);
+          var target = next.toISOString().slice(0, 10);
+          if (target < data.start || target > data.end) return;
+          if (target.slice(0, 7) !== month) {
+            changeMonth(target < item.date ? -1 : 1);
+          }
+          var nextCell = grid.querySelector(
+            'button[data-date="' + target + '"]',
+          );
+          if (nextCell) {
+            selectDay(
+              days[target] || {
+                date: target,
+                done: 0,
+                missed: 0,
+                not_today: 0,
+                total: 0,
+              },
+            );
+            nextCell.focus();
+          }
+        });
+        grid.appendChild(cell);
+      })(day, index);
+    }
+    el("heatmap-legend").textContent =
+      t.noRecords + " · " + t.done + " · " + t.missed;
+  }
+  el("month-prev").addEventListener("click", function () {
+    changeMonth(-1);
+  });
+  el("month-next").addEventListener("click", function () {
+    changeMonth(1);
+  });
+  el("calendar-view").addEventListener("click", function () {
+    view = "calendar";
+    if (payloads.heatmap) renderCalendar();
+  });
+  el("list-view").addEventListener("click", function () {
+    view = "list";
+    if (payloads.heatmap) renderCalendar();
+  });
+  window.addEventListener("pagehide", function () {
+    Object.keys(controllers).forEach(function (section) {
+      generations[section] = (generations[section] || 0) + 1;
+      controllers[section].abort();
+    });
+  });
+  applyLanguage(lang);
+  if (!tg || !tg.initData) {
+    el("status").textContent = t.open;
+    return;
+  }
+  ["profile", "scores", "heatmap"].forEach(load);
 })();

@@ -75,6 +75,10 @@ class UserDataService:
         # habit_events is a FK child of reminders, so it goes first.
         await self.habit_event_dao.delete_for_user(user.id)
         await self.reminder_dao.delete_for_user(user.id)
+        from sqlalchemy import delete
+
+        from bot.database.models import UiContext
+        await self.reminder_dao.session.execute(delete(UiContext).where(UiContext.user_id == user.id))
         _apply_defaults(user)
 
         await self.reminder_dao.session.flush()

@@ -57,19 +57,24 @@ async def test_manual_timezone_entry_with_no_habits_resends_main_menu() -> None:
     l10n = get_l10n("en")
 
     user = SimpleNamespace(id=1, timezone="Europe/Moscow")
-    user_dao = SimpleNamespace(update_timezone=AsyncMock())
+    user_dao = SimpleNamespace(update_timezone=AsyncMock(), session=SimpleNamespace(commit=AsyncMock()))
     reminder_dao = SimpleNamespace(get_active_habits=AsyncMock(return_value=[]))
-    state = SimpleNamespace(
-        get_data=AsyncMock(return_value={}),
-        clear=AsyncMock(),
-        update_data=AsyncMock(),
-    )
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1,chat_id=1,user_id=1))
     message = SimpleNamespace(text="+3", from_user=SimpleNamespace(first_name="Bob"), answer=AsyncMock())
 
     await state_set_manual_timezone(
         message=message, state=state, user=user, user_dao=user_dao, l10n=l10n, reminder_dao=reminder_dao
     )
 
+    user_dao.update_timezone.assert_not_awaited()
+    message.edit_text = AsyncMock()
+    from bot.handlers.settings.locale_time import callback_timezone_apply
+    cb = SimpleNamespace(data="timezone_apply",message=message,from_user=SimpleNamespace(first_name="Bob"),answer=AsyncMock())
+    cb.model_copy = lambda update: SimpleNamespace(data=update["data"],message=message,from_user=cb.from_user,answer=cb.answer)
+    await callback_timezone_apply(cb,state,user_dao,user,reminder_dao,l10n)
     markups = _reply_markup_calls(message.answer)
     assert any(isinstance(m, ReplyKeyboardMarkup) for m in markups), (
         "no message carried the persistent bottom menu back after a no-habits timezone change"

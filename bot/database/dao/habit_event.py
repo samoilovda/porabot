@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from bot.database.dao.base import BaseDAO
 from bot.database.models import HabitEvent
+from bot.utils.timezone import resolve_timezone
 
 
 def cycle_key_for_fixed(due_at_utc_naive: datetime) -> str:
@@ -44,7 +45,7 @@ class HabitEventDAO(BaseDAO[HabitEvent]):
                 due_at_utc_naive = due_at_utc_naive.astimezone(timezone.utc).replace(tzinfo=None)
             cycle_key = cycle_key_for_fixed(due_at_utc_naive)
             try:
-                tz = pytz.timezone(user_tz)
+                tz = resolve_timezone(user_tz)
             except Exception:
                 tz = pytz.UTC
             local_dt = due_at_utc_naive.replace(tzinfo=timezone.utc).astimezone(tz)

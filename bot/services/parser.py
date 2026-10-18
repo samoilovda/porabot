@@ -24,8 +24,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import dateparser.search
-import pytz
 from natasha import DatesExtractor, MorphVocab
+
+from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,7 @@ class InputParser:
             elif has_am and hour == 12:
                 period_hour = 0
 
-        tz_obj = pytz.timezone(timezone)
+        tz_obj = resolve_timezone(timezone)
         dt = tz_obj.localize(datetime(
             year=now.year,
             month=now.month,
@@ -323,7 +324,7 @@ class InputParser:
 
     def _parse_sync(self, text: str, timezone: str) -> ParsedInput:
         """Synchronous parse pipeline. Must be called via run_in_executor only."""
-        logger.debug("Parser: text=%r timezone=%s", text, timezone)
+        logger.debug("Parser: input_length=%s timezone=%s", len(text), timezone)
 
         # Stage 1 — heuristics
         normalized_text = self._apply_heuristics(text)
@@ -376,7 +377,7 @@ class InputParser:
         # Bound-check keeps only matches landing in a plausible reminder
         # window; an implausible first match is skipped in favor of the next
         # candidate rather than accepted outright.
-        now_local = datetime.now(pytz.timezone(timezone))
+        now_local = datetime.now(resolve_timezone(timezone))
         min_year, max_year = now_local.year, now_local.year + 5
         dp_matches = [(s, dt) for s, dt in (dp_matches or []) if min_year <= dt.year <= max_year]
 
@@ -435,7 +436,7 @@ class InputParser:
 
         # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
         if not parsed_datetime:
-            now = datetime.now(pytz.timezone(timezone))
+            now = datetime.now(resolve_timezone(timezone))
             hour_pattern = re.compile(
                 r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?"
                 # 2: consume a trailing bare hour-unit word ("часа"/"hours"/
@@ -479,7 +480,7 @@ class InputParser:
 
         # Stage 4b — regex fallback: "через 15 минут", "через 2 часа", "через час", "через 2 дня"
         if not parsed_datetime:
-            now = datetime.now(pytz.timezone(timezone))
+            now = datetime.now(resolve_timezone(timezone))
             duration_match = re.search(
                 # A-06: a leading \b on the preposition, and a trailing
                 # (?!\w) on the unit word, stop this from firing on plain
@@ -508,7 +509,7 @@ class InputParser:
 
         # Stage 4c — regex fallback: "в 23 часа"
         if not parsed_datetime:
-            now = datetime.now(pytz.timezone(timezone))
+            now = datetime.now(resolve_timezone(timezone))
             hour_match = re.search(
                 r"(?:в|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?\s*"
                 r"(?:de\s+la\s+)?(утра|дня|послеобеденно|вечера|ночи|часов?|mañana|tarde|noche)?",
@@ -546,7 +547,7 @@ class InputParser:
                 clean_text = clean_text.replace(value, "", 1)
         clean_text = " ".join(clean_text.split())
 
-        logger.debug("Parser: clean_text=%r parsed_datetime=%s", clean_text, parsed_datetime)
+        logger.debug("Parser: has_datetime=%s", parsed_datetime is not None)
         return ParsedInput(
             clean_text=clean_text,
             parsed_datetime=parsed_datetime,

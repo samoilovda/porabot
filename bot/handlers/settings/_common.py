@@ -12,10 +12,10 @@ it.
 from datetime import datetime
 from typing import Any
 
-import pytz
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.models import User
+from bot.utils.timezone import resolve_timezone
 
 
 class SettingsState(StatesGroup):
@@ -29,7 +29,7 @@ class SettingsState(StatesGroup):
 def _format_tz_display_label(tz_name: str) -> str:
     """Friendly timezone label with current UTC offset."""
     try:
-        tz = pytz.timezone(tz_name)
+        tz = resolve_timezone(tz_name)
         now_local = datetime.now(tz)
         raw = now_local.strftime("%z")  # +HHMM
         if raw and len(raw) == 5:

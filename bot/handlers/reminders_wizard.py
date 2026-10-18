@@ -6,7 +6,9 @@ docstring for the full module family and why).
 """
 
 import logging
+import secrets
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytz
@@ -14,6 +16,7 @@ from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.exc import OperationalError
 
 from bot.database.dao.reminder import ReminderDAO
@@ -33,6 +36,7 @@ from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown
 from bot.utils.time_ext import local_time_tomorrow
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="reminders_wizard")
 parser = InputParser()
@@ -132,6 +136,11 @@ def _reminder_id_from_card(replied: Message | None) -> int | None:
     for row in markup.inline_keyboard:
         for button in row:
             data = button.callback_data or ""
+            if data.startswith("ux:"):
+                try:
+                    return int(data.split(":")[4])
+                except (ValueError, IndexError):
+                    continue
             for prefix in _CARD_ID_PREFIXES:
                 if data.startswith(prefix):
                     return _parse_id_suffix(data, prefix)
@@ -179,6 +188,10 @@ async def handle_reply_to_card(
         edit_reminder_id=reminder.id, text=reminder.reminder_text,
         tags=reminder.tags, priority=reminder.priority,
     )
+    if getattr(reminder, "is_recurring", False):
+        await state.update_data(scope_candidate={"time": result.parsed_datetime.isoformat() if result.parsed_datetime else None, "date_only": bool(getattr(result, "date_only", False)), "confidence": float(getattr(result, "confidence", 0))})
+        await _show_scope(message, state, reminder, l10n)
+        return
     if not result.parsed_datetime:
         # Ambiguous: ask for the time of THIS task, never start a new one.
         await state.set_state(ReminderWizard.choosing_time)
@@ -335,7 +348,7 @@ async def callback_time_selected(
     """Resolve the chosen time option and persist the reminder."""
     data_str = callback.data
     try:
-        tz = pytz.timezone(user.timezone)
+        tz = resolve_timezone(user.timezone)
     except Exception:
         tz = pytz.UTC
     now = datetime.now(tz)
@@ -443,9 +456,59 @@ async def callback_edit_edit(
         tags=reminder.tags,
         priority=reminder.priority,
     )
+    await state.update_data(is_snooze_mode=False, series_confirmed=False, scope_candidate=None)
+    if getattr(reminder, "is_recurring", False):
+        await _show_scope(callback.message, state, reminder, l10n)
+        await callback.answer()
+        return
     await callback.message.edit_text(
         l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
         reply_markup=get_time_selection_keyboard(user.timezone, l10n),
     )
     await callback.answer()
 
+
+
+async def _show_scope(message, state, reminder, l10n):
+    await state.set_state(ReminderWizard.choosing_scope)
+    builder = InlineKeyboardBuilder()
+    nonce=secrets.token_hex(4)
+    await state.update_data(scope_nonce=nonce)
+    builder.button(text=l10n["scope_one"], callback_data=f"edit_scope:{nonce}:one")
+    builder.button(text=l10n["scope_all"], callback_data=f"edit_scope:{nonce}:all")
+    builder.button(text=l10n["btn_cancel"], callback_data="cancel_wizard")
+    await message.answer(l10n["scope_prompt"].format(text=reminder.reminder_text), reply_markup=builder.adjust(1).as_markup(), parse_mode=None)
+
+
+@router.callback_query(ReminderWizard.choosing_scope, F.data.startswith("edit_scope:"))
+async def callback_edit_scope(callback: CallbackQuery, state: FSMContext, user: User, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]) -> None:
+    data = await state.get_data()
+    parts=callback.data.split(":")
+    if len(parts)!=3 or parts[1]!=data.get("scope_nonce") or parts[2] not in {"one","all"}:
+        return await callback.answer(l10n["invalid_action"],show_alert=True)
+    await state.update_data(scope_nonce=None)
+    reminder = await reminder_dao.get_owned(data.get("edit_reminder_id"), user.id)
+    if not reminder:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+    await state.update_data(is_snooze_mode=parts[2] == "one", series_confirmed=False)
+    candidate = data.get("scope_candidate")
+    await state.set_state(ReminderWizard.choosing_time)
+    if candidate and candidate.get("time"):
+        result = SimpleNamespace(parsed_datetime=datetime.fromisoformat(candidate["time"]), date_only=candidate["date_only"], confidence=candidate["confidence"])
+        await _resolve_time_and_respond(callback.message, state, user, l10n, result, reminder_dao, scheduler_service, reminder.reminder_text)
+    else:
+        await callback.message.answer(l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)), reply_markup=get_time_selection_keyboard(user.timezone, l10n))
+    await callback.answer()
+
+
+@router.callback_query(ReminderWizard.confirming_schedule, F.data.startswith("series_confirm:"))
+async def callback_series_confirm(callback: CallbackQuery, state: FSMContext, user: User, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]) -> None:
+    data=await state.get_data()
+    if callback.data != f"series_confirm:{data.get('series_nonce')}":
+        return await callback.answer(l10n["invalid_action"],show_alert=True)
+    task=await reminder_dao.get_owned(data.get("edit_reminder_id"),user.id)
+    if not task or task.rrule_string!=data.get("series_rule") or user.timezone!=data.get("series_zone"):
+        return await callback.answer(l10n["invalid_action"],show_alert=True)
+    await state.update_data(series_confirmed=True,series_nonce=None)
+    await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
+    await callback.answer()

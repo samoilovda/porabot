@@ -402,7 +402,8 @@ async def main() -> None:
     # deploy recreating the container means that happens routinely. See
     # bot/services/fsm_storage.py's module docstring.
     fsm_storage = SQLAlchemyFSMStorage(session_pool)
-    dp = Dispatcher(storage=fsm_storage)
+    from aiogram.fsm.storage.memory import SimpleEventIsolation
+    dp = Dispatcher(storage=fsm_storage,events_isolation=SimpleEventIsolation())
     # 1.2: without this, an exception a handler doesn't catch just logs and
     # goes silent for the user — see handle_dispatcher_error's docstring.
     dp.errors.register(handle_dispatcher_error)
@@ -500,6 +501,8 @@ async def main() -> None:
     rate_limit_middleware = RateLimitMiddleware()
     dp.update.middleware(rate_limit_middleware)
     dp.update.middleware(DatabaseMiddleware(session_pool=session_pool))
+    from bot.middlewares.notification_offer import NotificationOfferMiddleware
+    dp.update.middleware(NotificationOfferMiddleware())
     # 3.1: RateLimitMiddleware's per-user hit dict never dropped an entry on
     # its own — a user who sent a handful of messages and never returned
     # left a permanent entry behind. Same cadence as cleanup_stale_timers.

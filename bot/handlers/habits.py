@@ -38,11 +38,14 @@ from bot.utils.pagination import limit_items, preview_line
 from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import (
     format_time,
+    is_clock_input,
+    local_time_on_date,
     local_time_today_strict,
     next_occurrence_utc,
     to_utc_aware,
     to_utc_naive,
 )
+from bot.utils.timezone import resolve_timezone
 
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
@@ -55,6 +58,7 @@ _HABIT_LIST_LIMIT = 25
 class HabitState(StatesGroup):
     waiting_for_name = State()
     waiting_for_time = State()
+    confirming_time = State()
     waiting_for_fluid_name = State()
     waiting_for_fluid_time = State()
 
@@ -124,7 +128,7 @@ async def _schedule_fluid_habit_for_today(
     hhmm: str,
 ) -> None:
     try:
-        user_tz = pytz.timezone(user.timezone)
+        user_tz = resolve_timezone(user.timezone)
     except Exception:
         user_tz = pytz.UTC
 
@@ -325,7 +329,6 @@ async def state_habit_time(
         return
 
     data = await state.get_data()
-    habit_text = data.get("habit_text", l10n["habit_default_name"])
 
     parser = InputParser()
     try:
@@ -346,8 +349,56 @@ async def state_habit_time(
         await message.answer(l10n["habit_time_retry"])
         return
 
+    if getattr(result, "date_only", False):
+        day = result.parsed_datetime.date().isoformat()
+        await state.update_data(habit_start_date=day)
+        await message.answer(l10n["habit_choose_hour"].format(date=day))
+        return
+    selected_time = result.parsed_datetime
+    if data.get("habit_start_date") and is_clock_input(message.text):
+        local = selected_time.astimezone(resolve_timezone(user.timezone)) if selected_time.tzinfo else selected_time
+        selected_time = local_time_on_date(user.timezone, date.fromisoformat(data["habit_start_date"]), local.hour, local.minute)
+    needs_confirmation = (
+        float(getattr(result,"confidence",1)) < 0.7
+        or getattr(result,"rrule_string",None) not in {None,"FREQ=DAILY"}
+        or (not is_clock_input(message.text) and not data.get("habit_start_date") and not getattr(result,"rrule_string",None))
+    )
+    if needs_confirmation:
+        from bot.services.ui_context import create_context
+        context = await create_context(reminder_dao.session,user.id,"habit_create",{})
+        await state.update_data(habit_pending_time=selected_time.isoformat(),habit_confirm_token=context.token,habit_start_date=selected_time.astimezone(resolve_timezone(user.timezone)).date().isoformat())
+        await state.set_state(HabitState.confirming_time)
+        builder = InlineKeyboardBuilder()
+        builder.button(text=l10n["confirm_save"], callback_data=f"habit_time_confirm:{context.token}")
+        builder.button(text=l10n["btn_edit_time"], callback_data="habit_time_change")
+        builder.button(text=l10n["btn_cancel"], callback_data="habit_cancel")
+        await message.answer(l10n["habit_confirm_time"].format(time=format_time(selected_time, user.timezone, fmt="%d.%m.%Y %H:%M")), reply_markup=builder.as_markup())
+        return
+    await _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time)
+
+
+@router.callback_query(HabitState.confirming_time, F.data.startswith("habit_time_confirm:"))
+async def confirm_habit_time(callback: CallbackQuery, state: FSMContext, user: User, reminder_dao: ReminderDAO, scheduler_service: SchedulerService, l10n: dict[str, Any]) -> None:
+    data = await state.get_data()
+    if not data.get("habit_pending_time") or callback.data != f"habit_time_confirm:{data.get('habit_confirm_token')}":
+        return await callback.answer(l10n["invalid_action"], show_alert=True)
+    from sqlalchemy import update
+
+    from bot.database.models import UiContext
+    from bot.services.ui_context import now_utc
+    claimed = await reminder_dao.session.execute(update(UiContext).where(UiContext.token==data.get("habit_confirm_token"),UiContext.user_id==user.id,UiContext.kind=="habit_create",UiContext.expires_at>now_utc(),UiContext.result.is_(None)).values(result="applied"))
+    if claimed.rowcount != 1:
+        await reminder_dao.session.rollback()
+        return await callback.answer(l10n["invalid_action"],show_alert=True)
+    await _create_fixed_habit(callback.message, state, user, reminder_dao, scheduler_service, l10n, datetime.fromisoformat(data["habit_pending_time"]))
+    await callback.answer()
+
+
+async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time):
+    data = await state.get_data()
+    habit_text = data.get("habit_text", l10n["habit_default_name"])
     # Normalize to UTC once and store as naive UTC in DB.
-    execution_time_utc = to_utc_naive(result.parsed_datetime)
+    execution_time_utc = to_utc_naive(selected_time)
 
     # The parser can return an ambiguous/past time (e.g. "at 9" when it's
     # already past 9 today in the user's zone). Since this habit is always
@@ -367,7 +418,7 @@ async def state_habit_time(
             is_recurring=True,
             rrule_string="FREQ=DAILY",
             is_habit=True,
-            is_nagging=True,
+            is_nagging=False,
             nagging_max_repeats=3,
         )
         scheduler_service.schedule_reminder(
@@ -378,7 +429,8 @@ async def state_habit_time(
     except ValueError as ve:
         # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
         # instead of the fixed "text too long" wording.
-        logger.error("Validation error: %s", ve)
+        await reminder_dao.session.rollback()
+        logger.error("Habit validation rejected for user %s", user.id)
         await message.answer(str(ve))
         return
     except Exception as e:
@@ -394,13 +446,13 @@ async def state_habit_time(
     try:
         await reminder_dao.session.commit()
     except Exception as e:
-        logger.error("Failed to commit habit %s for user %s: %s", habit_text, user.id, e, exc_info=True)
+        logger.error("Failed to commit habit for user %s: %s", user.id, e, exc_info=True)
         await reminder_dao.session.rollback()
         scheduler_service.remove_reminder_job(reminder.id)
         await message.answer(l10n["habit_create_failed_internal"])
         return
 
-    time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%H:%M")
+    time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
     reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
 
     # 3.6: soft, one-time nudge on the 11th active habit — not a hard
@@ -418,6 +470,12 @@ async def state_habit_time(
     await state.clear()
 
 @router.callback_query(F.data == "habit_list")
+async def open_habit_list(callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any]) -> None:
+    from bot.handlers.experience import open_list
+    await open_list(callback.message,reminder_dao,user,l10n,kind="habits",edit=True)
+    await callback.answer()
+
+
 async def cb_habit_list(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, l10n: dict[str, Any]
 ) -> None:
@@ -452,7 +510,7 @@ async def cb_habit_list(
     )]
 
     try:
-        today_str = datetime.now(pytz.timezone(user.timezone)).date().isoformat()
+        today_str = datetime.now(resolve_timezone(user.timezone)).date().isoformat()
     except Exception:
         today_str = datetime.now(pytz.UTC).date().isoformat()
 
@@ -565,7 +623,7 @@ async def cb_habit_back_dash(
 def _pause_choices(user_tz: str) -> list[tuple[str, date]]:
     """(label key, date) presets: next Monday, +1 week, +2 weeks."""
     try:
-        today = datetime.now(pytz.timezone(user_tz)).date()
+        today = datetime.now(resolve_timezone(user_tz)).date()
     except Exception:
         today = datetime.now(pytz.UTC).date()
     next_monday = today + timedelta(days=7 - today.weekday())
@@ -579,7 +637,7 @@ def _pause_choices(user_tz: str) -> list[tuple[str, date]]:
 @router.callback_query(F.data.startswith("habit_pause_set_"))
 async def cb_habit_pause_set(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO,
-    scheduler_service: SchedulerService, l10n: dict[str, Any],
+    scheduler_service: SchedulerService, l10n: dict[str, Any], state: FSMContext | None = None,
 ) -> None:
     try:
         raw_id, raw_date = callback.data[len("habit_pause_set_"):].split("_", 1)
@@ -594,13 +652,13 @@ async def cb_habit_pause_set(
     if not await apply_pause(habit, user.timezone, scheduler_service, reminder_dao.session, until):
         return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
     await callback.answer(l10n.get("habit_paused_until", "⏸ Paused until {date}").format(date=until.strftime("%d.%m")), show_alert=True)
-    await cb_habit_list(callback, user, reminder_dao, HabitEventDAO(reminder_dao.session), l10n)
+    await _refresh_habit_origin(callback,state,user,reminder_dao,l10n)
 
 
 @router.callback_query(F.data.startswith("habit_pause_clear_"))
 async def cb_habit_pause_clear(
     callback: CallbackQuery, user: User, reminder_dao: ReminderDAO,
-    scheduler_service: SchedulerService, l10n: dict[str, Any],
+    scheduler_service: SchedulerService, l10n: dict[str, Any], state: FSMContext | None = None,
 ) -> None:
     try:
         habit_id = int(callback.data[len("habit_pause_clear_"):])
@@ -612,12 +670,12 @@ async def cb_habit_pause_clear(
     if not await apply_pause(habit, user.timezone, scheduler_service, reminder_dao.session, None):
         return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."), show_alert=True)
     await callback.answer(l10n.get("habit_pause_cleared", "▶️ Habit resumed"), show_alert=True)
-    await cb_habit_list(callback, user, reminder_dao, HabitEventDAO(reminder_dao.session), l10n)
+    await _refresh_habit_origin(callback,state,user,reminder_dao,l10n)
 
 
 @router.callback_query(F.data.startswith("habit_pause_"))
 async def cb_habit_pause_menu(
-    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any],
+    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, l10n: dict[str, Any], state: FSMContext | None = None,
 ) -> None:
     """Registered AFTER habit_pause_set_/habit_pause_clear_ — this prefix
     filter also matches those, and aiogram tries handlers in order."""
@@ -640,7 +698,9 @@ async def cb_habit_pause_menu(
             text=l10n.get("habit_pause_clear", "▶️ Resume now"),
             callback_data=f"habit_pause_clear_{habit.id}",
         ))
-    builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_list"))
+    data=await state.get_data() if state is not None else {}
+    back=f"nav:{data['nav_token']}:{data.get('nav_page',0)}" if data.get("nav_token") else "habit_list"
+    builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data=back))
     await safe_edit_text(
         callback.message,
         l10n.get("habit_pause_prompt", "⏸ Pause «{habit}» until:").format(habit=escape_markdown(preview_line(habit.reminder_text))),
@@ -673,7 +733,7 @@ async def cb_fluid_done(
         reminder = await reminder_dao.get_by_id(reminder_id)
         if reminder:
             try:
-                tz = pytz.timezone(user.timezone)
+                tz = resolve_timezone(user.timezone)
             except Exception:
                 tz = pytz.UTC
             await habit_event_dao.record(
@@ -838,7 +898,7 @@ async def cb_not_today(
     record_kwargs: dict[str, Any] = {}
     if is_fluid:
         try:
-            tz = pytz.timezone(user.timezone)
+            tz = resolve_timezone(user.timezone)
         except Exception:
             tz = pytz.UTC
         record_kwargs["local_date"] = datetime.now(tz).date().isoformat()
@@ -921,3 +981,27 @@ async def cb_del_habit(
     except Exception as e:
         logger.error("Error deleting habit %s: %s", task_id, e)
         await callback.answer(l10n["habit_delete_error_alert"], show_alert=True)
+
+
+@router.callback_query(HabitState.confirming_time,F.data == "habit_time_change")
+async def change_habit_time(callback: CallbackQuery,state: FSMContext,l10n: dict[str,Any]) -> None:
+    await state.set_state(HabitState.waiting_for_time)
+    await callback.message.answer(l10n["habit_time_prompt"])
+    await callback.answer()
+
+
+@router.message(HabitState.confirming_time,F.text,~F.text.startswith("/"))
+async def retype_habit_time(message: Message,state: FSMContext,user: User,reminder_dao: ReminderDAO,scheduler_service: SchedulerService,l10n: dict[str,Any]) -> None:
+    await state.set_state(HabitState.waiting_for_time)
+    await state_habit_time(message,state,user,reminder_dao,scheduler_service,l10n)
+
+
+async def _refresh_habit_origin(callback,state,user,dao,l10n):
+    from bot.handlers.experience import open_list, render_list
+    from bot.services.ui_context import get_context
+    data=await state.get_data() if state is not None else {}
+    context=await get_context(dao.session,data.get("nav_token"),user.id,"list") if data.get("nav_token") else None
+    if context:
+        await render_list(callback.message,dao,user,l10n,context,data.get("nav_page",0))
+    else:
+        await open_list(callback.message,dao,user,l10n,kind="habits",edit=True)

@@ -62,9 +62,12 @@ async def test_spanish_selection_persists_and_localizes_next_update(session_pool
     success = callback.message.answer.await_args_list[0]
     assert success.args[0] == es["lang_set"]
     menu = success.kwargs["reply_markup"]
-    assert [button.text for row in menu.keyboard for button in row] == [
-        es["btn_new_task"], es["btn_my_tasks"], es["btn_habits"], es["btn_settings"],
-    ]
+    if initial_language is None:
+        assert menu is None  # Keep the first-run timezone step ahead of the main menu.
+    else:
+        assert [button.text for row in menu.keyboard for button in row] == [
+            es["btn_new_task"], es["btn_my_tasks"], es["btn_habits"], es["btn_settings"],
+        ]
     if initial_language is None:
         assert (await state.get_data())["onboarding_timezone"] is True
         assert callback.message.answer.await_args_list[1].args[0] == es["choose_tz"]

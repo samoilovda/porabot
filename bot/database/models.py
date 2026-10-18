@@ -609,3 +609,15 @@ def is_habit_like(reminder) -> bool:
         or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
         or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
     )
+
+
+class UiContext(Base):
+    """Short-lived, owner-scoped navigation and batch snapshots, never credentials."""
+
+    __tablename__ = "ui_contexts"
+    token: Mapped[str] = mapped_column(String(16), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    payload_json: Mapped[str] = mapped_column(String, default="{}")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    result: Mapped[Optional[str]] = mapped_column(String, nullable=True)

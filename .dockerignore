@@ -40,3 +40,6 @@ ENV/
 data/
 *.log
 nohup.out
+
+# Frontend test dependencies are not needed by the static Mini App
+node_modules/

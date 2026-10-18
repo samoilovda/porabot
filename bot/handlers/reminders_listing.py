@@ -46,7 +46,6 @@ from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_edit_keyboard,
     get_filter_menu_keyboard,
-    get_filtered_tasks_keyboard,
     get_tags_menu_keyboard,
     get_tasks_list_keyboard,
     get_undo_delete_keyboard,
@@ -62,6 +61,25 @@ from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
 router = Router(name="reminders_listing")
 logger = logging.getLogger(__name__)
 
+
+
+@router.callback_query(F.data.startswith("task_view_"))
+async def callback_task_view(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any], state: FSMContext) -> None:
+    reminder_id = _parse_id_suffix(callback.data, "task_view_")
+    reminder = await reminder_dao.get_owned(reminder_id, user.id) if reminder_id is not None else None
+    if not reminder:
+        return await callback.answer(l10n["item_not_found"], show_alert=True)
+    data = await state.get_data()
+    if data.get("nav_token"):
+        from bot.handlers.experience import return_to_list
+        await state.clear()
+        await return_to_list(callback.message,data,reminder_dao,user,l10n)
+        await callback.answer()
+        return
+    await state.clear()
+    from bot.keyboards.inline import get_saved_task_keyboard
+    await callback.message.edit_text(l10n["preview"].format(text=escape_markdown_v2(reminder.reminder_text), time=escape_markdown_v2(format_time(reminder.execution_time, user.timezone, fmt="%d.%m.%Y %H:%M"))), reply_markup=get_saved_task_keyboard(reminder.id, l10n), parse_mode="MarkdownV2")
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("task_settings_"))
@@ -256,17 +274,11 @@ async def cmd_find(
         await message.answer(l10n.get("find_usage", "Usage: /find <text>"))
         return
 
-    tasks = await reminder_dao.search_user_reminders(user.id, query)
-    if not tasks:
-        await message.answer(l10n.get("find_no_results", "🔍 Nothing found for «{query}».").format(query=escape_markdown(query)))
+    from bot.handlers.experience import open_list
+    if len(query)>300:
+        await message.answer(l10n["search_prompt"])
         return
-
-    header = l10n.get("find_results_header", "🔍 *Results for «{query}»:*\n").format(query=escape_markdown_v2(query))
-    await message.answer(
-        _render_filtered_tasks_text(tasks, user, l10n, header),
-        reply_markup=get_filtered_tasks_keyboard(tasks, l10n),
-        parse_mode="MarkdownV2",
-    )
+    await open_list(message,reminder_dao,user,l10n,kind="find",query=query)
 
 
 @router.callback_query(F.data == "tasks_filter_menu")
@@ -362,6 +374,11 @@ async def callback_filter_page(
 
 
 @router.callback_query(F.data == "recovery_done_all")
+async def preview_recovery_done_all(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]) -> None:
+    from bot.handlers.experience import begin_batch
+    await begin_batch(callback,reminder_dao,user,l10n)
+
+
 async def callback_recovery_done_all(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
@@ -369,8 +386,9 @@ async def callback_recovery_done_all(
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
+    *, overdue_snapshot=None, batch_context=None,
 ) -> None:
-    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
+    overdue = overdue_snapshot if overdue_snapshot is not None else await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
     if not overdue:
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
@@ -459,10 +477,13 @@ async def callback_recovery_done_all(
             scheduler_service.remove_reminder_job(task_id)
         scheduler_service.remove_nagging_job(task_id)
 
-    await callback.message.edit_text(
-        l10n.get("recovery_done_all_done", "✅ Marked {count} overdue tasks as done.").format(count=len(overdue)),
-        reply_markup=None,
-    )
+    summary=l10n.get("recovery_done_all_done", "Marked {count} overdue tasks as done.").format(count=len(overdue))
+    if batch_context is not None:
+        import json
+        selected=sum(i["selected"] for i in json.loads(batch_context.payload_json)["items"])
+        if selected>len(overdue):
+            summary+="\n"+l10n["batch_skipped"].format(count=selected-len(overdue))
+    await callback.message.edit_text(summary,reply_markup=None)
     await callback.answer()
 
 

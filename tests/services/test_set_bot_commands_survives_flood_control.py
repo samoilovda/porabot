@@ -33,13 +33,13 @@ class _FakeBot:
 async def test_flood_control_on_one_language_does_not_stop_the_rest() -> None:
     bot = _FakeBot(fail_langs={"en"})
     await _set_bot_commands(bot)
-    assert bot.calls == [None, "en", "ru", "es"]
+    assert bot.calls == [None, "en", "ru", "es", "pt"]
 
 
 async def test_flood_control_on_every_language_does_not_raise() -> None:
-    bot = _FakeBot(fail_langs={None, "en", "ru", "es"})
+    bot = _FakeBot(fail_langs={None, "en", "ru", "es", "pt"})
     await _set_bot_commands(bot)  # must not raise
-    assert bot.calls == [None, "en", "ru", "es"]
+    assert bot.calls == [None, "en", "ru", "es", "pt"]
 
 
 async def test_a_non_telegram_error_still_propagates() -> None:

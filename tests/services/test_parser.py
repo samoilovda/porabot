@@ -440,3 +440,126 @@ def test_date_with_no_time_at_all_is_also_low_confidence() -> None:
     assert result.parsed_datetime is not None
     assert result.confidence < 0.7
     assert result.date_only is True
+
+
+# Relative offsets ("через час", "in an hour", "en una hora") fully determine
+# the moment, so they must come back confident and not flagged date_only —
+# otherwise the bot asks the user for a time they already gave.
+@pytest.mark.parametrize(
+    "text,expected_minutes",
+    [
+        ("Купи пылесос через час", 60),
+        ("Купи пылесос через 15 минут", 15),
+        ("Купи пылесос en una hora", 60),
+        ("llamar en una hora", 60),
+        ("buy vacuum in an hour", 60),
+        ("call in half an hour", 30),
+    ],
+)
+def test_relative_offset_is_confident_not_date_only(text, expected_minutes) -> None:
+    before = datetime.now(pytz.timezone("Europe/Moscow"))
+    result = InputParser()._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.date_only is False
+    assert result.confidence >= 0.7
+    delta = (result.parsed_datetime - before).total_seconds() / 60
+    assert expected_minutes - 2 <= delta <= expected_minutes + 2
+    assert result.clean_text in {"Купи пылесос", "llamar", "buy vacuum", "call"}
+
+
+# The parser must not depend on the sentence's language (or the user's
+# interface language): a date phrase in any supported language is found even
+# when the rest of the sentence is in another one.
+@pytest.mark.parametrize(
+    "text,day_offset,hour",
+    [
+        ("Buy vacuum завтра в 15:00", 1, 15),
+        ("Comprar aspiradora tomorrow at 5pm", 1, 17),
+        ("Купи пылесос mañana a las 10", 1, 10),
+        ("Buy milk el viernes a las 18:00", None, 18),
+        ("llamar a mamá в 18:00", 0, 18),
+        ("Купи пылесос pasado mañana a las 10:00", 2, 10),
+    ],
+)
+def test_date_phrase_recognised_regardless_of_sentence_language(text, day_offset, hour) -> None:
+    result = InputParser()._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None, text
+    assert result.parsed_datetime.hour == hour
+    if day_offset is not None:
+        today = datetime.now(pytz.timezone("Europe/Moscow")).date()
+        got = (result.parsed_datetime.date() - today).days
+        # "в 18:00" with no day rolls to tomorrow when already past.
+        assert got in ({day_offset, day_offset + 1} if day_offset == 0 else {day_offset}), text
+    for leaked in ("завтра", "tomorrow", "mañana", "viernes", "18:00", "a las"):
+        assert leaked not in result.clean_text.lower(), (text, result.clean_text)
+
+
+@pytest.mark.parametrize(
+    "text,expected_clean",
+    [
+        ("Купи молоко next friday", "Купи молоко"),
+        ("Buy milk el viernes", "Buy milk"),
+        ("llamar a mamá в пятницу", "llamar a mamá"),
+    ],
+)
+def test_no_stranded_modifier_left_in_task_text(text, expected_clean) -> None:
+    assert InputParser()._parse_sync(text, "Europe/Moscow").clean_text == expected_clean
+
+
+# "next week"/"next month" phrases in every supported language; they name no
+# clock time, so the bot must ask for the hour (date_only).
+@pytest.mark.parametrize(
+    "text,expected_clean",
+    [
+        ("Купить молоко на следующей неделе", "Купить молоко"),
+        ("comprar leche la semana que viene", "comprar leche"),
+        ("Buy milk next week", "Buy milk"),
+        ("Comprar pão semana que vem", "Comprar pão"),
+        ("в следующем месяце оплатить", "оплатить"),
+        ("pay next month", "pay"),
+    ],
+)
+def test_next_week_and_month_phrases_are_date_only(text, expected_clean) -> None:
+    result = InputParser()._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None
+    assert result.date_only is True
+    assert result.clean_text == expected_clean
+
+
+def test_day_after_tomorrow_keeps_the_stated_time() -> None:
+    result = InputParser()._parse_sync("day after tomorrow at 5pm call", "Europe/Moscow")
+    today = datetime.now(pytz.timezone("Europe/Moscow")).date()
+
+    assert (result.parsed_datetime.date() - today).days == 2
+    assert result.parsed_datetime.hour == 17
+    assert result.clean_text == "call"
+
+
+@pytest.mark.parametrize(
+    "text,expected_clean,minutes,hour",
+    [
+        ("Ligar para mãe daqui a uma hora", "Ligar para mãe", 60, None),
+        ("Ligar para mãe em 2 horas", "Ligar para mãe", 120, None),
+        ("Ligar daqui a 15 minutos", "Ligar", 15, None),
+        ("Comprar pão amanhã às 10", "Comprar pão", None, 10),
+        ("Comprar pão às 8 da manhã", "Comprar pão", None, 8),
+        ("Ligar para mãe depois de amanhã às 18:00", "Ligar para mãe", None, 18),
+        ("Ligar na sexta-feira às 15:00", "Ligar", None, 15),
+        ("Купи пылесос em uma hora", "Купи пылесос", 60, None),
+    ],
+)
+def test_portuguese_time_phrases(text, expected_clean, minutes, hour) -> None:
+    before = datetime.now(pytz.timezone("Europe/Moscow"))
+    result = InputParser()._parse_sync(text, "Europe/Moscow")
+
+    assert result.parsed_datetime is not None, text
+    assert result.date_only is False
+    assert result.clean_text == expected_clean
+    if minutes is not None:
+        delta = (result.parsed_datetime - before).total_seconds() / 60
+        assert minutes - 2 <= delta <= minutes + 2
+    if hour is not None:
+        assert result.parsed_datetime.hour == hour

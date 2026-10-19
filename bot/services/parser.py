@@ -139,7 +139,7 @@ _RECURRENCE_RULES: list[tuple[re.Pattern, str]] = [
 # only overrides the specific misreading, not dateparser matches in
 # general.
 _AMBIGUOUS_HOUR_WORD_RE = re.compile(
-    r"^(?:в|at|a\s+las?)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час(?:а|ов)?|hours?|horas?)\b",
+    r"^(?:в|at|a\s+las?|às|as)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:час(?:а|ов)?|hours?|horas?)\b",
     re.IGNORECASE,
 )
 
@@ -161,8 +161,11 @@ _RU_PERIOD_IN_MATCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Clock-time preposition directly before a span ("at " in "at 14 hours").
+_PREPOSITION_TAIL_RE = re.compile(r"(?<![^\W\d_])(?:в|at|a\s+las?|às|as)\s+$", re.IGNORECASE)
+
 _TRAILING_PERIOD_WORD_RE = re.compile(
-    r"^\s+(?:de\s+la\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche)\b",
+    r"^\s+(?:de\s+la\s+|da\s+|de\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|tarde|noche|noite)\b",
     re.IGNORECASE,
 )
 
@@ -182,16 +185,50 @@ _TRAILING_PERIOD_WORD_RE = re.compile(
 # the morning" — only "de/por la mañana" is unambiguous.
 _EXPLICIT_TIME_MARKER_RE = re.compile(
     r"\d{1,2}[:.]\d{2}"
-    r"|\b(?:в|at|a\s+las?)\s*\d{1,2}\b"
+    r"|\b(?:в|at|a\s+las?|às|as)\s*\d{1,2}\b"
     # Period-of-day words must stand alone: bare "дня" also matched inside
     # "сегодня", so "позвонить сегодня" slipped past the date-only check.
     # Guarded against adjacent LETTERS only (not \b), so "5pm" — a digit
     # right before "pm" — still counts.
     r"|(?<![^\W\d_])(?:утра|дня|послеобеденно|вечера|ночи|am|pm"
-    r"|полдень|полночь|midnight|noon|mediod[ií]a|medianoche)(?![^\W\d_])"
-    r"|(?:de|por)\s+la\s+ma[ñn]ana|\btarde\b|\bnoche\b",
+    r"|полдень|полночь|midnight|noon|mediod[ií]a|medianoche|meio-dia|meia-noite)(?![^\W\d_])"
+    r"|(?:de|por)\s+la\s+ma[ñn]ana|\btarde\b|\bnoche\b|\bnoite\b|\b(?:da|de|pela)\s+manh[ãa]\b"
+    # A relative offset ("через час", "in an hour", "en 2 horas") fully
+    # determines the moment — "now + N units" — so it is not a bare day
+    # with a filler time and must not be demoted to date_only.
+    r"|\b(?:через|in|en|dentro\s+de|em|daqui\s+a)\s+(?:\d+\s*|[^\W\d_]+\s+)?"
+    r"(?:минут\w*|час\w*|секунд\w*|дн\w+|день|сутки|недел\w+"
+    r"|(?:minute|hour|day|week)s?|minutos?|horas?|d[ií]as?|semanas?)(?![^\W\d_])",
     re.IGNORECASE,
 )
+
+
+# dateparser's multi-language search auto-detects ONE language for the whole
+# text, so a phrase in a different language than the rest of the sentence
+# ("Купи пылесос en una hora", "Buy milk завтра") is silently missed. The
+# parser must not depend on which language the sentence — or the user's
+# interface — is in, so each supported language is searched on its own, plus
+# the combined list, and the most specific (longest) span wins.
+_DATE_LANGUAGES = ("ru", "en", "es", "pt")
+
+
+def _search_dates_any_language(text: str, settings: dict) -> list:
+    seen: dict[tuple[str, datetime], None] = {}
+    candidates: list[tuple[str, datetime]] = []
+    for languages in (list(_DATE_LANGUAGES), *([lang] for lang in _DATE_LANGUAGES)):
+        try:
+            found = dateparser.search.search_dates(text, languages=languages, settings=settings)
+        except Exception:
+            logger.debug("dateparser search failed for %s", languages, exc_info=True)
+            continue
+        for span, dt in found or []:
+            # A single stray letter ("a" in "llamar a mamá") is not a date.
+            if len(span.strip()) < 2 or (span, dt) in seen:
+                continue
+            seen[(span, dt)] = None
+            candidates.append((span, dt))
+    # Longest span first; stable sort keeps the earlier (combined) result on ties.
+    return sorted(candidates, key=lambda c: -len(c[0].strip()))
 
 
 # ---------------------------------------------------------------------------
@@ -254,16 +291,44 @@ class InputParser:
         "на выходных": "в субботу в 10:00",
         "в выходные": "в субботу в 10:00",
         "в конце недели": "в пятницу в 18:00",
+        "на следующей неделе": "next week",
+        "на следующую неделю": "next week",
+        "на след неделе": "next week",
+        "в следующем месяце": "next month",
         # Spanish
         "por la mañana": "a las 09:00",
         "por la tarde": "a las 14:00",
         "por la noche": "a las 19:00",
         "en un rato": "en 2 minutos",
         "el fin de semana": "el sábado a las 10:00",
+        # "mañana" alone would be read as "tomorrow" inside "pasado mañana".
+        "pasado mañana": "послезавтра",
         "media hora": "30 minutos",
+        "half an hour": "30 minutes",
         "una hora y media": "1 hora 30 minutos",
         "dentro de un par de minutos": "dentro de 2 minutos",
         "después del almuerzo": "a las 14:00",
+        "la semana que viene": "next week",
+        "la próxima semana": "next week",
+        "la semana próxima": "next week",
+        "el mes que viene": "next month",
+        "el próximo mes": "next month",
+        "day after tomorrow": "послезавтра",
+        # Portuguese
+        "pela manhã": "às 09:00",
+        "de manhã": "às 09:00",
+        "à tarde": "às 14:00",
+        "à noite": "às 19:00",
+        "daqui a pouco": "em 2 minutos",
+        "daqui a": "em",
+        "meia hora": "30 minutos",
+        "uma hora e meia": "1 hora 30 minutos",
+        "depois de amanhã": "послезавтра",
+        "no fim de semana": "no sábado às 10:00",
+        "semana que vem": "next week",
+        "próxima semana": "next week",
+        "mês que vem": "next month",
+        "próximo mês": "next month",
         "a finales de la semana": "el viernes a las 18:00",
     }
 
@@ -281,7 +346,7 @@ class InputParser:
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
         # "в 12" / "at 14" / "a las 9" → "…:00" mapping (helps dateparser avoid treating lonely hours as years)
-        normalized = re.sub(r"(?i)\b(в|at)\s+(\d{1,2})\b(?!\s*[:.])", r"\1 \2:00", normalized)
+        normalized = re.sub(r"(?i)\b(в|at|às|as)\s+(\d{1,2})\b(?!\s*[:.])", r"\1 \2:00", normalized)
         normalized = re.sub(r"(?i)\ba\s+las?\s+(\d{1,2})\b(?!\s*[:.])", r"a las \1:00", normalized)
         return normalized
 
@@ -299,8 +364,8 @@ class InputParser:
             return None
 
         token = (period_token or "").lower()
-        has_pm = token in {"pm", "вечера", "дня", "послеобеденно", "tarde", "noche"}
-        has_am = token in {"am", "утра", "ночи", "mañana"}
+        has_pm = token in {"pm", "вечера", "дня", "послеобеденно", "tarde", "noche", "noite"}
+        has_am = token in {"am", "утра", "ночи", "mañana", "manhã", "manha"}
         is_24h = hour >= 13
 
         period_hour = hour
@@ -362,9 +427,7 @@ class InputParser:
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DAY_OF_MONTH": "current",
         }
-        dp_matches = dateparser.search.search_dates(
-            _mask_phone_like(normalized_text), languages=["ru", "en", "es"], settings=dp_settings
-        )
+        dp_matches = _search_dates_any_language(_mask_phone_like(normalized_text), dp_settings)
 
         parsed_datetime: Optional[datetime] = None
         confidence = 0.0
@@ -385,8 +448,22 @@ class InputParser:
         # "a las 23 horas" as a duration offset from now instead of a clock
         # time — see _AMBIGUOUS_HOUR_WORD_RE. Falls through to the Stage 4a
         # regex fallback below, which resolves the same text correctly.
+        # The per-language search can return the bare "14 hours" without its
+        # "at", so the preposition is also looked up in the text before it.
+        def _is_ambiguous_hour_match(span: str) -> bool:
+            span = span.strip()
+            if _AMBIGUOUS_HOUR_WORD_RE.match(span):
+                return True
+            idx = normalized_text.find(span)
+            preposition = _PREPOSITION_TAIL_RE.search(normalized_text[:idx]) if idx > 0 else None
+            return bool(preposition and _AMBIGUOUS_HOUR_WORD_RE.match(preposition.group(0) + span))
+
+        # Sub-spans of a dropped match ("14:00" inside "at 14:00 hours") go too,
+        # or the per-language search would resurrect it as a bare clock time
+        # and leave the hour word dangling in the task text.
+        dropped_spans = [s.strip() for s, _ in dp_matches if _is_ambiguous_hour_match(s)]
         dp_matches = [
-            (s, dt) for s, dt in dp_matches if not _AMBIGUOUS_HOUR_WORD_RE.match(s.strip())
+            (s, dt) for s, dt in dp_matches if not any(s.strip() in d for d in dropped_spans)
         ]
 
         # A-06: drop a dateparser match immediately followed by a period-of-
@@ -416,6 +493,25 @@ class InputParser:
         date_only = False
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
+            extra_span = None
+            if not _EXPLICIT_TIME_MARKER_RE.search(matched_substring):
+                # A day and a clock time written in different languages
+                # ("послезавтра a las 10:00") come back as separate spans;
+                # join the day of the first with the time of the second.
+                for other_span, other_dt in dp_matches[1:]:
+                    if (
+                        _EXPLICIT_TIME_MARKER_RE.search(other_span)
+                        and other_span not in matched_substring
+                        and matched_substring not in other_span
+                    ):
+                        dt_obj = dt_obj.replace(
+                            hour=other_dt.hour,
+                            minute=other_dt.minute,
+                            second=0,
+                            microsecond=0,
+                        )
+                        extra_span = other_span
+                        break
             parsed_datetime = dt_obj
             parse_source = "dateparser"
             confidence = 0.75 if normalized_changed else 0.95
@@ -429,16 +525,18 @@ class InputParser:
             # through the existing low-confidence confirmation prompt
             # (see reminders_shared._handle_parsed_result) instead of
             # silently saving a time the user never actually gave.
-            if not _EXPLICIT_TIME_MARKER_RE.search(matched_substring):
+            if extra_span is None and not _EXPLICIT_TIME_MARKER_RE.search(matched_substring):
                 confidence = min(confidence, 0.4)
                 date_only = True
             clean_text = _strip_first_occurrence(clean_text, matched_substring)
+            if extra_span is not None:
+                clean_text = _strip_first_occurrence(clean_text, extra_span)
 
         # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
         if not parsed_datetime:
             now = datetime.now(resolve_timezone(timezone))
             hour_pattern = re.compile(
-                r"(?:^|\s)(?:в|at|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?"
+                r"(?:^|\s)(?:в|at|a\s+las?|às|as)\s+(\d{1,2})(?:[:.](\d{2}))?"
                 # 2: consume a trailing bare hour-unit word ("часа"/"hours"/
                 # "horas") so it doesn't leak into clean_text — same words
                 # _AMBIGUOUS_HOUR_WORD_RE screens out of Stage 3 above.
@@ -454,7 +552,7 @@ class InputParser:
                 # clean_text. \s* accepts that already-consumed, now-empty
                 # gap just as well as a real one when a час-word WAS
                 # present and used its own trailing space.
-                r"(?:\s*(?:de\s+la\s+)?(утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|tarde|noche))?",
+                r"(?:\s*(?:de\s+la\s+|da\s+|de\s+)?(утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|manha|tarde|noche|noite))?",
                 re.IGNORECASE,
             )
             hour_match = hour_pattern.search(normalized_text)
@@ -489,30 +587,31 @@ class InputParser:
                 # prefix of "человек"), and "garden 2 horas" used to match
                 # "en 2 horas" (no boundary before "en", which is also the
                 # last two letters of "garden").
-                r"\b(?:через|dentro\s+de|en)\s+(\d+)?\s*"
-                r"(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки|minutos?|horas?|d[ií]as?)(?!\w)",
+                r"\b(?:через|dentro\s+de|en|in|em|daqui\s+a)\s+(\d+|un[ao]?|uma?|an?|один|одну)?\s*"
+                r"(минут(?:ы)?|часов?|час(?:а)?|ч|дн(?:ей|я)|день|сутки|minutos?|horas?|d[ií]as?|minutes?|hours?|days?)(?!\w)",
                 normalized_text,
                 re.IGNORECASE,
             )
             if duration_match:
-                amount = int(duration_match.group(1) or 1)
+                amount_token = duration_match.group(1) or "1"
+                amount = int(amount_token) if amount_token.isdigit() else 1
                 unit = duration_match.group(2).lower()
-                if unit in ("минут", "минуты", "min", "minutos", "minuto"):
+                if unit in ("минут", "минуты", "min", "minutos", "minuto", "minute", "minutes"):
                     parsed_datetime = now + timedelta(minutes=amount)
-                elif unit in ("часов", "часа", "час", "ч", "horas", "hora"):
+                elif unit in ("часов", "часа", "час", "ч", "horas", "hora", "hour", "hours"):
                     parsed_datetime = now + timedelta(hours=amount)
                 else:  # дней, дня, день, сутки, días, día
                     parsed_datetime = now + timedelta(days=amount)
                 parse_source = "regex_duration"
-                confidence = 0.5
+                confidence = 0.75
                 clean_text = _strip_first_occurrence(clean_text, duration_match.group(0))
 
         # Stage 4c — regex fallback: "в 23 часа"
         if not parsed_datetime:
             now = datetime.now(resolve_timezone(timezone))
             hour_match = re.search(
-                r"(?:в|a\s+las?)\s+(\d{1,2})(?:[:.](\d{2}))?\s*"
-                r"(?:de\s+la\s+)?(утра|дня|послеобеденно|вечера|ночи|часов?|mañana|tarde|noche)?",
+                r"(?:в|a\s+las?|às|as)\s+(\d{1,2})(?:[:.](\d{2}))?\s*"
+                r"(?:de\s+la\s+|da\s+|de\s+)?(утра|дня|послеобеденно|вечера|ночи|часов?|mañana|manhã|manha|tarde|noche|noite)?",
                 normalized_text,
                 re.IGNORECASE,
             )
@@ -532,7 +631,15 @@ class InputParser:
 
         # Stage 5 — final cleanup: strip dangling prepositions
         clean_text = re.sub(
-            r"^(в|на|через|в районе|a\s+las?|en|dentro\s+de|el)\s+",
+            r"^(в|на|через|в районе|a\s+las?|en|dentro\s+de|el|em|às|as|daqui\s+a)\s+",
+            "",
+            clean_text.strip(),
+            flags=re.IGNORECASE,
+        )
+        # Modifier/preposition left stranded where the date phrase was cut out
+        # ("Купи молоко next", "Buy milk el") — none of them ends a task text.
+        clean_text = re.sub(
+            r"(?:\s+(?:next|this|on|at|el|la|este|pr[oó]ximo|pr[oó]xima|no|na|em|às|в|во|на|в следующий))+\s*$",
             "",
             clean_text.strip(),
             flags=re.IGNORECASE,

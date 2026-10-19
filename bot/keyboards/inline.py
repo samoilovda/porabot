@@ -1164,6 +1164,7 @@ def get_language_selection_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
     )
     builder.row(
         InlineKeyboardButton(text=l10n["lang_es"], callback_data="set_lang_es"),
+        InlineKeyboardButton(text=l10n["lang_pt"], callback_data="set_lang_pt"),
     )
     return builder.as_markup()
 

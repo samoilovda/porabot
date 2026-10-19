@@ -24,3 +24,12 @@ def test_spanish_main_menu_labels_are_not_parsed_as_tasks() -> None:
     assert es["btn_my_tasks"] in menu_texts
     assert es["btn_settings"] in menu_texts
     assert es["btn_habits"] in menu_texts
+
+
+def test_portuguese_main_menu_labels_are_not_parsed_as_tasks() -> None:
+    reminders_module = _load_module("bot/handlers/reminders.py")
+    menu_texts = set(reminders_module._MENU_TEXTS)
+    pt = get_l10n("pt")
+
+    for key in ("btn_new_task", "btn_my_tasks", "btn_settings", "btn_habits"):
+        assert pt[key] in menu_texts

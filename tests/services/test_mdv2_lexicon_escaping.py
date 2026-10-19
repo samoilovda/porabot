@@ -64,7 +64,7 @@ def _unescaped_reserved_chars(template: str) -> set[str]:
 
 def test_mdv2_lexicon_keys_have_no_unescaped_reserved_chars() -> None:
     failures = []
-    for lang in ("ru", "en", "es"):
+    for lang in ("ru", "en", "es", "pt"):
         l10n = get_l10n(lang)
         for key in _MDV2_KEYS:
             value = l10n.get(key)

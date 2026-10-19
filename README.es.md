@@ -1,6 +1,6 @@
 # Porabot
 
-Un bot personal de Telegram para programar recordatorios y realizar seguimiento de hábitos. La característica principal: crea una tarea con una sola frase en **ruso, inglés o español** — sin asistente, sin menú; el bot interpreta cuándo.
+Un bot personal de Telegram para programar recordatorios y realizar seguimiento de hábitos. La característica principal: crea una tarea con una sola frase en **ruso, inglés, español o portugués** — sin asistente, sin menú; el bot interpreta cuándo.
 
 > **TODO (propietario):** añadir GIF de creación de tarea con frase, completar un hábito e informe semanal.
 
@@ -51,7 +51,7 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 
 ### General
 
-- **Tres idiomas** — i18n completa en ruso, inglés y español (`bot/lexicon/ru.py`, `en.py`, `es.py`); el análisis de tiempo en lenguaje natural funciona en los tres
+- **Cuatro idiomas** — i18n completa en ruso, inglés, español y portugués (`bot/lexicon/ru.py`, `en.py`, `es.py`, `pt.py`); el análisis de tiempo en lenguaje natural funciona en los cuatro, incluso en frases mixtas
 - **Zonas horarias** — todo almacenado en UTC; mostrado en la zona horaria local del usuario; transiciones DST correctamente gestionadas
 - **Resúmenes matutinos y nocturnos** — resumen diario a horas configurables
 - **Configuración por usuario** — zona horaria, idioma, horas silenciosas (con ventana separada para fin de semana y excepción para hábitos), límite de nagging, horario de informes

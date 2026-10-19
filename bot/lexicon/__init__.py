@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from bot.lexicon.en import EN
 from bot.lexicon.es import ES
+from bot.lexicon.pt import PT
 from bot.lexicon.ru import RU
 
 # Default language string if None is provided
@@ -13,13 +14,21 @@ _LEXICONS: dict[str, dict[str, Any]] = {
     "ru": RU,
     "en": EN,
     "es": ES,
+    "pt": PT,
 }
 
 def get_l10n(language_code: Optional[str]) -> dict[str, Any]:
     """Retrieve the translation dictionary for a given language code."""
     if not language_code:
         return _LEXICONS[DEFAULT_LANG]
-    return _LEXICONS.get(language_code, _LEXICONS[DEFAULT_LANG])
+    if not isinstance(language_code, str):
+        return _LEXICONS[DEFAULT_LANG]
+    if language_code in _LEXICONS:
+        return _LEXICONS[language_code]
+    # Telegram reports regional variants ("pt-br", "es-419", "en_US"); the
+    # primary subtag is what picks the lexicon.
+    primary = language_code.lower().replace("_", "-").split("-")[0]
+    return _LEXICONS.get(primary, _LEXICONS[DEFAULT_LANG])
 
 
 # A-23: the set of language codes this bot actually has a lexicon for —

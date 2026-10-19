@@ -89,6 +89,35 @@
       profileError:
         "No se pudo cargar el idioma del perfil. Los datos disponibles se muestran abajo.",
     },
+    pt: {
+      scoresTitle: "Constância dos hábitos",
+      heatmapTitle: "Atividade registrada",
+      loading: "Carregando…",
+      empty: "Ainda não há hábitos ativos. Adicione um pelo bot.",
+      noHistory: "Ainda não há registros",
+      strength: "Constância",
+      explain:
+        "Uma pontuação suavizada do histórico, não uma porcentagem de cumprimento.",
+      history: "Histórico registrado",
+      done: "feito",
+      missed: "perdido ou pulado",
+      streak: "Sequência atual",
+      best: "recorde",
+      noRecords: "Sem registros",
+      open: "Abra este aplicativo dentro do Telegram.",
+      error: "Não foi possível carregar esta seção.",
+      timeout: "A solicitação demorou demais.",
+      auth: "Feche o aplicativo e abra-o de novo pelo bot para entrar.",
+      rate: "Aguarde antes de tentar novamente.",
+      retry: "Tentar novamente",
+      calendar: "Calendário",
+      list: "Lista de dias",
+      previous: "Mês anterior",
+      next: "Próximo mês",
+      date: "Data",
+      profileError:
+        "Não foi possível carregar o idioma do perfil. Os dados disponíveis são mostrados abaixo.",
+    },
   };
   var tg = window.Telegram && window.Telegram.WebApp;
   var preliminary =
@@ -96,7 +125,9 @@
     tg.initDataUnsafe &&
     tg.initDataUnsafe.user &&
     tg.initDataUnsafe.user.language_code;
-  var lang = STRINGS[preliminary] ? preliminary : "en";
+  // Telegram reports regional variants ("pt-br"); the primary subtag picks the strings.
+  var preliminaryBase = String(preliminary || "").toLowerCase().split(/[-_]/)[0];
+  var lang = STRINGS[preliminaryBase] ? preliminaryBase : "en";
   var t = STRINGS[lang];
   var payloads = {},
     states = {},

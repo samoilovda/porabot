@@ -64,6 +64,7 @@ ES.update(
         "lang_ru": "🇷🇺 Русский",
         "lang_en": "🇬🇧 English",
         "lang_es": "🇪🇸 Español",
+        "lang_pt": "🇧🇷 Português",
         "lang_set": "✅ Idioma cambiado a Español.",
 
         # Settings

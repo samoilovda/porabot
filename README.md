@@ -1,6 +1,6 @@
 # Porabot
 
-A personal Telegram bot for scheduling reminders and tracking habits. The defining feature: create a task in one natural-language phrase in **Russian, English, or Spanish** — no wizard, no menu, just send the text and the bot works out when you mean.
+A personal Telegram bot for scheduling reminders and tracking habits. The defining feature: create a task in one natural-language phrase in **Russian, English, Spanish, or Portuguese** — no wizard, no menu, just send the text and the bot works out when you mean.
 
 > **TODO (owner):** add GIF of one-phrase task creation, habit completion, and weekly report here.
 
@@ -51,7 +51,7 @@ Type a phrase; the bot parses time and extracts the task description:
 
 ### General
 
-- **Three languages** — full i18n in Russian, English, Spanish (`bot/lexicon/ru.py`, `en.py`, `es.py`); natural-language time parsing works in all three
+- **Four languages** — full i18n in Russian, English, Spanish, Portuguese (`bot/lexicon/ru.py`, `en.py`, `es.py`, `pt.py`); natural-language time parsing works in all four, even when a sentence mixes languages
 - **Timezone-aware** — all times stored in UTC; displayed in user's local timezone; DST transitions handled correctly
 - **Morning and evening briefs** — daily summary at configurable times
 - **Per-user settings** — timezone, language, quiet hours (with a separate weekend window and a habits-can-wake-me exception), nagging limit, reports schedule

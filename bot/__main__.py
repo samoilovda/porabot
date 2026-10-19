@@ -319,7 +319,7 @@ async def _set_bot_commands(bot: Bot) -> None:
 
     from bot.lexicon import get_l10n
 
-    for lang in (None, "en", "ru", "es"):
+    for lang in (None, "en", "ru", "es", "pt"):
         l10n = get_l10n(lang)
         commands = [
             BotCommand(command="start", description=l10n.get("cmd_desc_start", "Main menu")),

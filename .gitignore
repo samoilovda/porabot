@@ -39,3 +39,14 @@ Edu.md
 
 # Frontend test dependencies
 node_modules/
+
+# Runtime artifacts and local secrets (see AGENTS.md)
+backups/
+.env.*
+!.env.example
+*.sqlite3
+*.db-wal
+*.db-shm
+heartbeat
+audit_log.txt
+.claude/

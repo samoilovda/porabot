@@ -482,4 +482,5 @@ PT.update({
     "habit_confirm_time_rule": '{rule}, a partir de {time}. Uma notificação. Salvar?',
     "habit_created_rule": '✅ *Hábito criado!*\nVou lembrar você de *{habit}*: {rule}, próximo `{time}`.',
     "snoozed_until_short": '⏰ adiado até {time}',
+    "today_older_overdue_hint": '🕰 {count} tarefas atrasadas mais antigas estão em Filtro → Atrasadas.',
 })

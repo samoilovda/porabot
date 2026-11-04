@@ -512,4 +512,5 @@ ES.update({
     "habit_confirm_time_rule": '{rule}, a partir de {time}. Una notificación. ¿Guardar?',
     "habit_created_rule": '✅ *¡Hábito creado!*\nTe recordaré *{habit}*: {rule}, próximo `{time}`.',
     "snoozed_until_short": '⏰ pospuesto hasta {time}',
+    "today_older_overdue_hint": '🕰 {count} tareas vencidas más antiguas están en Filtro → Vencidas.',
 })

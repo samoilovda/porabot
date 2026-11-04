@@ -22,6 +22,7 @@ from bot.utils.timezone import resolve_timezone
 
 router = Router(name="experience")
 PAGE_SIZE = 8
+TODAY_OVERDUE_DAYS = 7
 
 
 class ExperienceState(StatesGroup):
@@ -46,7 +47,13 @@ async def list_items(dao, user, payload):
         return list(await dao.get_active_habits(user.id))
     if kind == "today":
         tasks = list(await dao.get_user_reminders_today(user.id, user.timezone))
-        overdue = list(await dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0, limit=200))
+        # B-15: only recent overdue tasks belong on "Today"; older ones
+        # stay under the Overdue filter (render_list shows a hint).
+        overdue = list(
+            await dao.get_overdue_pending_tasks(
+                user.id, min_minutes_overdue=0, limit=200, max_days_overdue=TODAY_OVERDUE_DAYS
+            )
+        )
         habits = list(await dao.get_active_habits(user.id))
         today = datetime.now(resolve_timezone(user.timezone)).date()
         included = {r.id: r for r in tasks + overdue if not r.is_habit and not r.is_fluid_habit}
@@ -106,6 +113,11 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
                 if (r.is_fluid_habit or cycle is not None) and not done:
                     count_habits += 1
         lines.append(l10n["daily_remaining"].format(tasks=count_tasks, habits=count_habits))
+        if payload["kind"] == "today":
+            all_overdue = await dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0, limit=200)
+            older = sum(1 for r in all_overdue if r.id not in {t.id for t in tasks})
+            if older:
+                lines.append(l10n["today_older_overdue_hint"].format(count=older))
 
     from sqlalchemy import select
 

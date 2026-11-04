@@ -524,4 +524,5 @@ EN.update({
     "habit_confirm_time_rule": '{rule}, starting {time}. One notification. Save?',
     "habit_created_rule": '✅ *Habit created!*\nI will remind you to *{habit}*: {rule}, next at `{time}`.',
     "snoozed_until_short": '⏰ snoozed until {time}',
+    "today_older_overdue_hint": '🕰 {count} older overdue tasks are under Filter → Overdue.',
 })

@@ -73,6 +73,10 @@ class ReminderDAO(BaseDAO[Reminder]):
     # and vice versa.
     MAX_ACTIVE_REMINDERS = 200
     MAX_ACTIVE_HABITS = 50
+    # B-15 (2026-11-04 audit): a one-off task overdue this long no longer
+    # counts toward MAX_ACTIVE_REMINDERS — ignoring old tasks used to lock a
+    # user out of creating new ones (they stay listed under "Overdue").
+    STALE_OVERDUE_AFTER = timedelta(days=30)
 
     async def reset_forbidden_strikes(self, user_id: int) -> int:
         """B-07: forget every TelegramForbiddenError strike on the user's
@@ -138,6 +142,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             raise ValueError("nagging_max_repeats cannot be negative.")
 
         is_any_habit = is_habit or is_fluid_habit
+        stale_before = datetime.now(pytz.UTC).replace(tzinfo=None) - self.STALE_OVERDUE_AFTER
         active_count_result = await self.session.execute(
             select(func.count())
             .select_from(Reminder)
@@ -146,6 +151,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.pending_delete_at.is_(None),
                 Reminder.is_habit.is_(is_any_habit),
+                or_(Reminder.is_recurring.is_(True), Reminder.execution_time >= stale_before),
             )
         )
         active_count = active_count_result.scalar_one()
@@ -642,11 +648,18 @@ class ReminderDAO(BaseDAO[Reminder]):
         *,
         min_minutes_overdue: int = 30,
         limit: Optional[int] = None,
+        max_days_overdue: Optional[int] = None,
     ) -> Sequence[Reminder]:
         """
-        Get pending tasks that are overdue by at least *min_minutes_overdue*.
+        Get pending tasks that are overdue by at least *min_minutes_overdue*
+        (and, with *max_days_overdue*, by at most that many days).
         """
         threshold_utc = datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(minutes=max(0, min_minutes_overdue))
+        extra = []
+        if max_days_overdue is not None:
+            extra.append(
+                Reminder.execution_time >= datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(days=max_days_overdue)
+            )
         stmt = (
             select(Reminder)
             .where(
@@ -659,6 +672,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
+                *extra,
             )
             .order_by(*self._priority_order())
         )

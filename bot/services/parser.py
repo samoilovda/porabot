@@ -20,7 +20,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import dateparser.search
@@ -126,6 +126,14 @@ _RECURRENCE_RULES: list[tuple[re.Pattern, str]] = [
         ),
         "FREQ=WEEKLY",
     ),
+    (
+        re.compile(
+            r"\b(?:каждый\s+месяц|ежемесячно|every\s+month|each\s+month|monthly|cada\s+mes|"
+            r"todo\s+m[eê]s|mensalmente)\b",
+            re.IGNORECASE,
+        ),
+        "FREQ=MONTHLY",
+    ),
 ]
 
 # 2: dateparser reads a bare "в <N> час(а/ов)" / "at <N> hours" / "a las <N>
@@ -161,11 +169,24 @@ _RU_PERIOD_IN_MATCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Stage 4a's clock-time regex: "в 23", "at 9", "в 10 утра", "в 23 часа",
+# "a las 5 de la tarde". The час-word group consumes a trailing bare hour
+# unit so it doesn't leak into clean_text; the period group uses \s* (not
+# \s+) because the час-group's own \s* may already have eaten the space.
+_HOUR_RE = re.compile(
+    r"(?:^|\s)(?:в|at|a\s+las?|às|as)\s+(\d{1,2})(?:[:.](\d{2}))?"
+    r"\s*(?:час(?:а|ов)?|hours?|horas?)?"
+    r"(?:\s*(?:de\s+la\s+|da\s+|de\s+)?(утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|manha|tarde|noche|noite))?",
+    re.IGNORECASE,
+)
+_CLOCK_IN_SPAN_RE = re.compile(r"(?<!\d)(\d{1,2})[:.](\d{2})(?!\d)")
+
+
 # Clock-time preposition directly before a span ("at " in "at 14 hours").
 _PREPOSITION_TAIL_RE = re.compile(r"(?<![^\W\d_])(?:в|at|a\s+las?|às|as)\s+$", re.IGNORECASE)
 
 _TRAILING_PERIOD_WORD_RE = re.compile(
-    r"^\s+(?:de\s+la\s+|da\s+|de\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|tarde|noche|noite)\b",
+    r"^\s+(?:de\s+la\s+|la\s+|da\s+|de\s+)?(?:утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|tarde|noche|noite)\b",
     re.IGNORECASE,
 )
 
@@ -229,6 +250,172 @@ def _search_dates_any_language(text: str, settings: dict) -> list:
             candidates.append((span, dt))
     # Longest span first; stable sort keeps the earlier (combined) result on ties.
     return sorted(candidates, key=lambda c: -len(c[0].strip()))
+
+
+# ---------------------------------------------------------------------------
+# Structured pre-stage (2026-11-04 audit, B-01/B-02): recurrence phrases and
+# numeric dates are extracted deterministically BEFORE dateparser runs.
+# dateparser can't express "every Monday" at all and, searching all four
+# languages at once with no DATE_ORDER, read "12.11" as a time or dropped it
+# and "12/11" as December 11th.
+# ---------------------------------------------------------------------------
+
+# Weekday stems → RRULE codes, per language. A stem must match the START of
+# a word ("понедельник", "понедельникам"; "lunes"; "segunda", "segundas").
+_WEEKDAY_STEMS: list[tuple[str, str]] = [
+    (r"понедельник\w*", "MO"), (r"вторник\w*", "TU"), (r"сред[уаы]\w*|сред", "WE"),
+    (r"четверг\w*", "TH"), (r"пятниц\w*", "FR"), (r"суббот\w*", "SA"), (r"воскресень\w*", "SU"),
+    (r"mondays?", "MO"), (r"tuesdays?", "TU"), (r"wednesdays?", "WE"), (r"thursdays?", "TH"),
+    (r"fridays?", "FR"), (r"saturdays?", "SA"), (r"sundays?", "SU"),
+    (r"lunes", "MO"), (r"martes", "TU"), (r"mi[eé]rcoles", "WE"), (r"jueves", "TH"),
+    (r"viernes", "FR"), (r"s[aá]bados?", "SA"), (r"domingos?", "SU"),
+    (r"segundas?(?:-feiras?)?", "MO"), (r"ter[cç]as?(?:-feiras?)?", "TU"), (r"quartas?(?:-feiras?)?", "WE"),
+    (r"quintas?(?:-feiras?)?", "TH"), (r"sextas?(?:-feiras?)?", "FR"),
+]
+_WEEKDAY_ORDER = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+_WEEKDAY_ALT = "|".join(f"(?:{stem})" for stem, _ in _WEEKDAY_STEMS)
+_WEEKDAY_LIST = rf"(?:{_WEEKDAY_ALT})(?:\s*(?:,|и|and|y|e)\s*(?:{_WEEKDAY_ALT}))*"
+_WEEKDAY_RECURRENCE_RE = re.compile(
+    r"(?<![^\W\d_])(?:"
+    r"кажд(?:ый|ую|ое|ые)|по|every|each|on|cada|todos\s+los|todas\s+las|los|las|tod[ao]s?\s+(?:as|os)?|tod[ao]s?|às|aos"
+    rf")\s+({_WEEKDAY_LIST})(?![^\W\d_])",
+    re.IGNORECASE,
+)
+_UNIT_FREQ = [
+    (r"дн(?:я|ей)|день|days?|d[ií]as?|dias?", "DAILY"),
+    (r"недел[ьию]\w*|weeks?|semanas?", "WEEKLY"),
+    (r"месяц\w*|months?|mes(?:es)?|m[eê]s(?:es)?", "MONTHLY"),
+]
+_INTERVAL_RE = re.compile(
+    r"(?<![^\W\d_])(?:кажд(?:ые|ый|ую)|every|cada|a\s+cada|tod[ao]s?\s+(?:as|os)?)\s+(\d{1,2})\s+("
+    + "|".join(u for u, _ in _UNIT_FREQ) + r")(?![^\W\d_])",
+    re.IGNORECASE,
+)
+_MONTH_EVERY = r"(?:каждого\s+месяца|каждый\s+месяц|ежемесячно|every\s+month|of\s+every\s+month|monthly|de\s+cada\s+mes|cada\s+mes|todo\s+m[eê]s|de\s+cada\s+m[eê]s|mensalmente)"
+_MONTHDAY = r"(\d{1,2})(?:-?(?:го|е|st|nd|rd|th|º|°))?(?:\s+(?:числа|число))?"
+_MONTHLY_RE = re.compile(
+    r"(?<![^\W\d_])(?:"
+    rf"(?:the\s+|on\s+the\s+|el\s+d[ií]a\s+|d[ií]a\s+|dia\s+|no\s+dia\s+)?{_MONTHDAY}\s+{_MONTH_EVERY}"
+    rf"|{_MONTH_EVERY}\s+(?:on\s+the\s+|the\s+|el\s+d[ií]a\s+|el\s+|d[ií]a\s+|dia\s+|no\s+dia\s+)?{_MONTHDAY}"
+    r"|кажд(?:ое|ый)\s+(\d{1,2})(?:-?е|-?го)?\s+числ[оа]"
+    r")(?![^\W\d_])",
+    re.IGNORECASE,
+)
+_PERIOD_RECURRENCE_RE = re.compile(
+    r"(?<![^\W\d_])(?:кажд(?:ое|ый)\s+(утро|вечер)|every\s+(morning|evening)|"
+    r"cada\s+(mañana|noche)|toda\s+(manhã|noite))(?![^\W\d_])",
+    re.IGNORECASE,
+)
+_PERIOD_REPLACEMENT = {
+    "утро": "утром", "вечер": "вечером", "morning": "в 09:00", "evening": "в 19:00",
+    "mañana": "por la mañana", "noche": "por la noche", "manhã": "pela manhã", "noite": "à noite",
+}
+# A recurrence word still in the text after every rule above means the user
+# asked for a repeat this parser couldn't model — never save that silently.
+_LEFTOVER_RECURRENCE_RE = re.compile(
+    r"(?<![^\W\d_])(?:кажд\w+|ежедневн\w*|еженедельн\w*|ежемесячн\w*|every|each|cada|todos|todas|toda|todo)(?![^\W\d_])",
+    re.IGNORECASE,
+)
+
+# B-01: DD.MM[.YYYY] / DD/MM[/YYYY]. Not preceded by a clock-time preposition
+# ("в 14.30" is a time), not part of a longer number/version, not followed by
+# a unit ("1.5 часа", "1.20 руб").
+_NUMERIC_DATE_RE = re.compile(
+    r"(?<![\w.:/,])(\d{1,2})([./])(\d{1,2})(?:\2(\d{4}|\d{2}))?(?![\w.:/,]|\s*(?:час|ч\b|мин|min|h\b|hours?|horas?|руб|р\.|₽|\$|€|%|kg|кг|usd|eur))",
+    re.IGNORECASE,
+)
+_CLOCK_PREPOSITION_TAIL_RE = re.compile(r"(?:^|\s)(?:в|во|at|a\s+las?|às|as)\s*$", re.IGNORECASE)
+
+_LEADING_REMINDER_VERB_RE = re.compile(
+    r"^(?:напомни(?:те|ть)?(?:\s+мне)?|remind\s+me(?:\s+to)?|recu[eé]rdame(?:\s+que)?|lembre-me(?:\s+de)?|me\s+lembre(?:\s+de)?)(?:\s+|$)",
+    re.IGNORECASE,
+)
+
+
+def _weekday_codes(listing: str) -> list[str]:
+    codes = set()
+    for token in re.split(r"\s*(?:,|\bи\b|\band\b|\by\b|\be\b)\s*", listing, flags=re.IGNORECASE):
+        token = token.strip()
+        for stem, code in _WEEKDAY_STEMS:
+            if re.fullmatch(stem, token, flags=re.IGNORECASE):
+                codes.add(code)
+                break
+    return [c for c in _WEEKDAY_ORDER if c in codes]
+
+
+def extract_recurrence(text: str) -> tuple[str, Optional[str]]:
+    """Return (text with the recurrence phrase cut out, RRULE or None).
+
+    Specific shapes go first (monthly-by-day, every-N-units, weekday lists,
+    every morning/evening), then the original generic phrases
+    (_RECURRENCE_RULES: weekdays/weekend/daily/weekly). "Every morning"
+    is swapped for the plain period word so the time stages still read it.
+    """
+    m = _MONTHLY_RE.search(text)
+    if m:
+        day = next(int(g) for g in m.groups() if g)
+        if 1 <= day <= 31:
+            return _cut(text, m), f"FREQ=MONTHLY;BYMONTHDAY={day}"
+    m = _INTERVAL_RE.search(text)
+    if m:
+        n = int(m.group(1))
+        freq = next(f for pattern, f in _UNIT_FREQ if re.fullmatch(pattern, m.group(2), re.IGNORECASE))
+        if n >= 1:
+            return _cut(text, m), f"FREQ={freq}" + (f";INTERVAL={n}" if n > 1 else "")
+    m = _WEEKDAY_RECURRENCE_RE.search(text)
+    if m:
+        codes = _weekday_codes(m.group(1))
+        prefix = m.group(0)[: m.start(1) - m.start(0)].strip().lower()
+        # Bare "по"/"on"/"los"/"às" only signal a repeat with a PLURAL day
+        # ("по понедельникам", "on Mondays", "los lunes"); "в понедельник"
+        # never reaches here and "on Monday" is a one-off.
+        plural_needed = prefix in {"по", "on", "los", "las", "às", "aos"}
+        plural = re.search(r"(?:ам|ям|s)\b", m.group(1), re.IGNORECASE) or prefix in {"los", "las"}
+        if codes and (not plural_needed or plural):
+            return _cut(text, m), "FREQ=WEEKLY;BYDAY=" + ",".join(codes)
+    m = _PERIOD_RECURRENCE_RE.search(text)
+    if m:
+        word = next(g for g in m.groups() if g).lower()
+        replaced = text[: m.start()] + _PERIOD_REPLACEMENT[word] + text[m.end():]
+        return " ".join(replaced.split()), "FREQ=DAILY"
+    for pattern, candidate_rrule in _RECURRENCE_RULES:
+        m = pattern.search(text)
+        if m:
+            return _cut(text, m), candidate_rrule
+    return text, None
+
+
+def _cut(text: str, match: re.Match) -> str:
+    return " ".join((text[: match.start()] + " " + text[match.end():]).split())
+
+
+def extract_numeric_date(text: str, language: Optional[str], today: date) -> Optional[tuple[date, re.Match]]:
+    """Find a DD.MM[.YYYY] or DD/MM[/YYYY] date (MM/DD for "/" in English).
+
+    Without a year, the next such date from *today* (inclusive) is used.
+    Returns (date, match) or None."""
+    for m in _NUMERIC_DATE_RE.finditer(text):
+        if _CLOCK_PREPOSITION_TAIL_RE.search(text[: m.start()]):
+            continue  # "в 14.30" — a clock time, not a date
+        a, sep, b, year_raw = int(m.group(1)), m.group(2), int(m.group(3)), m.group(4)
+        day, month = (b, a) if sep == "/" and (language or "").lower().startswith("en") else (a, b)
+        if year_raw is None:
+            year = today.year
+        else:
+            year = int(year_raw) + (2000 if len(year_raw) == 2 else 0)
+        try:
+            found = date(year, month, day)
+        except ValueError:
+            continue
+        if year_raw is None and found < today:
+            try:
+                found = date(year + 1, month, day)
+            except ValueError:
+                continue
+        if not (today.year - 1 <= found.year <= today.year + 5):
+            continue
+        return found, m
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +517,15 @@ class InputParser:
         "mês que vem": "next month",
         "próximo mês": "next month",
         "a finales de la semana": "el viernes a las 18:00",
+        # B-03 (2026-11-04 audit): noon / lunch / midnight
+        "в полдень": "в 12:00",
+        "в обед": "в 13:00",
+        "в полночь": "в 23:59",
+        "at noon": "at 12:00",
+        "at midnight": "at 23:59",
+        "al mediodía": "a las 12:00",
+        "a mediodía": "a las 12:00",
+        "ao meio-dia": "às 12:00",
     }
 
     # ------------------------------------------------------------------
@@ -343,6 +539,17 @@ class InputParser:
             # Use case-insensitive substitution to match heuristics without forcing lowercase.
             # Word boundaries keep short keys (e.g. "утром") from matching inside longer words.
             normalized = re.sub(r"\b" + re.escape(key) + r"\b", value, normalized, flags=re.IGNORECASE)
+        # B-03: "1.5 часа" / "2,5 hours" → "1 час 30 минут"
+        normalized = re.sub(r"(?i)\b(\d+)[.,]5\s*(час\w*|ч\b)", r"\1 час 30 минут", normalized)
+        normalized = re.sub(r"(?i)\b(\d+)[.,]5\s*(hours?|horas?)\b", r"\1 hours 30 minutes", normalized)
+        # B-03: "в следующий вторник" — "следующий" stayed in the task text;
+        # PREFER_DATES_FROM=future already picks the coming weekday.
+        normalized = re.sub(
+            r"(?i)\b(?:в|во)\s+следующ(?:ий|ую|ее|ей)\s+"
+            r"(?=понедельник|вторник|сред|четверг|пятниц|суббот|воскресень)",
+            "в ",
+            normalized,
+        )
         # "5-го числа" / "12 числа" → "5 day of this month"
         normalized = re.sub(r"(\d{1,2})(?:-?го)?\s+числа", r"\1 day of this month", normalized)
         # "в 12" / "at 14" / "a las 9" → "…:00" mapping (helps dateparser avoid treating lonely hours as years)
@@ -387,8 +594,96 @@ class InputParser:
             dt = tz_obj.normalize(dt + timedelta(days=1))
         return dt
 
-    def _parse_sync(self, text: str, timezone: str) -> ParsedInput:
-        """Synchronous parse pipeline. Must be called via run_in_executor only."""
+    def _clock_from_match(self, hour_match: re.Match, timezone: str) -> Optional[datetime]:
+        return self._process_hour_expression(
+            hour=int(hour_match.group(1)),
+            minute=int(hour_match.group(2) or 0),
+            period_token=hour_match.group(3),
+            timezone=timezone,
+            now=datetime.now(resolve_timezone(timezone)),
+        )
+
+    @staticmethod
+    def _on_day(day_dt: datetime, clock_dt: datetime, timezone: str) -> datetime:
+        """*day_dt*'s local date at *clock_dt*'s local wall-clock time."""
+        tz_obj = resolve_timezone(timezone)
+        day = day_dt.astimezone(tz_obj) if day_dt.tzinfo else day_dt
+        clock = clock_dt.astimezone(tz_obj)
+        return tz_obj.localize(datetime(day.year, day.month, day.day, clock.hour, clock.minute))
+
+    @staticmethod
+    def _find_day_only(text: str, timezone: str) -> Optional[tuple[str, datetime]]:
+        """A dateparser span naming only a day ("завтра", "в понедельник",
+        "mañana") — no clock time, at least one real word (a lone number is
+        a quantity, not a day), plausible year."""
+        settings = {
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": timezone,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DAY_OF_MONTH": "current",
+        }
+        year = datetime.now(resolve_timezone(timezone)).year
+        for span, dt in _search_dates_any_language(_mask_phone_like(text), settings):
+            if _EXPLICIT_TIME_MARKER_RE.search(span) or not re.search(r"[^\W\d_]{3,}", span):
+                continue
+            if year <= dt.year <= year + 5:
+                return span.strip(), dt
+        return None
+
+    def _parse_sync(self, text: str, timezone: str, language: Optional[str] = None) -> ParsedInput:
+        """Synchronous parse pipeline. Must be called via run_in_executor only.
+
+        2026-11-04 audit: recurrence phrases (B-02) and numeric dates (B-01)
+        are pulled out first by deterministic rules; the remaining text goes
+        through the NLP pipeline (_parse_core) for the clock time, and the
+        two are combined here. *language* (the user's interface language)
+        only decides DD/MM vs MM/DD for slash dates.
+        """
+        tz_obj = resolve_timezone(timezone)
+        now_local = datetime.now(tz_obj)
+
+        core_text, rrule_string = extract_recurrence(text)
+        numeric = extract_numeric_date(core_text, language, now_local.date())
+        if numeric is not None:
+            numeric_date, match = numeric
+            core_text = _cut(core_text, match)
+
+        core = self._parse_core(core_text, timezone)
+        parsed_datetime, confidence = core.parsed_datetime, core.confidence
+        parse_source, date_only = core.parse_source, core.date_only
+
+        if numeric is not None:
+            has_clock = parsed_datetime is not None and not date_only and parse_source != "regex_duration"
+            if has_clock:
+                clock = parsed_datetime.astimezone(tz_obj)
+                parsed_datetime = tz_obj.localize(
+                    datetime(numeric_date.year, numeric_date.month, numeric_date.day, clock.hour, clock.minute)
+                )
+            else:
+                parsed_datetime = tz_obj.localize(
+                    datetime(numeric_date.year, numeric_date.month, numeric_date.day)
+                )
+                confidence, date_only = 0.4, True
+            parse_source = "numeric_date"
+
+        clean_text = _LEADING_REMINDER_VERB_RE.sub("", core.clean_text).strip()
+        if rrule_string is None and parsed_datetime is not None and _LEFTOVER_RECURRENCE_RE.search(clean_text):
+            # A repeat the rules above can't model ("каждый раз", "every
+            # other Friday") — ask instead of saving a one-off silently.
+            confidence = min(confidence, 0.6)
+
+        return ParsedInput(
+            clean_text=clean_text,
+            parsed_datetime=parsed_datetime,
+            confidence=confidence,
+            parse_source=parse_source,
+            rrule_string=rrule_string,
+            date_only=date_only,
+        )
+
+    def _parse_core(self, text: str, timezone: str) -> ParsedInput:
+        """The NLP time pipeline (Natasha + dateparser + regex fallbacks) on
+        text that no longer contains a recurrence phrase or numeric date."""
         logger.debug("Parser: input_length=%s timezone=%s", len(text), timezone)
 
         # Stage 1 — heuristics
@@ -399,15 +694,8 @@ class InputParser:
         # Deliberately independent of the date/time stages below: none of
         # them ever resolve "каждый день"/"every day"/etc. to a datetime,
         # so this can't steal a match from Stage 3/4.
+        # (Recurrence phrases were already cut out by _parse_sync.)
         rrule_string: Optional[str] = None
-        for pattern, candidate_rrule in _RECURRENCE_RULES:
-            recurrence_match = pattern.search(normalized_text)
-            if recurrence_match:
-                rrule_string = candidate_rrule
-                matched_phrase = recurrence_match.group(0)
-                if matched_phrase in clean_text:
-                    clean_text = clean_text.replace(matched_phrase, "", 1)
-                break
 
         # Stage 2 — Natasha NER (serialised for thread safety)
         try:
@@ -490,6 +778,16 @@ class InputParser:
         # "at 5 pm" dateparser gets right, so those are left alone.)
         dp_matches = [(s, dt) for s, dt in dp_matches if not _RU_PERIOD_IN_MATCH_RE.search(s)]
 
+        # A matched "HH:MM" that the resolved datetime disagrees with is a
+        # misread ("в 18:00 день рождения" came back as "now" — dateparser
+        # took "день" for a unit). Drop it; the regex fallback reads the
+        # clock time itself.
+        def _clock_agrees(span: str, dt: datetime) -> bool:
+            clock = _CLOCK_IN_SPAN_RE.search(span)
+            return clock is None or (int(clock.group(1)), int(clock.group(2))) == (dt.hour, dt.minute)
+
+        dp_matches = [(s, dt) for s, dt in dp_matches if _clock_agrees(s, dt)]
+
         date_only = False
         if dp_matches:
             matched_substring, dt_obj = dp_matches[0]
@@ -531,31 +829,23 @@ class InputParser:
             clean_text = _strip_first_occurrence(clean_text, matched_substring)
             if extra_span is not None:
                 clean_text = _strip_first_occurrence(clean_text, extra_span)
+            if date_only:
+                # B-03: "в 10 утра в понедельник" — the clock part was
+                # dropped above (trailing period word), the day survived.
+                # Merge the regex-read clock time into that day.
+                rest = normalized_text.replace(matched_substring, " ", 1)
+                hour_match = _HOUR_RE.search(rest)
+                clock = self._clock_from_match(hour_match, timezone) if hour_match else None
+                if clock is not None:
+                    parsed_datetime = self._on_day(parsed_datetime, clock, timezone)
+                    date_only = False
+                    confidence = 0.75
+                    clean_text = _strip_first_occurrence(clean_text, hour_match.group(0).strip())
 
         # Stage 4a — regex fallback: "в 23", "at 9", "в 10 утра", "в 23 часа"
         if not parsed_datetime:
             now = datetime.now(resolve_timezone(timezone))
-            hour_pattern = re.compile(
-                r"(?:^|\s)(?:в|at|a\s+las?|às|as)\s+(\d{1,2})(?:[:.](\d{2}))?"
-                # 2: consume a trailing bare hour-unit word ("часа"/"hours"/
-                # "horas") so it doesn't leak into clean_text — same words
-                # _AMBIGUOUS_HOUR_WORD_RE screens out of Stage 3 above.
-                r"\s*(?:час(?:а|ов)?|hours?|horas?)?"
-                # A-06: \s* (not \s+) — when the час-word group above is
-                # absent (matches empty, e.g. "в 5 вечера" has no "час(а)"
-                # at all), the \s* right before it already greedily
-                # consumed the ONE separating space, leaving nothing left
-                # for a \s+ here to match and silently dropping the period
-                # word (and its AM/PM meaning) out of the whole match —
-                # "в 5 вечера" matched only "в 5", leaving group(3) empty,
-                # 17:00 misread as 05:00, and "вечера" leaking into
-                # clean_text. \s* accepts that already-consumed, now-empty
-                # gap just as well as a real one when a час-word WAS
-                # present and used its own trailing space.
-                r"(?:\s*(?:de\s+la\s+|da\s+|de\s+)?(утра|дня|послеобеденно|вечера|ночи|am|pm|mañana|manhã|manha|tarde|noche|noite))?",
-                re.IGNORECASE,
-            )
-            hour_match = hour_pattern.search(normalized_text)
+            hour_match = _HOUR_RE.search(normalized_text)
             if hour_match:
                 result_dt = self._process_hour_expression(
                     hour=int(hour_match.group(1)),
@@ -566,6 +856,14 @@ class InputParser:
                 )
                 if result_dt:
                     parsed_datetime = result_dt
+                    # B-03: "завтра в 10 утра" — dateparser's match was
+                    # dropped for its trailing period word, taking the day
+                    # with it. Look for a day-only phrase in what's left.
+                    day = self._find_day_only(normalized_text.replace(hour_match.group(0), " ", 1), timezone)
+                    if day is not None:
+                        day_span, day_dt = day
+                        parsed_datetime = self._on_day(day_dt, result_dt, timezone)
+                        clean_text = _strip_first_occurrence(clean_text, day_span)
                     parse_source = "regex_hour"
                     # An explicit period-of-day word ("в 7 утра", "at 5 pm")
                     # leaves nothing ambiguous to confirm. Since the trailing-
@@ -668,10 +966,10 @@ class InputParser:
     # Public API
     # ------------------------------------------------------------------
 
-    async def parse(self, text: str, timezone: str) -> ParsedInput:
+    async def parse(self, text: str, timezone: str, language: Optional[str] = None) -> ParsedInput:
         """Parse *text* and return a :class:`ParsedInput`.
 
         Offloads blocking NLP work to a thread-pool executor.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._parse_sync, text, timezone)
+        return await loop.run_in_executor(None, self._parse_sync, text, timezone, language)

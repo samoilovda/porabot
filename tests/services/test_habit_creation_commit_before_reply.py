@@ -14,7 +14,7 @@ class _FakeParser:
     def __init__(self, parsed_datetime):
         self._parsed_datetime = parsed_datetime
 
-    async def parse(self, text, tz):
+    async def parse(self, text, tz, language=None):
         return SimpleNamespace(clean_text=text, parsed_datetime=self._parsed_datetime, confidence=1.0)
 
 

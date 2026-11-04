@@ -91,7 +91,7 @@ async def handle_forwarded_task(
         return
 
     try:
-        result = await parser.parse(full_text, user.timezone)
+        result = await parser.parse(full_text, user.timezone, getattr(user, "language", None))
     except ValueError as ve:
         await message.answer(user_message(ve, l10n))
         return
@@ -197,7 +197,7 @@ async def handle_reply_to_card(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing card reply for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -256,7 +256,7 @@ async def handle_task_text(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except ValueError as ve:
         await message.answer(user_message(ve, l10n))
         return
@@ -333,7 +333,7 @@ async def state_choosing_time_text_input(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing time input for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))

@@ -331,7 +331,7 @@ async def state_habit_time(
 
     parser = InputParser()
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing habit time input for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))

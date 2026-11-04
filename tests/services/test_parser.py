@@ -70,7 +70,9 @@ def test_normalized_time_phrase_does_not_leak_into_clean_text() -> None:
     assert result.parsed_datetime is not None
     assert result.parsed_datetime.hour == 19
     assert "19:00" not in result.clean_text
-    assert result.clean_text == "напомни выпить чай"
+    # 2026-11-04 audit (B-03): the leading "напомни" is a filler verb, not
+    # part of the task.
+    assert result.clean_text == "выпить чай"
 
 
 def test_normalization_keys_respect_word_boundaries() -> None:
@@ -132,7 +134,7 @@ def test_dashed_numeric_date_is_not_masked_as_phone_number() -> None:
     assert result.parsed_datetime is not None
     assert (result.parsed_datetime.month, result.parsed_datetime.day) == (8, 15)
     assert result.parsed_datetime.year == 2026
-    assert result.clean_text == "напомни позвонить врачу"
+    assert result.clean_text == "позвонить врачу"
 
 
 def test_space_separated_numeric_date_is_not_masked_as_phone_number() -> None:

@@ -372,7 +372,10 @@ async def test_snoozing_only_current_occurrence_keeps_series_anchor(database):
         callback("edit_scope:" + (await state.get_data())["scope_nonce"] + ":one"), state, user, dao, scheduler, RU
     )
     assert (task.execution_time, task.rrule_dtstart) == original
-    assert scheduler.schedule_reminder.call_args.args[1].replace(tzinfo=None) == target
+    # B-11: shown as snoozed_until and fired on its own job.
+    assert scheduler.schedule_snooze.call_args.args[1].replace(tzinfo=None) == target
+    assert task.snoozed_until == target
+    scheduler.schedule_reminder.assert_not_called()
 
 
 async def test_series_edit_beyond_until_does_not_save(database):

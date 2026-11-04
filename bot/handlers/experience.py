@@ -134,6 +134,12 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
         )
         if task.execution_time < datetime.now(timezone.utc).replace(tzinfo=None) and not task.is_fluid_habit:
             when = l10n["btn_filter_overdue"] + " · " + when
+        snoozed = getattr(task, "snoozed_until", None)
+        if snoozed is not None and snoozed > datetime.now(timezone.utc).replace(tzinfo=None):
+            # B-11: a postponed occurrence of a recurring task was invisible.
+            when = l10n["snoozed_until_short"].format(
+                time=format_time(snoozed, user.timezone, fmt="%d.%m %H:%M")
+            ) + " · " + when
         if paused:
             when = l10n["habit_paused_until"].format(date=format_time(task.paused_until, user.timezone, fmt="%d.%m"))
         lines.append(f"{index}. {task.reminder_text[:180]}\n{when}")
@@ -325,6 +331,10 @@ async def task_action(
             + "\n"
             + _rrule_text(task, l10n)
         )
+        if task.snoozed_until is not None and task.snoozed_until > datetime.now(timezone.utc).replace(tzinfo=None):
+            schedule += "\n" + l10n["snoozed_until_short"].format(
+                time=format_time(task.snoozed_until, user.timezone, fmt="%d.%m %H:%M")
+            )
         progress = ""
         if task.is_habit or task.is_fluid_habit:
             from bot.services.habit_reports import compute_habit_score

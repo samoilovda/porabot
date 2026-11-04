@@ -523,4 +523,5 @@ EN.update({
     "limit_habits_reached": '❌ You already have {count} active habits (limit {limit}). Delete or pause some first.',
     "habit_confirm_time_rule": '{rule}, starting {time}. One notification. Save?',
     "habit_created_rule": '✅ *Habit created!*\nI will remind you to *{habit}*: {rule}, next at `{time}`.',
+    "snoozed_until_short": '⏰ snoozed until {time}',
 })

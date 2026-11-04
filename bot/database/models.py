@@ -306,6 +306,12 @@ class Reminder(Base):
     # to skip cycles that fell inside the pause, so the schedule resumes
     # without a burst of catch-up "missed" events. NULL = never paused.
     paused_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # B-11 (2026-11-04 audit): naive-UTC time a snoozed occurrence of a
+    # RECURRING reminder will be re-sent (job "snz_<id>"). execution_time
+    # keeps pointing at the next regular occurrence; this is what the UI
+    # shows as "snoozed until …". Cleared when the snooze fires or the cycle
+    # is closed. NULL = no pending snooze.
+    snoozed_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the current active habit cycle (UTC naive).
     habit_active_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Due timestamp of the last completed habit cycle (UTC naive).

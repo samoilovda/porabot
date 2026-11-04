@@ -516,6 +516,8 @@ async def callback_recovery_snooze_all(
         # it. Only reschedule the current job.
         if not task.is_recurring:
             task.execution_time = new_time
+        else:
+            task.snoozed_until = new_time  # B-11
         task.completed_for_execution_time = None
         task.last_nag_chat_id = None
         task.last_nag_message_id = None
@@ -531,7 +533,10 @@ async def callback_recovery_snooze_all(
 
     for task in overdue:
         try:
-            scheduler_service.schedule_reminder(task.id, new_time, is_nagging=task.is_nagging)
+            if task.is_recurring:
+                scheduler_service.schedule_snooze(task.id, new_time, is_nagging=task.is_nagging)
+            else:
+                scheduler_service.schedule_reminder(task.id, new_time, is_nagging=task.is_nagging)
         except Exception as e:
             # DB state is already durable regardless — see
             # callback_recovery_done_all's comment on the same pattern.

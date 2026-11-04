@@ -713,8 +713,14 @@ async def _save_and_show_edit(
                 # restarts from it, same as picking a new repeat rule does.
                 if new_reminder.is_recurring and new_reminder.rrule_string:
                     new_reminder.rrule_dtstart = execution_time
+            else:
+                # B-11: a recurring "only this occurrence" snooze is shown
+                # as snoozed_until and fires on its own snz_ job below.
+                new_reminder.snoozed_until = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1
+            elif new_reminder.is_recurring:
+                new_reminder.snoozed_until = None  # editing the series drops a pending snooze
         else:
             logger.warning("Reminder %s not found during edit.", edit_reminder_id)
             return
@@ -757,11 +763,19 @@ async def _save_and_show_edit(
         # untouched above (anti-drift guard), but the job itself must still
         # fire at the time the user picked — schedule from `execution_time`,
         # not the (possibly stale) DB field.
-        scheduler_service.schedule_reminder(
-            new_reminder.id,
-            to_utc_aware(execution_time),
-            is_nagging=new_reminder.is_nagging,
-        )
+        snoozed_until = getattr(new_reminder, "snoozed_until", None)
+        if snoozed_until is not None and snoozed_until == execution_time:
+            scheduler_service.schedule_snooze(
+                new_reminder.id, to_utc_aware(execution_time), is_nagging=new_reminder.is_nagging
+            )
+        else:
+            if edit_reminder_id and hasattr(scheduler_service, "remove_snooze_job"):
+                scheduler_service.remove_snooze_job(new_reminder.id)
+            scheduler_service.schedule_reminder(
+                new_reminder.id,
+                to_utc_aware(execution_time),
+                is_nagging=new_reminder.is_nagging,
+            )
     except Exception as e:
         logger.error("Failed to schedule reminder %s: %s", new_reminder.id, e, exc_info=True)
         # Critical: rollback DAO changes when scheduling failed, otherwise reminder
@@ -794,6 +808,12 @@ async def _save_and_show_edit(
             # reconcile_jobs_with_db notices.
             try:
                 await reminder_dao.session.refresh(new_reminder)
+                if hasattr(scheduler_service, "remove_snooze_job"):
+                    scheduler_service.remove_snooze_job(new_reminder.id)
+                if getattr(new_reminder, "snoozed_until", None) is not None:
+                    scheduler_service.schedule_snooze(
+                        new_reminder.id, to_utc_aware(new_reminder.snoozed_until), is_nagging=new_reminder.is_nagging
+                    )
                 scheduler_service.schedule_reminder(
                     new_reminder.id,
                     to_utc_aware(new_reminder.execution_time),

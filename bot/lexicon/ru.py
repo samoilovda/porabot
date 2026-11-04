@@ -523,4 +523,5 @@ RU.update({
     "limit_habits_reached": '❌ У тебя уже {count} активных привычек (лимит {limit}). Удали лишние.',
     "habit_confirm_time_rule": '{rule}, начиная с {time}. Одно уведомление. Сохранить?',
     "habit_created_rule": '✅ *Привычка создана!*\nБуду напоминать: *{habit}* — {rule}, ближайшее `{time}`.',
+    "snoozed_until_short": '⏰ отложено до {time}',
 })

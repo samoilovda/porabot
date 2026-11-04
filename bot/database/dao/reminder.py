@@ -305,6 +305,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
             reminder.snooze_count = 0
+            reminder.snoozed_until = None  # B-11: a closed cycle has nothing left to re-send
 
             await self.session.flush()
 
@@ -449,6 +450,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
             reminder.snooze_count = 0
+            reminder.snoozed_until = None
             await self.session.flush()
 
     async def revert_habit_streak_completion(
@@ -951,6 +953,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         reminder.fluid_last_completed_date = today_str
         reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
         reminder.snooze_count = 0
+        reminder.snoozed_until = None
         await self.session.flush()
         return True
 

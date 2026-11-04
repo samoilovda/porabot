@@ -481,4 +481,5 @@ PT.update({
     "limit_habits_reached": '❌ Você já tem {count} hábitos ativos (limite {limit}). Exclua alguns primeiro.',
     "habit_confirm_time_rule": '{rule}, a partir de {time}. Uma notificação. Salvar?',
     "habit_created_rule": '✅ *Hábito criado!*\nVou lembrar você de *{habit}*: {rule}, próximo `{time}`.',
+    "snoozed_until_short": '⏰ adiado até {time}',
 })

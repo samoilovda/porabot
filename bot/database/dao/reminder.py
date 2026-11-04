@@ -649,8 +649,15 @@ class ReminderDAO(BaseDAO[Reminder]):
         """3.4: `/find <text>` — case-insensitive substring search over the
         user's pending, non-fluid tasks. Same active-list rules as
         get_user_reminders (hides soft-deleted and already-completed
-        recurring cycles)."""
-        needle = f"%{_escape_like(query.strip())}%"
+        recurring cycles).
+
+        Matching happens in Python with str.casefold(): SQLite's lower()/
+        LIKE only fold ASCII, so "молоко" never matched "Молоко" in SQL. A
+        user has at most MAX_ACTIVE_REMINDERS active rows, so filtering
+        them in memory is cheap."""
+        needle = query.strip().casefold()
+        if not needle:
+            return []
         result = await self.session.execute(
             select(Reminder)
             .where(
@@ -658,7 +665,6 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(False),
                 Reminder.pending_delete_at.is_(None),
-                Reminder.reminder_text.ilike(needle, escape=_LIKE_ESCAPE_CHAR),
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,
@@ -666,7 +672,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             )
             .order_by(*self._priority_order())
         )
-        return result.scalars().all()
+        return [r for r in result.scalars().all() if needle in (r.reminder_text or "").casefold()]
 
     async def get_user_reminders_today(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
         """3.4 "today" filter — convenience alias, same query as the daily

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from bot.database.dao.habit_event import HabitEventDAO, cycle_key_for_fluid
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import Reminder, User
+from bot.utils.time_ext import habit_cycle_grace, occurrences_between_utc
 from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,39 @@ logger = logging.getLogger(__name__)
 # Without this window, the very first deploy would generate a "missed" event
 # for every habit's ancient habit_active_due_at.
 RETROSPECTION_WINDOW = timedelta(days=7)
-# For FREQ=DAILY habits, due + 24h is exactly the next scheduled notification —
-# the same grace period apply_habit_streak_completion uses.
+# Minimum grace before a cycle can become a miss; the real grace runs until
+# the rule's next occurrence (habit_cycle_grace) — exactly 24h for daily.
 GRACE = timedelta(hours=24)
+
+
+def _second(dt: datetime) -> int:
+    return int(dt.replace(tzinfo=timezone.utc).timestamp())
+
+
+def _candidate_cycles(reminder, user_tz: str, now_utc_naive: datetime) -> list[datetime]:
+    """Due times of this habit's cycles that may need a "missed" event.
+
+    B-09 (2026-11-04 audit): only habit_active_due_at used to be checked —
+    and that column only advances when a notification actually fires. So a
+    bot outage of N days, or a user who blocked the bot (sends stop after
+    FORBIDDEN_STRIKES_LIMIT), produced at most ONE missed event however
+    many cycles went by. Now every occurrence of the habit's own rule inside
+    the retrospection window is a candidate. Enumeration starts at the
+    series anchor (rrule_dtstart), which moves when the habit's time is
+    edited, so cycles from before an edit are never reinterpreted.
+    """
+    candidates: dict[int, datetime] = {}
+    if reminder.habit_active_due_at is not None:
+        candidates[_second(reminder.habit_active_due_at)] = reminder.habit_active_due_at
+    anchor = reminder.rrule_dtstart or reminder.execution_time
+    if reminder.is_recurring and reminder.rrule_string and anchor is not None:
+        window_start = now_utc_naive - GRACE - RETROSPECTION_WINDOW
+        try:
+            for due in occurrences_between_utc(reminder.rrule_string, anchor, user_tz, window_start, now_utc_naive):
+                candidates.setdefault(_second(due), due)
+        except (ValueError, TypeError):
+            logger.warning("Invalid rrule on habit %s — sweeping its active cycle only.", reminder.id)
+    return sorted(candidates.values())
 
 
 async def _sweep_fixed_habits(session, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, user: User) -> None:
@@ -41,30 +72,37 @@ async def _sweep_fixed_habits(session, reminder_dao: ReminderDAO, habit_event_da
         )
     )
     for reminder in result.scalars().all():
-        due = reminder.habit_active_due_at
-        if due is None:
-            continue
-        if reminder.habit_last_completed_due_at == due:
-            continue  # already counted as done
-        if reminder.paused_until is not None and due < reminder.paused_until:
-            continue  # cycle fell inside a pause (step 13) — never a miss
-        created_at = reminder.created_at
-        if created_at is not None and due < created_at:
-            continue  # don't invent cycles predating the habit
-        if now_utc_naive < due + GRACE:
-            continue  # grace period hasn't elapsed yet
-        if now_utc_naive >= due + GRACE + RETROSPECTION_WINDOW:
-            continue  # too old — don't backfill ancient misses
+        rule = reminder.rrule_string if reminder.is_recurring else None
+        anchor = reminder.rrule_dtstart or reminder.execution_time
+        last_done = reminder.habit_last_completed_due_at
+        last_done_s = last_done.replace(microsecond=0) if last_done is not None else None
+        for due in _candidate_cycles(reminder, user.timezone, now_utc_naive):
+            # rrule occurrences carry no microseconds; cycle keys are whole
+            # seconds too — compare at that precision.
+            if due.replace(microsecond=0) == last_done_s:
+                continue  # already counted as done
+            if reminder.paused_until is not None and due < reminder.paused_until:
+                continue  # cycle fell inside a pause (step 13) — never a miss
+            created_at = reminder.created_at
+            if created_at is not None and due < created_at:
+                continue  # don't invent cycles predating the habit
+            # B-08: the cycle stays completable until the rule's next
+            # occurrence (min 24h), so it only becomes a miss after that.
+            grace = habit_cycle_grace(rule, anchor, user.timezone, due)
+            if now_utc_naive < due + grace:
+                continue  # grace period hasn't elapsed yet
+            if now_utc_naive >= due + grace + RETROSPECTION_WINDOW:
+                continue  # too old — don't backfill ancient misses
 
-        recorded = await habit_event_dao.record(
-            reminder=reminder,
-            user_tz=user.timezone,
-            outcome="missed",
-            source="auto",
-            due_at_utc_naive=due,
-        )
-        if recorded:
-            reminder.habit_streak_current = 0
+            recorded = await habit_event_dao.record(
+                reminder=reminder,
+                user_tz=user.timezone,
+                outcome="missed",
+                source="auto",
+                due_at_utc_naive=due,
+            )
+            if recorded and (last_done_s is None or due.replace(microsecond=0) > last_done_s):
+                reminder.habit_streak_current = 0
 
 
 async def _sweep_fluid_habits(session, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, user: User) -> None:

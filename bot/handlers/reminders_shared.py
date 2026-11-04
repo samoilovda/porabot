@@ -42,7 +42,10 @@ logger = logging.getLogger(__name__)
 # asyncio.Task registry for auto-removing inline keyboards after 5 s
 active_auto_delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
-_UNDO_DELETE_WINDOW = 5
+# B-12: seconds a deleted reminder stays restorable. 5s was shorter than it
+# takes to notice a mis-tap, while the task list keeps its Undo button
+# until the next redraw — so most Undo taps landed "too late".
+_UNDO_DELETE_WINDOW = 30
 
 _MENU_TEXTS = ALL_MENU_BUTTON_TEXTS
 _MAX_INPUT = 3000

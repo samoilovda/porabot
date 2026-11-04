@@ -292,6 +292,11 @@ async def task_action(
         return await callback.answer(l10n["context_expired"], show_alert=True)
     task = await reminder_dao.get_owned(rid, user.id, include_pending_delete=action == "undelete")
     if not task:
+        if action == "undelete":
+            # B-12: the cleanup sweep already hard-deleted it — say so, and
+            # redraw the list without the stale Undo button.
+            await callback.answer(l10n["undo_too_late"], show_alert=True)
+            return await render_list(callback.message, reminder_dao, user, l10n, context, page)
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.clear()
     await state.update_data(nav_token=token, nav_page=page)

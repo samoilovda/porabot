@@ -665,3 +665,25 @@ async def test_upgrade_adds_ui_contexts_without_changing_saved_tasks(database):
     assert task.is_nagging is True
     context = await create_context(session, user.id, "list", {"kind": "all"})
     assert await get_context(session, context.token, user.id, "list") is not None
+
+
+async def test_undo_delete_window_is_long_enough_to_notice_a_mistap():
+    """B-12 (2026-11-04 audit): the task list keeps its Undo button until
+    the next redraw; a 5-second window made most Undo taps 'too late'."""
+    from bot.handlers import reminders_shared
+
+    assert reminders_shared._UNDO_DELETE_WINDOW >= 30
+
+
+async def test_undo_after_hard_delete_says_too_late_and_drops_the_button(database):
+    from bot.handlers.experience import task_action
+
+    session, _ = database
+    user, dao, events = await user_dao(session)
+    ctx = await create_context(session, 1, "list", {"kind": "all", "query": None})
+    cb = callback(f"ux:{ctx.token}:0:undelete:999999")
+    await task_action(cb, fsm(), dao, events, Mock(), user, RU)
+    cb.answer.assert_awaited_once_with(RU["undo_too_late"], show_alert=True)
+    markup = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    datas = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert not any(":undelete:" in d for d in datas)

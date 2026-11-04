@@ -6,6 +6,7 @@ docstring for the full module family and why).
 """
 
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -122,29 +123,51 @@ async def handle_forwarded_task(
         await state.clear()
 
 
-_CARD_ID_PREFIXES = ("task_settings_", "del_task_", "edit_edit_", "edit_delete_")
+# Every callback_data shape that names exactly one task: saved-task cards,
+# the edit keyboard, and a fired reminder's notification (done/not today/
+# not relevant/snooze — B-06: a recurring task's notification has no
+# del_task_ button, so replying to it used to create a NEW task instead).
+_CARD_ID_PREFIXES = (
+    "task_settings_", "del_task_", "edit_edit_", "edit_delete_",
+    "done_task_", "not_today_", "not_relevant_", "snooze_show_", "snooze_act_",
+)
+# ux: actions that only ever appear on a task LIST, never on one task's card.
+_LIST_ONLY_UX_ACTIONS = frozenset({"done", "detail", "habitdone", "habitundo", "undone", "undelete"})
+_LEADING_ID_RE = re.compile(r"\d+")
 
 
 def _reminder_id_from_card(replied: Message | None) -> int | None:
     """Step 12: the reminder a bot card refers to, read from the card's own
-    inline keyboard (task_settings_/del_task_/... callback_data) — no
-    message-id -> reminder mapping to store or lose on restart. None if
-    the replied message isn't one of our task cards."""
+    inline keyboard — no message-id -> reminder mapping to store or lose on
+    restart. None if the replied message isn't the card of exactly ONE task.
+
+    B-05: a task list carries ux: buttons for every task on the page; it
+    used to resolve to the FIRST task, so replying to the list with a new
+    phrase silently rescheduled task #1. List-only buttons now disqualify
+    the message, and buttons naming more than one task are ambiguous."""
     markup = getattr(replied, "reply_markup", None)
     if replied is None or not markup:
         return None
+    ids: set[int] = set()
     for row in markup.inline_keyboard:
         for button in row:
             data = button.callback_data or ""
             if data.startswith("ux:"):
-                try:
-                    return int(data.split(":")[4])
-                except (ValueError, IndexError):
+                parts = data.split(":")
+                if len(parts) < 5:
                     continue
+                if parts[3] in _LIST_ONLY_UX_ACTIONS:
+                    return None
+                if parts[4].isdigit():
+                    ids.add(int(parts[4]))
+                continue
             for prefix in _CARD_ID_PREFIXES:
                 if data.startswith(prefix):
-                    return _parse_id_suffix(data, prefix)
-    return None
+                    match = _LEADING_ID_RE.match(data, len(prefix))
+                    if match:
+                        ids.add(int(match.group(0)))
+                    break
+    return ids.pop() if len(ids) == 1 else None
 
 
 @router.message(StateFilter(None), F.text, F.reply_to_message, ~F.text.startswith("/"))

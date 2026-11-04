@@ -441,4 +441,5 @@ PT: dict[str, Any] = {
     'plural_habits': ['hábito', 'hábitos'],
     'plural_overdue_tasks': ['tarefa vencida', 'tarefas vencidas'],
     'tz_presets': [['America/Sao_Paulo', 'São Paulo / Brasília'], ['America/Manaus', 'Manaus'], ['America/Recife', 'Recife / Fortaleza'], ['Europe/Lisbon', 'Lisboa'], ['Africa/Luanda', 'Luanda'], ['Africa/Maputo', 'Maputo'], ['Europe/London', 'Londres'], ['America/New_York', 'Nova York'], ['UTC', 'UTC']],
+    'nag_counter': '🔁 Lembrete {n} de {max}',
 }

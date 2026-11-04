@@ -441,4 +441,5 @@ EN: dict[str, Any] = {
     'plural_habits': ['habit', 'habits'],
     'plural_overdue_tasks': ['overdue task', 'overdue tasks'],
     'tz_presets': [['America/New_York', 'New York'], ['America/Chicago', 'Chicago'], ['America/Denver', 'Denver'], ['America/Los_Angeles', 'Los Angeles'], ['Europe/London', 'London'], ['Europe/Berlin', 'Berlin'], ['Europe/Kyiv', 'Kyiv'], ['Europe/Moscow', 'Moscow'], ['Asia/Dubai', 'Dubai'], ['Asia/Kolkata', 'India'], ['Asia/Singapore', 'Singapore'], ['Asia/Tokyo', 'Tokyo'], ['Australia/Sydney', 'Sydney'], ['UTC', 'UTC']],
+    'nag_counter': '🔁 Follow-up {n} of {max}',
 }

@@ -441,4 +441,5 @@ RU: dict[str, Any] = {
     'plural_habits': ['привычка', 'привычки', 'привычек'],
     'plural_overdue_tasks': ['просроченная задача', 'просроченные задачи', 'просроченных задач'],
     'tz_presets': [['Europe/Moscow', 'Москва'], ['Europe/Kaliningrad', 'Калининград'], ['Europe/Samara', 'Самара'], ['Asia/Yekaterinburg', 'Екатеринбург'], ['Asia/Omsk', 'Омск'], ['Asia/Novosibirsk', 'Новосибирск'], ['Asia/Krasnoyarsk', 'Красноярск'], ['Asia/Irkutsk', 'Иркутск'], ['Asia/Vladivostok', 'Владивосток'], ['Europe/Minsk', 'Минск'], ['Europe/Kyiv', 'Киев'], ['Asia/Almaty', 'Алматы'], ['Asia/Tashkent', 'Ташкент'], ['Asia/Tbilisi', 'Тбилиси'], ['Asia/Yerevan', 'Ереван'], ['Asia/Baku', 'Баку'], ['Europe/Berlin', 'Берлин'], ['Europe/London', 'Лондон'], ['America/New_York', 'Нью-Йорк'], ['UTC', 'UTC']],
+    'nag_counter': '🔁 Повторное напоминание {n} из {max}',
 }

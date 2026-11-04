@@ -1084,9 +1084,16 @@ class SchedulerService:
                 message_id=int(reminder.last_nag_message_id),
             )
 
+        text = reminder.reminder_text
+        if is_nagging_execution and getattr(reminder, "nagging_max_repeats", None):
+            # U-05 (2026-11-04 audit): say which follow-up this is, so the
+            # user knows how many more are coming.
+            total = max(0, int(getattr(reminder, "nagging_max_repeats", 0) or 0))
+            current = min(total, max(0, int(getattr(reminder, "nagging_sent_count", 0) or 0)) + 1)
+            text = f"{text}\n\n{l10n['nag_counter'].format(n=current, max=total)}"
         sent_message, outcome, retry_after = await self._send_telegram_message(
             reminder.user_id,
-            reminder.reminder_text,
+            text,
             l10n,
             keyboard,
         )

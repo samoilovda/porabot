@@ -521,7 +521,10 @@ async def callback_done_undo(
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
+    from_list: bool = False,
 ) -> None:
+    """*from_list*: called by the task list, which redraws itself — skip the
+    keyboard strip and the extra confirmation message (B-17)."""
     payload = callback.data[len("done_undo_"):]
     parts = payload.split("_")
     try:
@@ -594,6 +597,9 @@ async def callback_done_undo(
             scheduler_service.remove_reminder_job(reminder.id)
         return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
 
+    if from_list:
+        await callback.answer(l10n.get("done_undo_done", "↩ Done action was undone. Task is active again."))
+        return
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:

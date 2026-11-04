@@ -446,6 +446,7 @@ async def task_action(
             scheduler_service,
             user,
             l10n,
+            from_list=True,
         )
         await render_list(callback.message, reminder_dao, user, l10n, context, page)
     elif action in {"habitdone", "habitundo"}:

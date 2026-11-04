@@ -536,9 +536,9 @@ class HabitEvent(Base):
     it powers weekly/monthly habit reports and lets a completion be undone
     without guessing which cycle it belonged to.
 
-    `habit_text` is a snapshot, not a join: habits are hard-deleted, so the
-    event log must survive a deleted or renamed habit without dangling FKs
-    or rewriting history.
+    `habit_text` is a snapshot, not a join, so a RENAMED habit keeps its
+    history as it was. Deleting a habit deletes its events too (they are an
+    FK child of reminders — see delete_cleanup.py); pausing keeps them.
 
     `cycle_key` makes recording idempotent per (reminder_id, cycle_key):
       - fixed habits:  f"due:{int(due_at_utc.timestamp())}"

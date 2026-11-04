@@ -378,11 +378,16 @@ async def callback_time_selected(
     now = datetime.now(tz)
     execution_time = None
 
-    if "delta" in data_str:
-        minutes = int(data_str.split("_")[-1])
-        execution_time = now + timedelta(minutes=minutes)
-    elif "fixed" in data_str:
-        execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
+    if "delta" in data_str or "fixed" in data_str:
+        try:
+            if "delta" in data_str:
+                execution_time = now + timedelta(minutes=int(data_str.split("_")[-1]))
+            else:
+                execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
+        except (ValueError, IndexError):
+            # B-17: callback_data is client-controlled — a malformed value
+            # gets the specific "invalid action" alert, not a generic error.
+            return await callback.answer(l10n["invalid_action"], show_alert=True)
     elif "tomorrow" in data_str:
         # 1.3: DST-safe — see local_time_tomorrow's docstring for why this
         # replaced a plain now.replace(hour=9, ...) + timedelta(days=1).

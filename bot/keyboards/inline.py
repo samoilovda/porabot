@@ -132,7 +132,7 @@ def get_timezone_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
 
     Example:
         >>> markup = get_timezone_keyboard()
-        # Shows Москва, Киев, Минск, Алматы, etc.
+        # Shows the presets for the user's language (l10n['tz_presets']).
     """
     builder = InlineKeyboardBuilder()
     zones = [
@@ -158,9 +158,18 @@ def get_timezone_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
         )
     )
     builder.row(InlineKeyboardButton(text=l10n["tz_region"], callback_data="timezone_region"))
-    for tz, label in zones:
-        offset = _format_utc_offset(tz)
-        builder.row(InlineKeyboardButton(text=f"{label} ({offset})", callback_data=f"set_tz_{tz}"))
+    # U-04 (2026-11-04 audit): presets follow the user's language — the
+    # fixed list above started with four US zones and had no Minsk,
+    # Yekaterinburg, Novosibirsk, Tashkent, Madrid, Mexico City, São Paulo…
+    # for an audience that is mostly ru/es/pt. Two per row keeps it short.
+    if l10n.get("tz_presets"):
+        zones = [tuple(item) for item in l10n["tz_presets"]]
+    preset_buttons = [
+        InlineKeyboardButton(text=f"{label} ({_format_utc_offset(tz)})", callback_data=f"set_tz_{tz}")
+        for tz, label in zones
+    ]
+    for i in range(0, len(preset_buttons), 2):
+        builder.row(*preset_buttons[i:i + 2])
     return builder.as_markup()
 
 

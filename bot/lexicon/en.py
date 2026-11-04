@@ -517,3 +517,8 @@ EN.update({'batch_skipped': 'Changed or already closed tasks skipped: {count}.'}
 EN.update({'habit_detail_progress': 'Strength: {score}/100 · streak {current} · best {best}'})
 
 EN.update({'habit_btn_pause': '⏸ Pause'})
+
+EN.update({
+    "limit_reminders_reached": '❌ You already have {count} active tasks (limit {limit}). Complete or delete some first.',
+    "limit_habits_reached": '❌ You already have {count} active habits (limit {limit}). Delete or pause some first.',
+})

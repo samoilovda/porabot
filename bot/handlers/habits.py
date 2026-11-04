@@ -14,6 +14,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.exc import OperationalError
 
+from bot.database.dao.errors import user_message
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import ReminderKind, User
@@ -271,12 +272,10 @@ async def cb_fluid_habit_mode(
         )
         await reminder_dao.session.flush()
     except ValueError as ve:
-        # 3.2: create_reminder can now also reject on quota (too many active
-        # habits), not just text length — the old fixed "too long" wording
-        # was misleading for that case. Match reminders.py's existing
-        # pattern (str(ve) shown as-is) instead of guessing which one fired.
+        # create_reminder rejects on quota or text length; user_message picks
+        # the localized wording for whichever fired (B-13).
         logger.error("Validation error: %s", ve)
-        await callback.message.answer(str(ve))
+        await callback.message.answer(user_message(ve, l10n))
         await callback.answer()
         return
     except Exception as e:
@@ -427,11 +426,10 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
             is_nagging=reminder.is_nagging,
         )
     except ValueError as ve:
-        # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
-        # instead of the fixed "text too long" wording.
+        # See cb_fluid_habit_mode above (localized via user_message, B-13).
         await reminder_dao.session.rollback()
         logger.error("Habit validation rejected for user %s", user.id)
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except Exception as e:
         logger.error("Error creating habit: %s", e, exc_info=True)

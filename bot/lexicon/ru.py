@@ -517,3 +517,8 @@ RU.update({'batch_skipped': 'Пропущено изменённых или уж
 RU.update({'habit_detail_progress': 'Устойчивость: {score}/100 · серия {current} · рекорд {best}'})
 
 RU.update({'habit_btn_pause': '⏸ Пауза'})
+
+RU.update({
+    "limit_reminders_reached": '❌ У тебя уже {count} активных задач (лимит {limit}). Выполни или удали часть.',
+    "limit_habits_reached": '❌ У тебя уже {count} активных привычек (лимит {limit}). Удали лишние.',
+})

@@ -475,3 +475,8 @@ PT.update(
         "habit_btn_pause": "⏸ Pausar",
     }
 )
+
+PT.update({
+    "limit_reminders_reached": '❌ Você já tem {count} tarefas ativas (limite {limit}). Conclua ou exclua algumas primeiro.',
+    "limit_habits_reached": '❌ Você já tem {count} hábitos ativos (limite {limit}). Exclua alguns primeiro.',
+})

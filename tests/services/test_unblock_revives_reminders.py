@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.enums import ChatMemberStatus
 from aiogram.types import Chat, ChatMemberMember, ChatMemberUpdated
 from aiogram.types import User as TgUser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

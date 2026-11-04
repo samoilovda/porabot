@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.exc import OperationalError
 
+from bot.database.dao.errors import user_message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.handlers.reminders_shared import (
@@ -92,7 +93,7 @@ async def handle_forwarded_task(
     try:
         result = await parser.parse(full_text, user.timezone)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except OperationalError as e:
         logger.error("DB locked parsing forwarded text for user %s: %s", user.id, e)
@@ -110,7 +111,7 @@ async def handle_forwarded_task(
     try:
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
     except OperationalError as e:
         logger.error("DB locked handling forwarded text for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -257,7 +258,7 @@ async def handle_task_text(
     try:
         result = await parser.parse(message.text, user.timezone)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except OperationalError as e:
         # A locked sqlite file (several per-minute cron jobs share it — see
@@ -293,7 +294,7 @@ async def handle_task_text(
     try:
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
     except OperationalError as e:
         logger.error("DB locked handling message for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))

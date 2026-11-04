@@ -19,6 +19,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.database.dao.errors import user_message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
@@ -747,7 +748,7 @@ async def _save_and_show_edit(
             )
         except ValueError as ve:
             logger.warning("Validation error for user %s: %s", user.id, ve)
-            await source_message.answer(str(ve))
+            await source_message.answer(user_message(ve, l10n))
             await state.clear()
             return
 

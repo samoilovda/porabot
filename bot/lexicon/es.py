@@ -505,3 +505,8 @@ ES.update({'batch_skipped': 'Tareas cambiadas o ya cerradas omitidas: {count}.'}
 ES.update({'habit_detail_progress': 'Constancia: {score}/100 · racha {current} · récord {best}'})
 
 ES.update({'habit_btn_pause': '⏸ Pausar'})
+
+ES.update({
+    "limit_reminders_reached": '❌ Ya tienes {count} tareas activas (límite {limit}). Completa o elimina algunas primero.',
+    "limit_habits_reached": '❌ Ya tienes {count} hábitos activos (límite {limit}). Elimina algunos primero.',
+})

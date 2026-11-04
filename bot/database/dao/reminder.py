@@ -19,6 +19,11 @@ from sqlalchemy import delete, func, or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
+from bot.database.dao.errors import (
+    ActiveHabitsLimitError,
+    ActiveRemindersLimitError,
+    ReminderTextTooLongError,
+)
 
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, ReminderKind, is_habit_like
@@ -119,9 +124,10 @@ class ReminderDAO(BaseDAO[Reminder]):
         MAX_TEXT_LENGTH = 3000
 
         if len(text) > MAX_TEXT_LENGTH:
-            raise ValueError(
-                f"Reminder text too long ({len(text)} chars). "
-                f"Maximum allowed: {MAX_TEXT_LENGTH} chars."
+            raise ReminderTextTooLongError(
+                f"Reminder text too long ({len(text)} chars). Maximum allowed: {MAX_TEXT_LENGTH} chars.",
+                length=len(text),
+                max_length=MAX_TEXT_LENGTH,
             )
         if nagging_max_repeats < 0:
             raise ValueError("nagging_max_repeats cannot be negative.")
@@ -140,9 +146,12 @@ class ReminderDAO(BaseDAO[Reminder]):
         active_count = active_count_result.scalar_one()
         limit = self.MAX_ACTIVE_HABITS if is_any_habit else self.MAX_ACTIVE_REMINDERS
         if active_count >= limit:
-            raise ValueError(
+            error_cls = ActiveHabitsLimitError if is_any_habit else ActiveRemindersLimitError
+            raise error_cls(
                 f"You already have {active_count} active {'habits' if is_any_habit else 'reminders'}. "
-                f"Maximum allowed: {limit}. Delete some before adding more."
+                f"Maximum allowed: {limit}. Delete some before adding more.",
+                count=active_count,
+                limit=limit,
             )
 
         reminder = Reminder(

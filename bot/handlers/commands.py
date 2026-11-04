@@ -112,7 +112,13 @@ async def callback_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict
 
 
 @router.my_chat_member()
-async def on_my_chat_member(event: ChatMemberUpdated, user_dao: UserDAO, user: User) -> None:
+async def on_my_chat_member(
+    event: ChatMemberUpdated,
+    user_dao: UserDAO,
+    user: User,
+    reminder_dao=None,
+    scheduler_service=None,
+) -> None:
     """2.7: track whether this user has blocked the bot in their private
     chat, so the per-minute cron jobs (daily briefs, missed-task recovery,
     habit sweeper, habit reports) and reconcile_jobs_with_db can exclude
@@ -145,6 +151,15 @@ async def on_my_chat_member(event: ChatMemberUpdated, user_dao: UserDAO, user: U
         await user_dao.update_settings(user.id, bot_blocked_at=None)
         user.bot_blocked_at = None
         logger.info("User %s unblocked the bot.", user.id)
+        # B-07: reminders that hit FORBIDDEN_STRIKES_LIMIT while blocked are
+        # excluded from reconcile until their strikes are cleared — revive
+        # them and recreate their jobs right away instead of never.
+        if reminder_dao is not None:
+            revived = await reminder_dao.reset_forbidden_strikes(user.id)
+            await user_dao.session.commit()
+            if scheduler_service is not None:
+                await scheduler_service.reconcile_jobs_with_db(user_id=user.id)
+            logger.info("Revived %s reminder(s) for user %s after unblock.", revived, user.id)
 
 
 @router.message(F.pinned_message)

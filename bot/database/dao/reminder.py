@@ -64,6 +64,26 @@ class ReminderDAO(BaseDAO[Reminder]):
     MAX_ACTIVE_REMINDERS = 200
     MAX_ACTIVE_HABITS = 50
 
+    async def reset_forbidden_strikes(self, user_id: int) -> int:
+        """B-07: forget every TelegramForbiddenError strike on the user's
+        active reminders — called once they unblock the bot. Without this,
+        a reminder that reached FORBIDDEN_STRIKES_LIMIT while the user was
+        blocked stayed excluded from reconcile_jobs_with_db forever and
+        never fired again. Returns how many reminders were revived."""
+        from sqlalchemy import update
+
+        result = await self.session.execute(
+            update(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.forbidden_strikes > 0,
+            )
+            .values(forbidden_strikes=0)
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
+
     async def delete_for_user(self, user_id: int) -> None:
         """Drop every reminder of a user in one statement — for full
         account reset. Caller is responsible for removing the matching

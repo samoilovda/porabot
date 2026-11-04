@@ -247,7 +247,7 @@ class SchedulerService:
             # instead of committing reminders that were never actually scheduled.
             raise
 
-    async def reconcile_jobs_with_db(self) -> None:
+    async def reconcile_jobs_with_db(self, user_id: Optional[int] = None) -> None:
         """Recreate scheduler jobs for pending reminders missing from the jobstore.
 
         Run once at startup: a job can be missing from the jobstore after bot
@@ -292,6 +292,7 @@ class SchedulerService:
                     # cleanup sweep — reconcile must not resurrect it.
                     Reminder.pending_delete_at.is_(None),
                     User.bot_blocked_at.is_(None),
+                    *((Reminder.user_id == user_id,) if user_id is not None else ()),
                 )
             )
             reminders = result.scalars().all()

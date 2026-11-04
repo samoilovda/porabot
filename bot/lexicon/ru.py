@@ -521,4 +521,6 @@ RU.update({'habit_btn_pause': '⏸ Пауза'})
 RU.update({
     "limit_reminders_reached": '❌ У тебя уже {count} активных задач (лимит {limit}). Выполни или удали часть.',
     "limit_habits_reached": '❌ У тебя уже {count} активных привычек (лимит {limit}). Удали лишние.',
+    "habit_confirm_time_rule": '{rule}, начиная с {time}. Одно уведомление. Сохранить?',
+    "habit_created_rule": '✅ *Привычка создана!*\nБуду напоминать: *{habit}* — {rule}, ближайшее `{time}`.',
 })

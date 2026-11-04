@@ -357,6 +357,13 @@ async def state_habit_time(
     if data.get("habit_start_date") and is_clock_input(message.text):
         local = selected_time.astimezone(resolve_timezone(user.timezone)) if selected_time.tzinfo else selected_time
         selected_time = local_time_on_date(user.timezone, date.fromisoformat(data["habit_start_date"]), local.hour, local.minute)
+    # U-09 (2026-11-04 audit): keep a weekly/weekday/monthly rule from the
+    # phrase ("каждый понедельник в 9") instead of silently making it daily
+    # — streaks and the sweeper follow the habit's own rule now (B-08).
+    habit_rule = getattr(result, "rrule_string", None) or "FREQ=DAILY"
+    if habit_rule != (data.get("habit_rrule") or "FREQ=DAILY"):
+        await state.update_data(habit_rrule=habit_rule)
+    selected_time = _snap_to_rule(habit_rule, selected_time, user.timezone)
     needs_confirmation = (
         float(getattr(result,"confidence",1)) < 0.7
         or getattr(result,"rrule_string",None) not in {None,"FREQ=DAILY"}
@@ -371,7 +378,12 @@ async def state_habit_time(
         builder.button(text=l10n["confirm_save"], callback_data=f"habit_time_confirm:{context.token}")
         builder.button(text=l10n["btn_edit_time"], callback_data="habit_time_change")
         builder.button(text=l10n["btn_cancel"], callback_data="habit_cancel")
-        await message.answer(l10n["habit_confirm_time"].format(time=format_time(selected_time, user.timezone, fmt="%d.%m.%Y %H:%M")), reply_markup=builder.as_markup())
+        when = format_time(selected_time, user.timezone, fmt="%d.%m.%Y %H:%M")
+        if habit_rule == "FREQ=DAILY":
+            prompt = l10n["habit_confirm_time"].format(time=when)
+        else:
+            prompt = l10n["habit_confirm_time_rule"].format(rule=_rule_label(habit_rule, l10n), time=when)
+        await message.answer(prompt, reply_markup=builder.as_markup())
         return
     await _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time)
 
@@ -393,11 +405,33 @@ async def confirm_habit_time(callback: CallbackQuery, state: FSMContext, user: U
     await callback.answer()
 
 
+def _rule_label(rule: str, l10n: dict[str, Any]) -> str:
+    from types import SimpleNamespace
+
+    from bot.handlers.reminders_shared import _rrule_text
+
+    return _rrule_text(SimpleNamespace(is_recurring=True, rrule_string=rule), l10n)
+
+
+def _snap_to_rule(rule: str, selected_time: datetime, user_tz: str) -> datetime:
+    """First occurrence of *rule* at or after *selected_time* (same clock
+    time) — "every Monday at 9" typed on a Thursday starts next Monday."""
+    if rule == "FREQ=DAILY":
+        return selected_time
+    start = to_utc_naive(selected_time)
+    try:
+        snapped = next_occurrence_utc(rule, start, user_tz, start - timedelta(seconds=1))
+    except (ValueError, TypeError):
+        return selected_time
+    return to_utc_aware(snapped) if snapped else selected_time
+
+
 async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time):
     data = await state.get_data()
     habit_text = data.get("habit_text", l10n["habit_default_name"])
+    habit_rule = data.get("habit_rrule") or "FREQ=DAILY"
     # Normalize to UTC once and store as naive UTC in DB.
-    execution_time_utc = to_utc_naive(selected_time)
+    execution_time_utc = to_utc_naive(_snap_to_rule(habit_rule, selected_time, user.timezone))
 
     # The parser can return an ambiguous/past time (e.g. "at 9" when it's
     # already past 9 today in the user's zone). Since this habit is always
@@ -405,7 +439,7 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
     # reminder whose date-job would fire the instant it's scheduled.
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if execution_time_utc <= now_utc_naive:
-        advanced = next_occurrence_utc("FREQ=DAILY", execution_time_utc, user.timezone, now_utc_naive)
+        advanced = next_occurrence_utc(habit_rule, execution_time_utc, user.timezone, now_utc_naive)
         execution_time_utc = advanced or (execution_time_utc + timedelta(days=1))
 
     # Schedule it as a strict daily recurring task with nagging enabled
@@ -415,7 +449,7 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
             text=habit_text,
             execution_time=execution_time_utc,
             is_recurring=True,
-            rrule_string="FREQ=DAILY",
+            rrule_string=habit_rule,
             is_habit=True,
             is_nagging=False,
             nagging_max_repeats=3,
@@ -451,7 +485,12 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
         return
 
     time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
-    reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+    if habit_rule == "FREQ=DAILY":
+        reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+    else:
+        reply_text = l10n["habit_created_rule"].format(
+            habit=escape_markdown(habit_text), rule=escape_markdown(_rule_label(habit_rule, l10n)), time=time_str
+        )
 
     # 3.6: soft, one-time nudge on the 11th active habit — not a hard
     # limit (Streaks caps at 12), just a heads-up that most people don't

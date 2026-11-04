@@ -509,4 +509,6 @@ ES.update({'habit_btn_pause': '⏸ Pausar'})
 ES.update({
     "limit_reminders_reached": '❌ Ya tienes {count} tareas activas (límite {limit}). Completa o elimina algunas primero.',
     "limit_habits_reached": '❌ Ya tienes {count} hábitos activos (límite {limit}). Elimina algunos primero.',
+    "habit_confirm_time_rule": '{rule}, a partir de {time}. Una notificación. ¿Guardar?',
+    "habit_created_rule": '✅ *¡Hábito creado!*\nTe recordaré *{habit}*: {rule}, próximo `{time}`.',
 })

@@ -687,3 +687,29 @@ async def test_undo_after_hard_delete_says_too_late_and_drops_the_button(databas
     markup = cb.message.edit_text.await_args.kwargs["reply_markup"]
     datas = [b.callback_data for row in markup.inline_keyboard for b in row]
     assert not any(":undelete:" in d for d in datas)
+
+
+async def test_weekly_habit_phrase_keeps_its_rule(database):
+    """U-09 (2026-11-04 audit): "каждый понедельник в 9" used to be saved as
+    a DAILY habit; it now keeps the weekly rule and starts on a Monday."""
+    from bot.handlers.habits import confirm_habit_time
+
+    session, _ = database
+    user, dao, _ = await user_dao(session)
+    state = fsm()
+    await state.set_state(HabitState.waiting_for_time)
+    await state.update_data(habit_text="Планёрка")
+    scheduler = SchedulerService(AsyncIOScheduler(), Mock(), Mock())
+    answer = AsyncMock()
+    await state_habit_time(
+        SimpleNamespace(text="каждый понедельник в 9", answer=answer), state, user, dao, scheduler, RU
+    )
+    prompt = answer.await_args.args[0]
+    assert "Пн" in prompt or "понедельник" in prompt.lower()
+    data = await state.get_data()
+    cb = callback(f"habit_time_confirm:{data['habit_confirm_token']}")
+    await confirm_habit_time(cb, state, user, dao, scheduler, RU)
+    habit = await session.scalar(select(Reminder).where(Reminder.is_habit.is_(True)))
+    assert habit.rrule_string == "FREQ=WEEKLY;BYDAY=MO"
+    assert habit.execution_time.weekday() == 0
+    assert habit.execution_time.hour == 9

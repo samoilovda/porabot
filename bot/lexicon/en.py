@@ -521,4 +521,6 @@ EN.update({'habit_btn_pause': '⏸ Pause'})
 EN.update({
     "limit_reminders_reached": '❌ You already have {count} active tasks (limit {limit}). Complete or delete some first.',
     "limit_habits_reached": '❌ You already have {count} active habits (limit {limit}). Delete or pause some first.',
+    "habit_confirm_time_rule": '{rule}, starting {time}. One notification. Save?',
+    "habit_created_rule": '✅ *Habit created!*\nI will remind you to *{habit}*: {rule}, next at `{time}`.',
 })

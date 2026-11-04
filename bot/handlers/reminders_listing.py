@@ -28,26 +28,18 @@ from bot.handlers.reminders_shared import (
     _COMPLETED_HISTORY_LIMIT,
     _NAG_LIMIT_MAX,
     _NAG_LIMIT_MIN,
-    _TASKS_PAGE_SIZE,
-    _format_task_line_md2,
     _message_task_key,
-    _paginate_tasks_for_list,
     _parse_id_suffix,
     _remove_keyboard_after_delay,
-    _render_filter_screen,
-    _render_tasks_list_text,
     _reschedule_current_execution,
     _reset_auto_delete,
     _rrule_text,
     active_auto_delete_tasks,
-    decode_filter_ctx,
 )
 from bot.keyboards.inline import (
     get_completed_tasks_keyboard,
     get_edit_keyboard,
     get_filter_menu_keyboard,
-    get_tags_menu_keyboard,
-    get_tasks_list_keyboard,
     get_undo_delete_keyboard,
 )
 from bot.services.missed_recovery import RECOVERY_DIGEST_LIMIT
@@ -60,7 +52,6 @@ from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware
 
 router = Router(name="reminders_listing")
 logger = logging.getLogger(__name__)
-
 
 
 @router.callback_query(F.data.startswith("task_view_"))
@@ -214,54 +205,9 @@ async def callback_noop(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("tasks_page_"))
-async def callback_tasks_page(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    """Render a specific page of "My Tasks" — also doubles as Refresh
-    (which points at the CURRENT page, see get_tasks_list_keyboard) so both
-    stay on the same page instead of bouncing back to the first one."""
-    try:
-        requested_page = int(callback.data[len("tasks_page_"):])
-    except ValueError:
-        await callback.answer(l10n["invalid_action"], show_alert=True)
-        return
-
-    tasks = await reminder_dao.get_user_reminders(user.id)
-    if not tasks:
-        await callback.message.edit_text(l10n["no_tasks"], reply_markup=None)
-        await callback.answer()
-        return
-
-    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=requested_page)
-    safe_text = _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages)
-    # 2.1: this doubles as Refresh (see this function's docstring) — tapping
-    # it when nothing changed is the ordinary case, not an error.
-    await safe_edit_text(
-        callback.message,
-        safe_text,
-        reply_markup=get_tasks_list_keyboard(shown_tasks, l10n, page=page, total_pages=total_pages),
-        parse_mode="MarkdownV2",
-    )
-    await callback.answer()
-
-
 # ---------------------------------------------------------------------------
 # Search and filters — 3.4
 # ---------------------------------------------------------------------------
-
-def _render_filtered_tasks_text(tasks: list, user: User, l10n: dict[str, Any], header: str) -> str:
-    lines = [header] + [_format_task_line_md2(task, user) for task in tasks[:_TASKS_PAGE_SIZE]]
-    if len(tasks) > _TASKS_PAGE_SIZE:
-        # fix(2.3): the list is silently cut to _TASKS_PAGE_SIZE (Telegram
-        # message/keyboard limits) — without this, a user sees 25 lines and
-        # has no way to know there were more matches.
-        lines.append(
-            l10n.get("find_truncated_notice", "Showing first {shown} of {total}.").format(
-                shown=_TASKS_PAGE_SIZE, total=len(tasks)
-            )
-        )
-    return "\n".join(lines)
 
 
 @router.message(Command("find"))
@@ -292,84 +238,6 @@ async def callback_tasks_filter_menu(callback: CallbackQuery, l10n: dict[str, An
         l10n.get("filter_menu_title", "🔍 Filter tasks by:"),
         reply_markup=get_filter_menu_keyboard(l10n),
     )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "tasks_filter_today")
-async def callback_tasks_filter_today(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="today")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "tasks_filter_week")
-async def callback_tasks_filter_week(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="week")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "tasks_filter_overdue")
-async def callback_tasks_filter_overdue(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="overdue")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "tasks_filter_recurring")
-async def callback_tasks_filter_recurring(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="recurring")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "tasks_tags_menu")
-async def callback_tasks_tags_menu(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    """4.3: list the user's distinct tags as buttons to filter by."""
-    tags = await reminder_dao.get_distinct_tags(user.id)
-    if not tags:
-        await callback.answer(l10n.get("no_tags_yet", "You have no tags yet."), show_alert=True)
-        return
-    # 2.1: re-opening the tags menu from a Back button can land on the
-    # identical tag list twice in a row.
-    await safe_edit_text(
-        callback.message,
-        l10n.get("tags_menu_title", "🏷 Pick a tag:"),
-        reply_markup=get_tags_menu_keyboard(list(tags), l10n),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("tasks_tag:"))
-async def callback_tasks_filter_by_tag(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    """4.3: results for one tag, tapped from callback_tasks_tags_menu."""
-    tag = callback.data.split("tasks_tag:", 1)[1]
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind="tag", tag=tag)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("flt:"))
-async def callback_filter_page(
-    callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]
-) -> None:
-    """Step 8: pagination within a quick filter's results — the same
-    filter kind reopened at a different page, so a filter stays a real,
-    browsable view of every match instead of a flat, silently-truncated
-    first page."""
-    try:
-        kind, tag, page = decode_filter_ctx(callback.data[len("flt:"):])
-    except (IndexError, ValueError):
-        await callback.answer(l10n["invalid_action"], show_alert=True)
-        return
-    await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind=kind, tag=tag, page=page)
     await callback.answer()
 
 

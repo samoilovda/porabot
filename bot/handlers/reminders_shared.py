@@ -23,8 +23,6 @@ from bot.database.dao.errors import user_message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import (
-    TASKS_PAGE_SIZE,
-    get_filtered_tasks_keyboard,
     get_parse_confirmation_keyboard,
     get_repeat_builder_keyboard,
     get_saved_task_keyboard,
@@ -34,8 +32,7 @@ from bot.lexicon import ALL_MENU_BUTTON_TEXTS
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
 from bot.utils.markdown import escape_markdown, escape_markdown_v2
-from bot.utils.tags import extract_tags_and_priority, format_tags, priority_glyph
-from bot.utils.telegram import safe_edit_text
+from bot.utils.tags import extract_tags_and_priority
 from bot.utils.time_ext import format_time, next_occurrence_utc, to_utc_aware, to_utc_naive
 
 logger = logging.getLogger(__name__)
@@ -57,15 +54,6 @@ _COMPLETED_HISTORY_DAYS = 7
 # module docstring (bot/utils/pagination.py) for why this is needed at all.
 _COMPLETED_HISTORY_LIMIT = 20
 _PARSE_CONFIDENCE_THRESHOLD = 0.7
-# Telegram caps inline keyboards well below 100 buttons and messages at 4096
-# chars. get_tasks_list_keyboard adds up to 3 buttons per task, so an
-# unbounded task list can blow both limits and the list silently fails to
-# render at all. Page what's shown/rendered into buttons instead of just
-# truncating with an unreachable "...and N more" tail.
-# The value itself lives in bot.keyboards.inline as TASKS_PAGE_SIZE (single
-# source of truth shared with get_tasks_list_keyboard) — this name is kept
-# as a local alias so callers across this module family don't need touching.
-_TASKS_PAGE_SIZE = TASKS_PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -281,130 +269,12 @@ def _reschedule_current_execution(reminder, user: User, scheduler_service: Sched
     scheduler_service.remove_reminder_job(reminder.id)
 
 
-def _format_task_line_md2(task, user: User) -> str:
-    """Render one task-list row for a MarkdownV2 message, escaping only the data."""
-    dt_str = escape_markdown_v2(format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M"))
-    flags = f"{'🔁 ' if task.is_recurring else ''}{'🔥 ' if task.is_nagging else ''}"
-    # 4.3: priority glyph prefix and #tag suffix, both optional.
-    glyph = priority_glyph(getattr(task, "priority", None))
-    priority_prefix = f"{glyph} " if glyph else ""
-    tags_text = format_tags(getattr(task, "tags", None))
-    tags_suffix = f" {escape_markdown_v2(tags_text)}" if tags_text else ""
-    return f"▫️ `{dt_str}`: {priority_prefix}{flags}{escape_markdown_v2(task.reminder_text)}{tags_suffix}"
-
-
-def _paginate_tasks_for_list(tasks: list, page: int = 0) -> tuple[list, int, int]:
-    """Slice *tasks* (already in a stable order — see get_user_reminders'
-    (execution_time, id) ordering) into pages of _TASKS_PAGE_SIZE, both so
-    the message text and its per-task keyboard buttons stay within
-    Telegram's limits, and so tasks beyond the first page are actually
-    reachable instead of just listed as "...and N more".
-
-    *page* is clamped into range. Returns (shown_tasks, clamped_page,
-    total_pages) — total_pages is always >= 1.
-    """
-    total_pages = max(1, (len(tasks) + _TASKS_PAGE_SIZE - 1) // _TASKS_PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    start = page * _TASKS_PAGE_SIZE
-    shown = tasks[start:start + _TASKS_PAGE_SIZE]
-    return shown, page, total_pages
-
-
-def _render_tasks_list_text(
-    shown_tasks: list, user: User, l10n: dict[str, Any], page: int, total_pages: int,
-    *, header: Optional[str] = None,
-) -> str:
-    lines = [header if header is not None else l10n["tasks_header"]] + [
-        _format_task_line_md2(task, user) for task in shown_tasks
-    ]
-    if total_pages > 1:
-        lines.append(l10n.get("tasks_page_indicator", "📄 {page}/{total}").format(page=page + 1, total=total_pages))
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 # Quick filters — step 8 (2026-09-26 audit remediation): a real, paginable
 # view per filter kind, and a way for an action taken inside one (right now
 # just "Done" — see callback_task_done in reminders_completion.py) to
 # return to that same filtered page afterward instead of losing it.
 # ---------------------------------------------------------------------------
-
-_FILTER_HEADERS: dict[str, tuple[str, str]] = {
-    "today": ("filter_header_today", "📅 *Today:*\n"),
-    "week": ("filter_header_week", "🗓 *This week:*\n"),
-    "overdue": ("filter_header_overdue", "⏰ *Overdue:*\n"),
-    "recurring": ("filter_header_recurring", "🔁 *Recurring:*\n"),
-}
-
-
-def decode_filter_ctx(raw: str) -> tuple[str, Optional[str], int]:
-    """Inverse of bot.keyboards.inline.encode_filter_ctx: "today:0" or
-    "tag:work:2" -> (kind, tag_or_None, page)."""
-    parts = raw.split(":")
-    if parts[0] == "tag":
-        return "tag", parts[1], int(parts[2])
-    return parts[0], None, int(parts[1])
-
-
-def _split_return_ctx(data: str) -> tuple[str, Optional[str]]:
-    """Split a callback_data value off its optional "::<return_ctx>" suffix
-    (appended by _build_task_action_rows when rendered from a filtered
-    page). Returns (data_without_suffix, return_ctx_or_None)."""
-    if "::" in data:
-        base, _, ctx = data.partition("::")
-        return base, ctx
-    return data, None
-
-
-async def _fetch_filter_tasks(
-    reminder_dao: ReminderDAO, user: User, kind: str, tag: Optional[str]
-) -> list:
-    if kind == "today":
-        return await reminder_dao.get_user_reminders_today(user.id, user.timezone)
-    if kind == "week":
-        return await reminder_dao.get_user_reminders_this_week(user.id, user.timezone)
-    if kind == "overdue":
-        return await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0)
-    if kind == "recurring":
-        return await reminder_dao.get_user_reminders_recurring(user.id)
-    if kind == "tag":
-        return await reminder_dao.get_reminders_by_tag(user.id, tag or "")
-    return []
-
-
-async def _render_filter_screen(
-    message: Message,
-    reminder_dao: ReminderDAO,
-    user: User,
-    l10n: dict[str, Any],
-    *,
-    kind: str,
-    tag: Optional[str] = None,
-    page: int = 0,
-) -> None:
-    """Shared renderer for one quick filter's results page — used both by
-    the initial tap (page 0) and by flt:-prefixed pagination/return-from-
-    action, so every entry point shows the exact same paginated view."""
-    tasks = await _fetch_filter_tasks(reminder_dao, user, kind, tag)
-    if not tasks:
-        await safe_edit_text(
-            message, l10n.get("find_no_results_filter", "🔍 No tasks match this filter."), reply_markup=None
-        )
-        return
-
-    shown_tasks, page, total_pages = _paginate_tasks_for_list(tasks, page=page)
-    if kind == "tag":
-        header = l10n.get("filter_header_tag", "🏷 *#{tag}:*\n").format(tag=escape_markdown_v2(tag or ""))
-    else:
-        header_key, header_default = _FILTER_HEADERS[kind]
-        header = l10n.get(header_key, header_default)
-
-    await safe_edit_text(
-        message,
-        _render_tasks_list_text(shown_tasks, user, l10n, page, total_pages, header=header),
-        reply_markup=get_filtered_tasks_keyboard(shown_tasks, l10n, kind=kind, tag=tag, page=page, total_pages=total_pages),
-        parse_mode="MarkdownV2",
-    )
 
 
 def _parse_id_suffix(data: str, prefix: str) -> Optional[int]:

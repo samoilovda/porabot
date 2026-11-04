@@ -18,24 +18,6 @@ def _load_module(module_rel_path: str):
     return module
 
 
-def test_task_list_line_escapes_only_user_data_not_backticks() -> None:
-    reminders_module = _load_module("bot/handlers/reminders.py")
-    task = SimpleNamespace(
-        execution_time=datetime(2026, 5, 1, 9, 0, 0),
-        is_recurring=False,
-        is_nagging=False,
-        reminder_text="buy *milk*.",
-    )
-    user = SimpleNamespace(timezone="UTC", show_utc_offset=False)
-
-    line = reminders_module._format_task_line_md2(task, user)
-
-    # Template backticks around the time stay literal (real code-span markup)...
-    assert line.startswith("▫️ `")
-    # ...but the user's own asterisks and dot are escaped so they render as text.
-    assert "\\*milk\\*\\." in line
-
-
 async def test_task_saved_preview_keeps_template_bold_but_escapes_task_text() -> None:
     reminders_module = _load_module("bot/handlers/reminders.py")
     from aiogram.fsm.context import FSMContext

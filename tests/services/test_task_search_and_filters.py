@@ -12,18 +12,8 @@ from bot.database import models  # noqa: F401
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.engine import Base
 from bot.database.models import User
-from bot.handlers.reminders import (
-    _TASKS_PAGE_SIZE,
-    _render_filtered_tasks_text,
-    callback_tasks_filter_by_tag,
-    callback_tasks_filter_overdue,
-    callback_tasks_filter_recurring,
-    callback_tasks_filter_today,
-    callback_tasks_filter_week,
-    callback_tasks_tags_menu,
-    cmd_find,
-)
-from bot.keyboards.inline import get_filtered_tasks_keyboard
+from bot.handlers.experience import list_items
+from bot.handlers.reminders import cmd_find
 from bot.lexicon.ru import RU
 
 
@@ -179,95 +169,6 @@ async def test_find_command_without_query_shows_usage() -> None:
     message.answer.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    "handler,dao_attr",
-    [
-        (callback_tasks_filter_today, "get_user_reminders_today"),
-        (callback_tasks_filter_week, "get_user_reminders_this_week"),
-        (callback_tasks_filter_recurring, "get_user_reminders_recurring"),
-    ],
-)
-async def test_filter_callbacks_call_expected_dao_method(handler, dao_attr) -> None:
-    task = SimpleNamespace(
-        id=1, reminder_text="Task", execution_time=datetime.now(timezone.utc).replace(tzinfo=None),
-        is_recurring=False, is_nagging=False,
-    )
-    reminder_dao = SimpleNamespace(**{dao_attr: AsyncMock(return_value=[task])})
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(message=message, answer=AsyncMock())
-
-    await handler(callback, reminder_dao, user, RU)
-
-    getattr(reminder_dao, dao_attr).assert_awaited_once()
-    message.edit_text.assert_awaited_once()
-
-
-async def test_filter_overdue_uses_zero_minute_threshold() -> None:
-    reminder_dao = SimpleNamespace(get_overdue_pending_tasks=AsyncMock(return_value=[]))
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(message=message, answer=AsyncMock())
-
-    await callback_tasks_filter_overdue(callback, reminder_dao, user, RU)
-
-    reminder_dao.get_overdue_pending_tasks.assert_awaited_once_with(1, min_minutes_overdue=0)
-
-
-async def test_tags_menu_shows_no_tags_alert_when_empty() -> None:
-    reminder_dao = SimpleNamespace(get_distinct_tags=AsyncMock(return_value=[]))
-    user = SimpleNamespace(id=1)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(message=message, answer=AsyncMock())
-
-    await callback_tasks_tags_menu(callback, reminder_dao, user, RU)
-
-    callback.answer.assert_awaited_once()
-    message.edit_text.assert_not_awaited()
-
-
-async def test_tags_menu_renders_tag_buttons() -> None:
-    reminder_dao = SimpleNamespace(get_distinct_tags=AsyncMock(return_value=["дом", "работа"]))
-    user = SimpleNamespace(id=1)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(message=message, answer=AsyncMock())
-
-    await callback_tasks_tags_menu(callback, reminder_dao, user, RU)
-
-    message.edit_text.assert_awaited_once()
-    markup = message.edit_text.await_args.kwargs["reply_markup"]
-    callback_datas = [b.callback_data for row in markup.inline_keyboard for b in row]
-    assert "tasks_tag:дом" in callback_datas
-    assert "tasks_tag:работа" in callback_datas
-
-
-async def test_filter_by_tag_renders_results() -> None:
-    task = SimpleNamespace(
-        id=1, reminder_text="Buy milk", execution_time=datetime.now(timezone.utc).replace(tzinfo=None),
-        is_recurring=False, is_nagging=False, tags="дом", priority=None,
-    )
-    reminder_dao = SimpleNamespace(get_reminders_by_tag=AsyncMock(return_value=[task]))
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(data="tasks_tag:дом", message=message, answer=AsyncMock())
-
-    await callback_tasks_filter_by_tag(callback, reminder_dao, user, RU)
-
-    reminder_dao.get_reminders_by_tag.assert_awaited_once_with(1, "дом")
-    message.edit_text.assert_awaited_once()
-
-
-async def test_filter_by_tag_no_results() -> None:
-    reminder_dao = SimpleNamespace(get_reminders_by_tag=AsyncMock(return_value=[]))
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    message = SimpleNamespace(edit_text=AsyncMock())
-    callback = SimpleNamespace(data="tasks_tag:nonexistent", message=message, answer=AsyncMock())
-
-    await callback_tasks_filter_by_tag(callback, reminder_dao, user, RU)
-
-    message.edit_text.assert_awaited_once_with(RU.get("find_no_results_filter"), reply_markup=None)
-
-
 def _fake_task(i: int) -> SimpleNamespace:
     return SimpleNamespace(
         id=i, reminder_text=f"Task {i}", execution_time=datetime(2026, 5, 1, 9, 0, 0),
@@ -275,32 +176,29 @@ def _fake_task(i: int) -> SimpleNamespace:
     )
 
 
-def test_render_filtered_tasks_text_adds_truncation_notice_over_page_size() -> None:
-    """Regression (fix 2.3): results were silently cut to _TASKS_PAGE_SIZE
-    with no indication more matches existed."""
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    tasks = [_fake_task(i) for i in range(40)]
-
-    text = _render_filtered_tasks_text(tasks, user, RU, "header\n")
-
-    assert text.count("▫️") == _TASKS_PAGE_SIZE
-    assert RU["find_truncated_notice"].format(shown=_TASKS_PAGE_SIZE, total=40) in text
 
 
-def test_render_filtered_tasks_text_no_notice_under_page_size() -> None:
-    user = SimpleNamespace(id=1, timezone="UTC", show_utc_offset=False)
-    tasks = [_fake_task(i) for i in range(10)]
-
-    text = _render_filtered_tasks_text(tasks, user, RU, "header\n")
-
-    assert text.count("▫️") == 10
-    assert "Показаны первые" not in text
-
-
-def test_filtered_tasks_keyboard_has_close_and_back_buttons() -> None:
-    task = SimpleNamespace(id=5, reminder_text="Task")
-    markup = get_filtered_tasks_keyboard([task], RU)
-    callback_datas = [b.callback_data for row in markup.inline_keyboard for b in row]
-    assert "tasks_page_0" in callback_datas
-    assert "close_tasks" in callback_datas
-    assert "done_task_5" in callback_datas
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        ("today", {"Buy milk", "Daily standup", "Old task"}),
+        ("week", {"Buy milk", "Buy bread", "Daily standup"}),
+        ("recurring", {"Daily standup"}),
+        ("overdue", {"Old task"}),
+    ],
+)
+async def test_live_quick_filters_pick_the_right_tasks(session, kind, expected) -> None:
+    """The quick filters the user actually reaches (experience.list_items;
+    the legacy filter handlers were unreachable and removed in the
+    2026-11-04 audit fixes)."""
+    dao = await _seed(session)
+    user = await session.get(User, 1)
+    items = await list_items(dao, user, {"kind": kind, "query": None})
+    texts = {r.reminder_text for r in items}
+    if kind in {"today", "week"}:
+        # Both depend on the clock: +1h/+2h may cross midnight, and the
+        # 1-hour-overdue task counts as "this week" when it's still today.
+        assert texts <= expected | {"Old task"}
+        assert ("Old task" in texts) if kind == "today" else ("Buy bread" in texts)
+    else:
+        assert texts == expected

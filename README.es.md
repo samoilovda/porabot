@@ -21,24 +21,31 @@ Escribe una frase; el bot extrae la hora y la descripción de la tarea:
 | `in 15 minutes check the oven` | en 15 minutos — «check the oven» |
 | `mañana a las 9 tomar vitaminas` | mañana 09:00 — «tomar vitaminas» |
 | `каждый день в 9 тренировка` | recurrencia diaria a las 09:00 — «тренировка» |
+| `reunión 12/11 a las 14:30` | 12 de noviembre 14:30 — «reunión» (DD/MM salvo con la interfaz en inglés) |
+| `cada lunes a las 9 reunión` | semanal los lunes a las 09:00 — «reunión» |
+| `pay rent on the 1st of every month` | mensual el día 1 (pregunta la hora) — «pay rent» |
+| `cada 2 semanas a las 10 revisión` | cada 2 semanas a las 10:00 — «revisión» |
+
+Repeticiones reconocidas: cada día / mañana / noche, días laborables, fines de semana, cada semana, días de la semana y listas de ellos, cada N días/semanas/meses, un día de cada mes. Si queda una palabra de repetición que el parser no entiende, el bot pide confirmación en lugar de guardar una tarea única. Una fecha sin hora: el bot pregunta la hora.
 
 ### Recordatorios
 
 - **Únicos y recurrentes** — diario, semanal o cualquier patrón expresable con `RRULE`
 - **Modo nagging** — recordatorio cada 5 minutos, limitado por un máximo configurable por tarea (por defecto 3)
-- **Posponer** — +15 min / +1 hora / mañana
+- **Posponer** — 15/30 min, 1/2 horas, un día, mañana/tarde/noche o una hora propia; posponer una ocurrencia de una tarea recurrente no cancela la siguiente de la serie y se muestra como «pospuesto hasta …»
+- **Contador de nagging** — cada recordatorio repetido indica su número («2 de 3»)
 - **Horas silenciosas** — ventana configurable: los recordatorios normales y el resumen de tareas perdidas se posponen/suprimen, mientras que los resúmenes diarios y los informes de hábitos siguen llegando a su hora, solo que en silencio
-- **Recuperación de tareas perdidas** — tras reiniciar el bot, un resumen de tareas perdidas con botones «completar todo» o «posponer todo»
+- **Recuperación de tareas perdidas** — un resumen diario (por defecto a las 10:00) de tareas vencidas con «completar todo» o «posponer todo»; tras una caída, los recordatorios no entregados se envían automáticamente. «Hoy» muestra vencidas de los últimos 7 días; las más antiguas siguen en Filtro → Vencidas y tras 30 días dejan de contar para el límite
 
 ### Hábitos
 
-- **Modo de hora fija** — el hábito se activa a una hora específica cada día; racha contada por marca de tiempo `due_at`
+- **Modo de hora fija** — el hábito se activa a una hora fija según su regla (diaria, o p. ej. «cada lunes a las 9», laborables, semanal); la racha sigue la regla del propio hábito, así que un hábito de lunes a viernes conserva la racha el fin de semana
 - **Modo fluido** — el hábito debe completarse en cualquier momento del día local; racha contada por fecha
 - **Plantillas** — plantillas de hábitos habituales seleccionables al crearlos
 - **Rachas** — `habit_streak_current` / `habit_streak_best` por hábito fijo; `fluid_streak_current` / `fluid_streak_best` para hábitos fluidos
 - **Deshacer** — revierte la última compleción y restaura la racha al valor anterior (flag `habit_undo_pending`)
 - **«Hoy no»** — registra el ciclo como `not_today` (distinto de un `missed` automático); igual que un ciclo perdido, reinicia la racha actual
-- **Sweeper de hábitos** — tarea en segundo plano que cada minuto detecta ciclos perdidos desde el estado de la BD, independientemente de si se envió alguna notificación
+- **Sweeper de hábitos** — tarea en segundo plano que cada minuto registra un `missed` por cada ciclo transcurrido de la regla del hábito (ventana de 7 días), se haya enviado o no una notificación
 - **Informes semanales y mensuales** — tasas agregadas de completado / hoy-no / perdido por hábito, enviadas en el día y hora configurados por el usuario
 
 ### Gestión de tareas

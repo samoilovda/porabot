@@ -244,11 +244,13 @@ async def test_paysupport_lists_recent_payments_with_refund_buttons() -> None:
     assert "paysupport_refund_2" in callback_datas
 
 
-async def test_refund_callback_calls_telegram_and_deletes_the_record() -> None:
+async def test_refund_callback_calls_telegram_and_marks_the_record() -> None:
+    """B-16 (2026-11-04 audit): the record is kept (marked refunded), not deleted."""
     payment = SimpleNamespace(id=1, user_id=7, telegram_payment_charge_id="charge-123", amount=50)
     payment_dao = SimpleNamespace(
         get_owned=AsyncMock(return_value=payment),
         delete_by_id=AsyncMock(),
+        mark_refunded=AsyncMock(),
     )
     bot = SimpleNamespace(refund_star_payment=AsyncMock())
     callback = SimpleNamespace(
@@ -262,7 +264,8 @@ async def test_refund_callback_calls_telegram_and_deletes_the_record() -> None:
     await callback_paysupport_refund(callback, RU, payment_dao)
 
     bot.refund_star_payment.assert_awaited_once_with(user_id=7, telegram_payment_charge_id="charge-123")
-    payment_dao.delete_by_id.assert_awaited_once_with(1)
+    payment_dao.mark_refunded.assert_awaited_once_with(payment)
+    payment_dao.delete_by_id.assert_not_awaited()
     callback.answer.assert_awaited_once_with(RU["paysupport_refund_success"], show_alert=True)
 
 
@@ -306,3 +309,30 @@ async def test_refund_callback_handles_telegram_failure_gracefully() -> None:
 
     payment_dao.delete_by_id.assert_not_awaited()
     callback.answer.assert_awaited_once_with(RU["paysupport_refund_failed"], show_alert=True)
+
+
+async def test_refunded_payment_is_kept_but_hidden_from_paysupport() -> None:
+    from datetime import datetime
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from bot.database import models  # noqa: F401
+    from bot.database.dao.payment import PaymentDAO
+    from bot.database.engine import Base
+    from bot.database.models import Payment, User
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+        s.add(User(id=7, username="u", timezone="UTC"))
+        await s.flush()
+        dao = PaymentDAO(s)
+        await dao.record_once(user_id=7, telegram_payment_charge_id="c1", amount=50, currency="XTR", invoice_payload="donate:50")
+        payment = (await dao.get_recent_for_user(7))[0]
+        await dao.mark_refunded(payment)
+        assert await dao.get_recent_for_user(7) == []
+        assert await dao.get_owned(payment.id, 7) is None
+        kept = await s.get(Payment, payment.id)
+        assert isinstance(kept.refunded_at, datetime)
+    await engine.dispose()

@@ -240,7 +240,7 @@ async def callback_paysupport_refund(
         )
         return
 
-    await payment_dao.delete_by_id(payment.id)
+    await payment_dao.mark_refunded(payment)
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:

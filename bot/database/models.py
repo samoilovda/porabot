@@ -514,6 +514,10 @@ class Payment(Base):
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String, nullable=False)
     invoice_payload: Mapped[str] = mapped_column(String, nullable=False)
+    # B-16 (2026-11-04 audit): when /paysupport refunded this payment
+    # (naive UTC). The row used to be DELETED on refund, losing the audit
+    # trail; now it's kept and just marked. NULL = not refunded.
+    refunded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=_utcnow_naive,

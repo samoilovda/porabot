@@ -1,3 +1,5 @@
+import pytest
+
 from bot.lexicon.en import EN
 from bot.lexicon.es import ES
 from bot.lexicon.pt import PT
@@ -113,3 +115,18 @@ def test_lexicons_are_standalone_literals() -> None:
         keys = [k.value for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Dict) for k in n.keys
                 if isinstance(k, ast.Constant)]
         assert len(keys) == len(set(keys)), f"{lang}: duplicate keys"
+
+
+@pytest.mark.parametrize(
+    "lang, count, expected",
+    [
+        ("ru", 1, "1 задача"), ("ru", 2, "2 задачи"), ("ru", 5, "5 задач"), ("ru", 11, "11 задач"),
+        ("ru", 21, "21 задача"), ("ru", 22, "22 задачи"), ("ru", 112, "112 задач"), ("ru", 0, "0 задач"),
+        ("en", 1, "1 task"), ("en", 2, "2 tasks"), ("es", 1, "1 tarea"), ("pt", 3, "3 tarefas"),
+    ],
+)
+def test_plural_forms(lang, count, expected) -> None:
+    """U-07 (2026-11-04 audit): "Осталось: 1 задач" → correct plural forms."""
+    from bot.lexicon import get_l10n, plural
+
+    assert plural(get_l10n(lang), "plural_tasks", count) == expected

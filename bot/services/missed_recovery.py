@@ -11,7 +11,7 @@ from sqlalchemy import or_, select, update
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
-from bot.lexicon import get_l10n
+from bot.lexicon import get_l10n, plural
 from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
 from bot.utils.pagination import limit_items, preview_line
@@ -67,7 +67,7 @@ def build_digest_text(overdue, user, l10n: dict) -> str:
     past Telegram's 4096-char limit (that send failed even as plain text
     and the digest was silently lost for the day)."""
     shown, hidden = limit_items(overdue, RECOVERY_DIGEST_LIMIT)
-    lines = [l10n["missed_recovery_title"].format(count=len(overdue))]
+    lines = [l10n["missed_recovery_title"].format(count=plural(l10n, "plural_overdue_tasks", len(overdue)))]
     for task in shown:
         dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         lines.append(f"▫️ `{dt_str}`: {escape_markdown(preview_line(task.reminder_text))}")

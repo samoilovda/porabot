@@ -14,6 +14,7 @@ from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import UiContext, User
 from bot.keyboards.inline import callback_button as _button
+from bot.lexicon import plural
 from bot.services.habit_pause import is_paused
 from bot.services.scheduler import SchedulerService
 from bot.services.ui_context import create_context, get_context
@@ -112,7 +113,11 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
                 )
                 if (r.is_fluid_habit or cycle is not None) and not done:
                     count_habits += 1
-        lines.append(l10n["daily_remaining"].format(tasks=count_tasks, habits=count_habits))
+        lines.append(
+            l10n["daily_remaining"].format(
+                tasks=plural(l10n, "plural_tasks", count_tasks), habits=plural(l10n, "plural_habits", count_habits)
+            )
+        )
         if payload["kind"] == "today":
             all_overdue = await dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0, limit=200)
             older = sum(1 for r in all_overdue if r.id not in {t.id for t in tasks})

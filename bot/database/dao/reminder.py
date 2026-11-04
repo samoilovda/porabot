@@ -27,7 +27,12 @@ from bot.database.dao.errors import (
 
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, ReminderKind, is_habit_like
-from bot.utils.time_ext import local_day_bounds_utc, local_days_ago_utc
+from bot.utils.time_ext import (
+    habit_cycle_grace,
+    local_day_bounds_utc,
+    local_days_ago_utc,
+    previous_occurrence_utc,
+)
 from bot.utils.timezone import resolve_timezone
 
 # fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
@@ -324,6 +329,11 @@ class ReminderDAO(BaseDAO[Reminder]):
         if completed_at_utc_naive.tzinfo is not None:
             completed_at_utc_naive = completed_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
 
+        user_tz = await self._owner_timezone(reminder)
+        grace = habit_cycle_grace(
+            *self._rule_and_anchor(reminder), user_tz, due_at_utc_naive
+        )
+
         # Re-completing the exact cycle an Undo just reverted restores the
         # streak it had before the revert (which only decremented by one),
         # instead of restarting the chain at 1 — there is no stored history
@@ -333,7 +343,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             and reminder.habit_last_completed_due_at == due_at_utc_naive
         ):
             reminder.habit_undo_pending = False
-            if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+            if completed_at_utc_naive > (due_at_utc_naive + grace):
                 reminder.habit_streak_current = 0
                 await self.session.flush()
                 return {"already_counted": False, "counted": False, "late": True}
@@ -350,27 +360,73 @@ class ReminderDAO(BaseDAO[Reminder]):
         if last_done_due and due_at_utc_naive <= last_done_due:
             return {"already_counted": True, "counted": False, "late": False}
 
-        if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+        # B-08: a cycle stays completable until the rule's next occurrence
+        # (min 24h) — a fixed 24h made a weekly habit's Tuesday completion of
+        # Monday's cycle "late".
+        if completed_at_utc_naive > (due_at_utc_naive + grace):
             reminder.habit_streak_current = 0
             await self.session.flush()
             return {"already_counted": False, "counted": False, "late": True}
 
         prev_due = reminder.habit_last_completed_due_at
-        if prev_due is None:
-            new_streak = 1
+        if prev_due is not None and self._cycles_are_consecutive(reminder, user_tz, prev_due, due_at_utc_naive):
+            new_streak = max(0, int(reminder.habit_streak_current or 0)) + 1
         else:
-            gap = due_at_utc_naive - prev_due
-            # Accept DST-shifted daily windows (roughly 24h ± 12h).
-            if timedelta(hours=12) <= gap <= timedelta(hours=36):
-                new_streak = max(0, int(reminder.habit_streak_current or 0)) + 1
-            else:
-                new_streak = 1
+            new_streak = 1
 
         reminder.habit_streak_current = new_streak
         reminder.habit_streak_best = max(new_streak, max(0, int(reminder.habit_streak_best or 0)))
         reminder.habit_last_completed_due_at = due_at_utc_naive
         await self.session.flush()
         return {"already_counted": False, "counted": True, "late": False}
+
+    async def _owner_timezone(self, reminder) -> str:
+        from bot.database.models import User
+
+        user_id = getattr(reminder, "user_id", None)
+        if user_id is None or not hasattr(self.session, "get"):
+            return "UTC"
+        user = await self.session.get(User, user_id)
+        return getattr(user, "timezone", None) or "UTC"
+
+    @staticmethod
+    def _rule_and_anchor(reminder) -> tuple[Optional[str], Optional[datetime]]:
+        """The habit's recurrence rule and series anchor (None, None) for a
+        non-recurring row. getattr: unit tests pass lightweight stand-ins."""
+        if not getattr(reminder, "is_recurring", False):
+            return None, None
+        anchor = getattr(reminder, "rrule_dtstart", None) or getattr(reminder, "execution_time", None)
+        return getattr(reminder, "rrule_string", None), anchor
+
+    @staticmethod
+    def _cycles_are_consecutive(reminder, user_tz: str, prev_due: datetime, due: datetime) -> bool:
+        """Whether *prev_due* (the last completed cycle) is the cycle
+        immediately before *due* under the habit's own rule.
+
+        B-08 (2026-11-04 audit): this used to be a fixed 12–36h gap, which
+        only fits FREQ=DAILY — a Mon–Fri habit restarted its streak every
+        Monday and a weekly habit never got past 1. Now: consecutive iff no
+        whole expected occurrence lies strictly between the two, i.e.
+        prev_due falls after the occurrence BEFORE the expected previous
+        one. The window (not exact equality) tolerates a habit whose time
+        was moved by a few hours."""
+        if prev_due >= due:
+            return False
+        rrule_string, anchor = ReminderDAO._rule_and_anchor(reminder)
+        if rrule_string and anchor is not None:
+            try:
+                expected_prev = previous_occurrence_utc(rrule_string, anchor, user_tz, due)
+                if expected_prev is not None:
+                    before_that = previous_occurrence_utc(rrule_string, anchor, user_tz, expected_prev)
+                    return before_that is None or prev_due > before_that
+                # *due* is the series' first occurrence (e.g. the habit's time
+                # was just edited): allow one period plus slack.
+                period = habit_cycle_grace(rrule_string, anchor, user_tz, due)
+                return due - prev_due <= max(timedelta(hours=36), period + timedelta(hours=12))
+            except (ValueError, TypeError):
+                pass
+        # No usable rule: daily-shaped gap, DST-tolerant (roughly 24h ± 12h).
+        return timedelta(hours=12) <= due - prev_due <= timedelta(hours=36)
 
     async def mark_habit_not_today(self, reminder_id: int) -> None:
         """

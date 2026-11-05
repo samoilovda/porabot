@@ -10,6 +10,7 @@ from sqlalchemy import text
 from bot.config import config
 from bot.database.dao.user import UserDAO
 from bot.services.scheduler import SchedulerService
+from bot.utils.markdown import escape_markdown
 
 router = Router(name="admin")
 logger = logging.getLogger(__name__)
@@ -48,12 +49,14 @@ async def cmd_debug(
     # 4. Server time (timezone-aware now — datetime.utcnow() is deprecated since 3.12)
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+    # B-17: legacy Markdown bolds with single "*"; the DB error text is
+    # arbitrary and must be escaped or the whole message can fail to parse.
     text_msg = (
-        "🔍 **System Debug Summary**\n\n"
-        f"🖥 **Server Time:** `{now_utc}`\n"
-        f"🗄 **DB Status:** {db_status}\n"
-        f"👤 **Total Users:** `{user_count}`\n"
-        f"⏰ **Active Jobs:** `{job_count}`"
+        "🔍 *System Debug Summary*\n\n"
+        f"🖥 *Server Time:* `{now_utc}`\n"
+        f"🗄 *DB Status:* {escape_markdown(db_status)}\n"
+        f"👤 *Total Users:* `{user_count}`\n"
+        f"⏰ *Active Jobs:* `{job_count}`"
     )
 
     await message.answer(text_msg, parse_mode="Markdown")

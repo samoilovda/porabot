@@ -57,7 +57,7 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
         get_owned=AsyncMock(return_value=reminder),
         session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
     )
-    scheduler_service = SimpleNamespace(schedule_reminder=Mock())
+    scheduler_service = SimpleNamespace(schedule_reminder=Mock(), schedule_snooze=Mock(), remove_snooze_job=Mock())
 
     state = _make_state()
     await state.update_data(
@@ -81,7 +81,11 @@ async def test_habit_custom_snooze_schedules_job_at_chosen_time_not_stale_db_tim
     assert reminder.execution_time == old_execution_time
 
     # But the actual APScheduler job must fire at the time the user picked.
-    scheduler_service.schedule_reminder.assert_called_once()
-    scheduled_id, scheduled_run_date = scheduler_service.schedule_reminder.call_args.args
+    # B-11 (2026-11-04 audit): the snoozed occurrence fires on its own
+    # snz_ job; the series' main job (next regular occurrence) is untouched.
+    scheduler_service.schedule_reminder.assert_not_called()
+    scheduler_service.schedule_snooze.assert_called_once()
+    scheduled_id, scheduled_run_date = scheduler_service.schedule_snooze.call_args.args
     assert scheduled_id == 5
     assert scheduled_run_date.replace(tzinfo=None) == chosen_time
+    assert reminder.snoozed_until == chosen_time

@@ -1,3 +1,5 @@
+import pytest
+
 from bot.lexicon.en import EN
 from bot.lexicon.es import ES
 from bot.lexicon.pt import PT
@@ -95,3 +97,36 @@ def test_regional_language_codes_resolve_to_their_lexicon() -> None:
     assert get_l10n("pt_PT")["lang_set"] == PT["lang_set"]
     assert get_l10n("es-419")["lang_set"] == ES["lang_set"]
     assert get_l10n("de")["lang_set"] == RU["lang_set"]
+
+
+def test_lexicons_are_standalone_literals() -> None:
+    """A-07 (2026-11-04 audit): es/pt used to start from dict(EN), so a
+    missing translation silently showed English and the coverage test above
+    could never fail; ru/en/es were also layered with .update() patches
+    that redefined keys. Each file must now be one literal."""
+    import ast
+    import re
+    from pathlib import Path
+
+    for lang in ("en", "ru", "es", "pt"):
+        source = (Path(__file__).resolve().parents[2] / "bot" / "lexicon" / f"{lang}.py").read_text()
+        assert not re.search(r"^[A-Z]{2}\.update\(", source, re.MULTILINE), lang
+        assert "from bot.lexicon" not in source, lang
+        keys = [k.value for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Dict) for k in n.keys
+                if isinstance(k, ast.Constant)]
+        assert len(keys) == len(set(keys)), f"{lang}: duplicate keys"
+
+
+@pytest.mark.parametrize(
+    "lang, count, expected",
+    [
+        ("ru", 1, "1 задача"), ("ru", 2, "2 задачи"), ("ru", 5, "5 задач"), ("ru", 11, "11 задач"),
+        ("ru", 21, "21 задача"), ("ru", 22, "22 задачи"), ("ru", 112, "112 задач"), ("ru", 0, "0 задач"),
+        ("en", 1, "1 task"), ("en", 2, "2 tasks"), ("es", 1, "1 tarea"), ("pt", 3, "3 tarefas"),
+    ],
+)
+def test_plural_forms(lang, count, expected) -> None:
+    """U-07 (2026-11-04 audit): "Осталось: 1 задач" → correct plural forms."""
+    from bot.lexicon import get_l10n, plural
+
+    assert plural(get_l10n(lang), "plural_tasks", count) == expected

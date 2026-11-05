@@ -62,17 +62,24 @@ class PaymentDAO(BaseDAO[Payment]):
         for."""
         result = await self.session.execute(
             select(Payment)
-            .where(Payment.user_id == user_id)
+            .where(Payment.user_id == user_id, Payment.refunded_at.is_(None))
             .order_by(Payment.created_at.desc())
             .limit(max(1, int(limit)))
         )
         return result.scalars().all()
+
+    async def mark_refunded(self, payment: Payment) -> None:
+        """B-16: keep the row (audit trail), just mark it refunded."""
+        from datetime import datetime, timezone
+
+        payment.refunded_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await self.session.flush()
 
     async def get_owned(self, payment_id: int, user_id: int) -> Optional[Payment]:
         """Same IDOR-prevention shape as ReminderDAO.get_owned — a
         /paysupport refund button must only ever act on the tapping
         user's own payment."""
         payment = await self.get_by_id(payment_id)
-        if payment is None or payment.user_id != user_id:
+        if payment is None or payment.user_id != user_id or payment.refunded_at is not None:
             return None
         return payment

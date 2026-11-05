@@ -247,6 +247,72 @@ def next_occurrence_utc(
     return to_utc_naive(next_local_aware)
 
 
+def _local_rule(rrule_string: str, dtstart_utc_naive: datetime, user_tz_str: str):
+    user_tz = _safe_tz(user_tz_str)
+    dtstart_local_naive = to_utc_aware(dtstart_utc_naive).astimezone(user_tz).replace(tzinfo=None)
+    return rrulestr(rrule_string, dtstart=dtstart_local_naive), user_tz
+
+
+def _to_local_naive(dt_utc_naive: datetime, user_tz) -> datetime:
+    return to_utc_aware(dt_utc_naive).astimezone(user_tz).replace(tzinfo=None)
+
+
+def previous_occurrence_utc(
+    rrule_string: str,
+    dtstart_utc_naive: datetime,
+    user_tz_str: str,
+    before_utc_naive: datetime,
+) -> Optional[datetime]:
+    """Mirror of next_occurrence_utc: the last occurrence strictly before
+    *before_utc_naive* (local-time rrule math, returned as naive UTC), or
+    None if the series hasn't started yet."""
+    rule, user_tz = _local_rule(rrule_string, dtstart_utc_naive, user_tz_str)
+    prev_local_naive = rule.before(_to_local_naive(before_utc_naive, user_tz))
+    if prev_local_naive is None:
+        return None
+    return to_utc_naive(user_tz.localize(prev_local_naive))
+
+
+def occurrences_between_utc(
+    rrule_string: str,
+    dtstart_utc_naive: datetime,
+    user_tz_str: str,
+    start_utc_naive: datetime,
+    end_utc_naive: datetime,
+) -> list[datetime]:
+    """Every occurrence in [start, end] (inclusive), as naive UTC."""
+    rule, user_tz = _local_rule(rrule_string, dtstart_utc_naive, user_tz_str)
+    found = rule.between(
+        _to_local_naive(start_utc_naive, user_tz), _to_local_naive(end_utc_naive, user_tz), inc=True
+    )
+    return [to_utc_naive(user_tz.localize(dt)) for dt in found]
+
+
+MIN_HABIT_GRACE = timedelta(hours=24)
+
+
+def habit_cycle_grace(
+    rrule_string: Optional[str],
+    dtstart_utc_naive: Optional[datetime],
+    user_tz_str: str,
+    due_utc_naive: datetime,
+) -> timedelta:
+    """How long after *due* a habit cycle can still be completed (and counts
+    toward the streak) before it becomes a miss: until the rule's NEXT
+    occurrence, but never less than 24h. For FREQ=DAILY that is exactly the
+    old fixed 24h; for a Mon–Fri habit Friday's cycle stays open until
+    Monday, for a weekly one a whole week (B-08, 2026-11-04 audit)."""
+    if not rrule_string or dtstart_utc_naive is None:
+        return MIN_HABIT_GRACE
+    try:
+        nxt = next_occurrence_utc(rrule_string, dtstart_utc_naive, user_tz_str, due_utc_naive)
+    except (ValueError, TypeError):
+        return MIN_HABIT_GRACE
+    if nxt is None:
+        return MIN_HABIT_GRACE
+    return max(MIN_HABIT_GRACE, nxt - due_utc_naive)
+
+
 def to_utc_aware(dt: datetime) -> datetime:
     """Return *dt* as a timezone-aware UTC datetime.
 

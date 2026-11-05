@@ -22,9 +22,6 @@ from bot.database.models import is_habit_like as _is_habit_like
 from bot.handlers.reminders_shared import (
     _parse_id_suffix,
     _pick_done_reply,
-    _render_filter_screen,
-    _split_return_ctx,
-    decode_filter_ctx,
 )
 from bot.keyboards.inline import get_done_followup_keyboard
 from bot.services.scheduler import SchedulerService
@@ -229,14 +226,9 @@ async def callback_task_done(
     user: User,
     l10n: dict[str, Any],
 ) -> None:
-    # Step 8 (2026-09-26 audit remediation): a Done button rendered from a
-    # quick filter's results (get_filtered_tasks_keyboard) carries a
-    # "::<kind>:<page>" return-context suffix — see
-    # bot/keyboards/inline.py's _build_task_action_rows — so success below
-    # can redraw that SAME filtered page instead of collapsing the whole
-    # list into a single-task follow-up card, which would otherwise lose
-    # the filter entirely.
-    data, return_ctx = _split_return_ctx(callback.data)
+    # A "::<ctx>" suffix came from the removed legacy filter screens; a
+    # button on an old message may still carry it — ignore it.
+    data = callback.data.split("::", 1)[0]
     payload = data[len("done_task_"):]
     parts = payload.split("_")
     try:
@@ -319,12 +311,6 @@ async def callback_task_done(
     if not reminder.is_recurring:
         scheduler_service.remove_reminder_job(reminder_id)
     scheduler_service.remove_nagging_job(reminder_id)
-
-    if return_ctx:
-        kind, tag, page = decode_filter_ctx(return_ctx)
-        await _render_filter_screen(callback.message, reminder_dao, user, l10n, kind=kind, tag=tag, page=page)
-        await callback.answer(l10n["btn_done"])
-        return
 
     try:
         done_text = f"{escape_markdown_v2(callback.message.text)}\n\n{_pick_done_reply(l10n)}"
@@ -521,7 +507,10 @@ async def callback_done_undo(
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
+    from_list: bool = False,
 ) -> None:
+    """*from_list*: called by the task list, which redraws itself — skip the
+    keyboard strip and the extra confirmation message (B-17)."""
     payload = callback.data[len("done_undo_"):]
     parts = payload.split("_")
     try:
@@ -594,6 +583,9 @@ async def callback_done_undo(
             scheduler_service.remove_reminder_job(reminder.id)
         return await callback.answer(l10n.get("schedule_error", "❌ Failed to schedule reminder. Please try again."), show_alert=True)
 
+    if from_list:
+        await callback.answer(l10n.get("done_undo_done", "↩ Done action was undone. Task is active again."))
+        return
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:

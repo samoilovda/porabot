@@ -6,6 +6,7 @@ docstring for the full module family and why).
 """
 
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.exc import OperationalError
 
+from bot.database.dao.errors import user_message
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.handlers.reminders_shared import (
@@ -89,9 +91,9 @@ async def handle_forwarded_task(
         return
 
     try:
-        result = await parser.parse(full_text, user.timezone)
+        result = await parser.parse(full_text, user.timezone, getattr(user, "language", None))
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except OperationalError as e:
         logger.error("DB locked parsing forwarded text for user %s: %s", user.id, e)
@@ -109,7 +111,7 @@ async def handle_forwarded_task(
     try:
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
     except OperationalError as e:
         logger.error("DB locked handling forwarded text for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -122,29 +124,51 @@ async def handle_forwarded_task(
         await state.clear()
 
 
-_CARD_ID_PREFIXES = ("task_settings_", "del_task_", "edit_edit_", "edit_delete_")
+# Every callback_data shape that names exactly one task: saved-task cards,
+# the edit keyboard, and a fired reminder's notification (done/not today/
+# not relevant/snooze — B-06: a recurring task's notification has no
+# del_task_ button, so replying to it used to create a NEW task instead).
+_CARD_ID_PREFIXES = (
+    "task_settings_", "del_task_", "edit_edit_", "edit_delete_",
+    "done_task_", "not_today_", "not_relevant_", "snooze_show_", "snooze_act_",
+)
+# ux: actions that only ever appear on a task LIST, never on one task's card.
+_LIST_ONLY_UX_ACTIONS = frozenset({"done", "detail", "habitdone", "habitundo", "undone", "undelete"})
+_LEADING_ID_RE = re.compile(r"\d+")
 
 
 def _reminder_id_from_card(replied: Message | None) -> int | None:
     """Step 12: the reminder a bot card refers to, read from the card's own
-    inline keyboard (task_settings_/del_task_/... callback_data) — no
-    message-id -> reminder mapping to store or lose on restart. None if
-    the replied message isn't one of our task cards."""
+    inline keyboard — no message-id -> reminder mapping to store or lose on
+    restart. None if the replied message isn't the card of exactly ONE task.
+
+    B-05: a task list carries ux: buttons for every task on the page; it
+    used to resolve to the FIRST task, so replying to the list with a new
+    phrase silently rescheduled task #1. List-only buttons now disqualify
+    the message, and buttons naming more than one task are ambiguous."""
     markup = getattr(replied, "reply_markup", None)
     if replied is None or not markup:
         return None
+    ids: set[int] = set()
     for row in markup.inline_keyboard:
         for button in row:
             data = button.callback_data or ""
             if data.startswith("ux:"):
-                try:
-                    return int(data.split(":")[4])
-                except (ValueError, IndexError):
+                parts = data.split(":")
+                if len(parts) < 5:
                     continue
+                if parts[3] in _LIST_ONLY_UX_ACTIONS:
+                    return None
+                if parts[4].isdigit():
+                    ids.add(int(parts[4]))
+                continue
             for prefix in _CARD_ID_PREFIXES:
                 if data.startswith(prefix):
-                    return _parse_id_suffix(data, prefix)
-    return None
+                    match = _LEADING_ID_RE.match(data, len(prefix))
+                    if match:
+                        ids.add(int(match.group(0)))
+                    break
+    return ids.pop() if len(ids) == 1 else None
 
 
 @router.message(StateFilter(None), F.text, F.reply_to_message, ~F.text.startswith("/"))
@@ -173,7 +197,7 @@ async def handle_reply_to_card(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing card reply for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -232,9 +256,9 @@ async def handle_task_text(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except OperationalError as e:
         # A locked sqlite file (several per-minute cron jobs share it — see
@@ -270,7 +294,7 @@ async def handle_task_text(
     try:
         await _handle_parsed_result(message, state, user, l10n, result, reminder_dao, scheduler_service)
     except ValueError as ve:
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
     except OperationalError as e:
         logger.error("DB locked handling message for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -309,7 +333,7 @@ async def state_choosing_time_text_input(
         return
 
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing time input for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -354,11 +378,16 @@ async def callback_time_selected(
     now = datetime.now(tz)
     execution_time = None
 
-    if "delta" in data_str:
-        minutes = int(data_str.split("_")[-1])
-        execution_time = now + timedelta(minutes=minutes)
-    elif "fixed" in data_str:
-        execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
+    if "delta" in data_str or "fixed" in data_str:
+        try:
+            if "delta" in data_str:
+                execution_time = now + timedelta(minutes=int(data_str.split("_")[-1]))
+            else:
+                execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
+        except (ValueError, IndexError):
+            # B-17: callback_data is client-controlled — a malformed value
+            # gets the specific "invalid action" alert, not a generic error.
+            return await callback.answer(l10n["invalid_action"], show_alert=True)
     elif "tomorrow" in data_str:
         # 1.3: DST-safe — see local_time_tomorrow's docstring for why this
         # replaced a plain now.replace(hour=9, ...) + timedelta(days=1).

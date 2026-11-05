@@ -64,11 +64,17 @@ async def test_removes_jobs_for_deleted_completed_soft_deleted_and_given_up_remi
     # A non-reminder system job (fixed string id) — must never be touched.
     scheduler.add_job(_noop, "date", run_date=future, id="daily_briefs_minutely")
 
+    # snz_1: snooze job, but reminder 1 has no pending snooze — remove.
+    scheduler.add_job(_noop, "date", run_date=future, id="snz_1")
+    # snz_6: snooze job for reminder 6, whose snooze is still pending — keep.
+    scheduler.add_job(_noop, "date", run_date=future, id="snz_6")
+
     reminder_rows = [
-        (1, "pending", None, 0),
-        (3, "completed", None, 0),
-        (4, "pending", datetime.now(timezone.utc).replace(tzinfo=None), 0),
-        (5, "pending", None, FORBIDDEN_STRIKES_LIMIT),
+        (1, "pending", None, 0, None),
+        (3, "completed", None, 0, None),
+        (4, "pending", datetime.now(timezone.utc).replace(tzinfo=None), 0, None),
+        (5, "pending", None, FORBIDDEN_STRIKES_LIMIT, None),
+        (6, "pending", None, 0, future.replace(tzinfo=None)),
         # 2 is absent entirely — hard-deleted.
     ]
     session_pool = lambda: _FakeSession(reminder_rows)  # noqa: E731
@@ -76,11 +82,12 @@ async def test_removes_jobs_for_deleted_completed_soft_deleted_and_given_up_remi
 
     removed_count = await service.remove_orphan_scheduler_jobs()
 
-    assert removed_count == 5  # 2, 3, 4, 5, nag_3
+    assert removed_count == 6  # 2, 3, 4, 5, nag_3, snz_1
     assert scheduler.get_job("1") is not None
     assert scheduler.get_job("nag_1") is not None
+    assert scheduler.get_job("snz_6") is not None
     assert scheduler.get_job("daily_briefs_minutely") is not None
-    for orphan_id in ("2", "3", "4", "5", "nag_3"):
+    for orphan_id in ("2", "3", "4", "5", "nag_3", "snz_1"):
         assert scheduler.get_job(orphan_id) is None
 
 

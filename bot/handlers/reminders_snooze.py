@@ -113,16 +113,25 @@ async def callback_snooze_act(
     # we only reschedule the current APScheduler job to fire later.
     if not reminder.is_recurring:
         reminder.execution_time = new_time_utc_naive
+    else:
+        # B-11: visible "snoozed until" and a separate job, so the series'
+        # own next occurrence still fires.
+        reminder.snoozed_until = new_time_utc_naive
 
     reminder.last_nag_chat_id = None
     reminder.last_nag_message_id = None
     reminder.snooze_count = int(reminder.snooze_count or 0) + 1
     try:
-        scheduler_service.schedule_reminder(
-            reminder.id,
-            to_utc_aware(new_time_utc_naive),
-            is_nagging=reminder.is_nagging,
-        )
+        if reminder.is_recurring:
+            scheduler_service.schedule_snooze(
+                reminder.id, to_utc_aware(new_time_utc_naive), is_nagging=reminder.is_nagging
+            )
+        else:
+            scheduler_service.schedule_reminder(
+                reminder.id,
+                to_utc_aware(new_time_utc_naive),
+                is_nagging=reminder.is_nagging,
+            )
         scheduler_service.remove_nagging_job(reminder.id)
     except Exception:
         await reminder_dao.session.rollback()
@@ -144,9 +153,12 @@ async def callback_snooze_act(
             # recurring reminder (anti-drift guard already left it alone
             # above), reverted to its pre-snooze value otherwise.
             await reminder_dao.session.refresh(reminder)
-            scheduler_service.schedule_reminder(
-                reminder.id, to_utc_aware(reminder.execution_time), is_nagging=reminder.is_nagging
-            )
+            if reminder.is_recurring:
+                scheduler_service.remove_snooze_job(reminder.id)
+            else:
+                scheduler_service.schedule_reminder(
+                    reminder.id, to_utc_aware(reminder.execution_time), is_nagging=reminder.is_nagging
+                )
         except Exception as restore_e:
             logger.error(
                 "Failed to restore prior job for reminder %s after commit failure: %s",

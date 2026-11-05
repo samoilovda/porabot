@@ -31,6 +31,26 @@ def get_l10n(language_code: Optional[str]) -> dict[str, Any]:
     return _LEXICONS.get(primary, _LEXICONS[DEFAULT_LANG])
 
 
+def plural(l10n: dict[str, Any], key: str, count: int) -> str:
+    """"{count} <word>" with the right plural form (U-07, 2026-11-04 audit).
+
+    *key* names a list of forms in the lexicon: three for Russian
+    (one/few/many: 1 задача, 2 задачи, 5 задач), two for en/es/pt
+    (one/other). Avoids "1 задач" / "1 tasks"."""
+    forms = l10n[key]
+    n = abs(int(count))
+    if len(forms) == 3:
+        if n % 10 == 1 and n % 100 != 11:
+            word = forms[0]
+        elif 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+            word = forms[1]
+        else:
+            word = forms[2]
+    else:
+        word = forms[0] if n == 1 else forms[1]
+    return f"{count} {word}"
+
+
 # A-23: the set of language codes this bot actually has a lexicon for —
 # callback_set_lang (bot/handlers/commands.py) validates a client-supplied
 # set_lang_<code> callback against this instead of persisting any string

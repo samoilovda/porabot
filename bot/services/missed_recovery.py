@@ -11,9 +11,10 @@ from sqlalchemy import or_, select, update
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
 from bot.keyboards.inline import get_missed_recovery_keyboard
-from bot.lexicon import get_l10n
+from bot.lexicon import get_l10n, plural
 from bot.services.notification_policy import notification_policy
 from bot.utils.markdown import escape_markdown, strip_markdown_escapes
+from bot.utils.pagination import limit_items, preview_line
 from bot.utils.time_ext import format_time
 from bot.utils.timezone import resolve_timezone
 
@@ -56,6 +57,23 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
     except Exception as e:
         logger.error("Failed to send missed recovery to %s: %s", user_id, e, exc_info=True)
         return False
+
+
+def build_digest_text(overdue, user, l10n: dict) -> str:
+    """B-14 (2026-11-04 audit): the title shows the TRUE overdue count (it
+    used to show the already-truncated list's length, e.g. "5" for 30), the
+    list is capped at RECOVERY_DIGEST_LIMIT with an "…and N more" line, and
+    each line is previewed so a few 3000-char tasks can't push the message
+    past Telegram's 4096-char limit (that send failed even as plain text
+    and the digest was silently lost for the day)."""
+    shown, hidden = limit_items(overdue, RECOVERY_DIGEST_LIMIT)
+    lines = [l10n["missed_recovery_title"].format(count=plural(l10n, "plural_overdue_tasks", len(overdue)))]
+    for task in shown:
+        dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+        lines.append(f"▫️ `{dt_str}`: {escape_markdown(preview_line(task.reminder_text))}")
+    if hidden:
+        lines.append(l10n["brief_items_more"].format(count=hidden))
+    return "\n".join(lines)
 
 
 async def process_missed_task_recovery() -> None:
@@ -121,15 +139,15 @@ async def process_missed_task_recovery() -> None:
         for user, _now_local, today_key in eligible_users:
             async with session_pool_factory() as session:
                 reminder_dao = ReminderDAO(session)
-                overdue = await reminder_dao.get_overdue_pending_tasks(
-                    user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT
-                )
-                if not overdue:
-                    continue
+                overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30)
 
                 # Atomic claim before sending — mirrors daily_briefs._claim_brief_slot.
                 # A plain read-then-send-then-write leaves a window where two
                 # concurrent ticks can both see "not sent yet" and both send.
+                # Claimed even when nothing is overdue (A-09, 2026-11-04 audit):
+                # the digest is a once-a-day catch-up, and leaving the day
+                # unclaimed made every later tick re-query this user's
+                # overdue tasks every minute until midnight.
                 claim = await session.execute(
                     update(User)
                     .where(
@@ -139,15 +157,11 @@ async def process_missed_task_recovery() -> None:
                     .values(last_missed_recovery_date=today_key)
                 )
                 await session.commit()
-                if claim.rowcount != 1:
+                if claim.rowcount != 1 or not overdue:
                     continue
 
                 l10n = get_l10n(user.language)
-                lines = [l10n.get("missed_recovery_title", "📎 Missed tasks: {count}").format(count=len(overdue))]
-                for task in overdue:
-                    dt_str = format_time(task.execution_time, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
-                    lines.append(f"▫️ `{dt_str}`: {escape_markdown(task.reminder_text)}")
-                text = "\n".join(lines)
+                text = build_digest_text(overdue, user, l10n)
 
                 delivered = await _send_safe(bot, user.id, text, l10n)
                 if not delivered:

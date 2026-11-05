@@ -19,10 +19,20 @@ from sqlalchemy import delete, func, or_, select
 
 # Import BaseDAO from base module (generic CRUD operations)
 from bot.database.dao.base import BaseDAO
+from bot.database.dao.errors import (
+    ActiveHabitsLimitError,
+    ActiveRemindersLimitError,
+    ReminderTextTooLongError,
+)
 
 # Import Reminder model for type hints and query construction
 from bot.database.models import Reminder, ReminderKind, is_habit_like
-from bot.utils.time_ext import local_day_bounds_utc, local_days_ago_utc
+from bot.utils.time_ext import (
+    habit_cycle_grace,
+    local_day_bounds_utc,
+    local_days_ago_utc,
+    previous_occurrence_utc,
+)
 from bot.utils.timezone import resolve_timezone
 
 # fix(2.2): "%" and "_" are LIKE wildcards — user-supplied search/tag text
@@ -63,6 +73,30 @@ class ReminderDAO(BaseDAO[Reminder]):
     # and vice versa.
     MAX_ACTIVE_REMINDERS = 200
     MAX_ACTIVE_HABITS = 50
+    # B-15 (2026-11-04 audit): a one-off task overdue this long no longer
+    # counts toward MAX_ACTIVE_REMINDERS — ignoring old tasks used to lock a
+    # user out of creating new ones (they stay listed under "Overdue").
+    STALE_OVERDUE_AFTER = timedelta(days=30)
+
+    async def reset_forbidden_strikes(self, user_id: int) -> int:
+        """B-07: forget every TelegramForbiddenError strike on the user's
+        active reminders — called once they unblock the bot. Without this,
+        a reminder that reached FORBIDDEN_STRIKES_LIMIT while the user was
+        blocked stayed excluded from reconcile_jobs_with_db forever and
+        never fired again. Returns how many reminders were revived."""
+        from sqlalchemy import update
+
+        result = await self.session.execute(
+            update(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.status == "pending",
+                Reminder.forbidden_strikes > 0,
+            )
+            .values(forbidden_strikes=0)
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
 
     async def delete_for_user(self, user_id: int) -> None:
         """Drop every reminder of a user in one statement — for full
@@ -99,14 +133,16 @@ class ReminderDAO(BaseDAO[Reminder]):
         MAX_TEXT_LENGTH = 3000
 
         if len(text) > MAX_TEXT_LENGTH:
-            raise ValueError(
-                f"Reminder text too long ({len(text)} chars). "
-                f"Maximum allowed: {MAX_TEXT_LENGTH} chars."
+            raise ReminderTextTooLongError(
+                f"Reminder text too long ({len(text)} chars). Maximum allowed: {MAX_TEXT_LENGTH} chars.",
+                length=len(text),
+                max_length=MAX_TEXT_LENGTH,
             )
         if nagging_max_repeats < 0:
             raise ValueError("nagging_max_repeats cannot be negative.")
 
         is_any_habit = is_habit or is_fluid_habit
+        stale_before = datetime.now(pytz.UTC).replace(tzinfo=None) - self.STALE_OVERDUE_AFTER
         active_count_result = await self.session.execute(
             select(func.count())
             .select_from(Reminder)
@@ -115,14 +151,18 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.pending_delete_at.is_(None),
                 Reminder.is_habit.is_(is_any_habit),
+                or_(Reminder.is_recurring.is_(True), Reminder.execution_time >= stale_before),
             )
         )
         active_count = active_count_result.scalar_one()
         limit = self.MAX_ACTIVE_HABITS if is_any_habit else self.MAX_ACTIVE_REMINDERS
         if active_count >= limit:
-            raise ValueError(
+            error_cls = ActiveHabitsLimitError if is_any_habit else ActiveRemindersLimitError
+            raise error_cls(
                 f"You already have {active_count} active {'habits' if is_any_habit else 'reminders'}. "
-                f"Maximum allowed: {limit}. Delete some before adding more."
+                f"Maximum allowed: {limit}. Delete some before adding more.",
+                count=active_count,
+                limit=limit,
             )
 
         reminder = Reminder(
@@ -271,6 +311,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
             reminder.snooze_count = 0
+            reminder.snoozed_until = None  # B-11: a closed cycle has nothing left to re-send
 
             await self.session.flush()
 
@@ -295,6 +336,11 @@ class ReminderDAO(BaseDAO[Reminder]):
         if completed_at_utc_naive.tzinfo is not None:
             completed_at_utc_naive = completed_at_utc_naive.astimezone(pytz.UTC).replace(tzinfo=None)
 
+        user_tz = await self._owner_timezone(reminder)
+        grace = habit_cycle_grace(
+            *self._rule_and_anchor(reminder), user_tz, due_at_utc_naive
+        )
+
         # Re-completing the exact cycle an Undo just reverted restores the
         # streak it had before the revert (which only decremented by one),
         # instead of restarting the chain at 1 — there is no stored history
@@ -304,7 +350,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             and reminder.habit_last_completed_due_at == due_at_utc_naive
         ):
             reminder.habit_undo_pending = False
-            if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+            if completed_at_utc_naive > (due_at_utc_naive + grace):
                 reminder.habit_streak_current = 0
                 await self.session.flush()
                 return {"already_counted": False, "counted": False, "late": True}
@@ -321,27 +367,73 @@ class ReminderDAO(BaseDAO[Reminder]):
         if last_done_due and due_at_utc_naive <= last_done_due:
             return {"already_counted": True, "counted": False, "late": False}
 
-        if completed_at_utc_naive > (due_at_utc_naive + timedelta(hours=24)):
+        # B-08: a cycle stays completable until the rule's next occurrence
+        # (min 24h) — a fixed 24h made a weekly habit's Tuesday completion of
+        # Monday's cycle "late".
+        if completed_at_utc_naive > (due_at_utc_naive + grace):
             reminder.habit_streak_current = 0
             await self.session.flush()
             return {"already_counted": False, "counted": False, "late": True}
 
         prev_due = reminder.habit_last_completed_due_at
-        if prev_due is None:
-            new_streak = 1
+        if prev_due is not None and self._cycles_are_consecutive(reminder, user_tz, prev_due, due_at_utc_naive):
+            new_streak = max(0, int(reminder.habit_streak_current or 0)) + 1
         else:
-            gap = due_at_utc_naive - prev_due
-            # Accept DST-shifted daily windows (roughly 24h ± 12h).
-            if timedelta(hours=12) <= gap <= timedelta(hours=36):
-                new_streak = max(0, int(reminder.habit_streak_current or 0)) + 1
-            else:
-                new_streak = 1
+            new_streak = 1
 
         reminder.habit_streak_current = new_streak
         reminder.habit_streak_best = max(new_streak, max(0, int(reminder.habit_streak_best or 0)))
         reminder.habit_last_completed_due_at = due_at_utc_naive
         await self.session.flush()
         return {"already_counted": False, "counted": True, "late": False}
+
+    async def _owner_timezone(self, reminder) -> str:
+        from bot.database.models import User
+
+        user_id = getattr(reminder, "user_id", None)
+        if user_id is None or not hasattr(self.session, "get"):
+            return "UTC"
+        user = await self.session.get(User, user_id)
+        return getattr(user, "timezone", None) or "UTC"
+
+    @staticmethod
+    def _rule_and_anchor(reminder) -> tuple[Optional[str], Optional[datetime]]:
+        """The habit's recurrence rule and series anchor (None, None) for a
+        non-recurring row. getattr: unit tests pass lightweight stand-ins."""
+        if not getattr(reminder, "is_recurring", False):
+            return None, None
+        anchor = getattr(reminder, "rrule_dtstart", None) or getattr(reminder, "execution_time", None)
+        return getattr(reminder, "rrule_string", None), anchor
+
+    @staticmethod
+    def _cycles_are_consecutive(reminder, user_tz: str, prev_due: datetime, due: datetime) -> bool:
+        """Whether *prev_due* (the last completed cycle) is the cycle
+        immediately before *due* under the habit's own rule.
+
+        B-08 (2026-11-04 audit): this used to be a fixed 12–36h gap, which
+        only fits FREQ=DAILY — a Mon–Fri habit restarted its streak every
+        Monday and a weekly habit never got past 1. Now: consecutive iff no
+        whole expected occurrence lies strictly between the two, i.e.
+        prev_due falls after the occurrence BEFORE the expected previous
+        one. The window (not exact equality) tolerates a habit whose time
+        was moved by a few hours."""
+        if prev_due >= due:
+            return False
+        rrule_string, anchor = ReminderDAO._rule_and_anchor(reminder)
+        if rrule_string and anchor is not None:
+            try:
+                expected_prev = previous_occurrence_utc(rrule_string, anchor, user_tz, due)
+                if expected_prev is not None:
+                    before_that = previous_occurrence_utc(rrule_string, anchor, user_tz, expected_prev)
+                    return before_that is None or prev_due > before_that
+                # *due* is the series' first occurrence (e.g. the habit's time
+                # was just edited): allow one period plus slack.
+                period = habit_cycle_grace(rrule_string, anchor, user_tz, due)
+                return due - prev_due <= max(timedelta(hours=36), period + timedelta(hours=12))
+            except (ValueError, TypeError):
+                pass
+        # No usable rule: daily-shaped gap, DST-tolerant (roughly 24h ± 12h).
+        return timedelta(hours=12) <= due - prev_due <= timedelta(hours=36)
 
     async def mark_habit_not_today(self, reminder_id: int) -> None:
         """
@@ -364,6 +456,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             reminder.last_nag_chat_id = None
             reminder.last_nag_message_id = None
             reminder.snooze_count = 0
+            reminder.snoozed_until = None
             await self.session.flush()
 
     async def revert_habit_streak_completion(
@@ -555,11 +648,18 @@ class ReminderDAO(BaseDAO[Reminder]):
         *,
         min_minutes_overdue: int = 30,
         limit: Optional[int] = None,
+        max_days_overdue: Optional[int] = None,
     ) -> Sequence[Reminder]:
         """
-        Get pending tasks that are overdue by at least *min_minutes_overdue*.
+        Get pending tasks that are overdue by at least *min_minutes_overdue*
+        (and, with *max_days_overdue*, by at most that many days).
         """
         threshold_utc = datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(minutes=max(0, min_minutes_overdue))
+        extra = []
+        if max_days_overdue is not None:
+            extra.append(
+                Reminder.execution_time >= datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(days=max_days_overdue)
+            )
         stmt = (
             select(Reminder)
             .where(
@@ -572,6 +672,7 @@ class ReminderDAO(BaseDAO[Reminder]):
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,
                 ),
+                *extra,
             )
             .order_by(*self._priority_order())
         )
@@ -649,8 +750,15 @@ class ReminderDAO(BaseDAO[Reminder]):
         """3.4: `/find <text>` — case-insensitive substring search over the
         user's pending, non-fluid tasks. Same active-list rules as
         get_user_reminders (hides soft-deleted and already-completed
-        recurring cycles)."""
-        needle = f"%{_escape_like(query.strip())}%"
+        recurring cycles).
+
+        Matching happens in Python with str.casefold(): SQLite's lower()/
+        LIKE only fold ASCII, so "молоко" never matched "Молоко" in SQL. A
+        user has at most MAX_ACTIVE_REMINDERS active rows, so filtering
+        them in memory is cheap."""
+        needle = query.strip().casefold()
+        if not needle:
+            return []
         result = await self.session.execute(
             select(Reminder)
             .where(
@@ -658,7 +766,6 @@ class ReminderDAO(BaseDAO[Reminder]):
                 Reminder.status == "pending",
                 Reminder.is_fluid_habit.is_(False),
                 Reminder.pending_delete_at.is_(None),
-                Reminder.reminder_text.ilike(needle, escape=_LIKE_ESCAPE_CHAR),
                 or_(
                     Reminder.completed_for_execution_time.is_(None),
                     Reminder.completed_for_execution_time < Reminder.execution_time,
@@ -666,7 +773,7 @@ class ReminderDAO(BaseDAO[Reminder]):
             )
             .order_by(*self._priority_order())
         )
-        return result.scalars().all()
+        return [r for r in result.scalars().all() if needle in (r.reminder_text or "").casefold()]
 
     async def get_user_reminders_today(self, user_id: int, user_tz_str: str) -> Sequence[Reminder]:
         """3.4 "today" filter — convenience alias, same query as the daily
@@ -860,6 +967,7 @@ class ReminderDAO(BaseDAO[Reminder]):
         reminder.fluid_last_completed_date = today_str
         reminder.completed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
         reminder.snooze_count = 0
+        reminder.snoozed_until = None
         await self.session.flush()
         return True
 

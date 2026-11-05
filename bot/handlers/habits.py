@@ -14,6 +14,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.exc import OperationalError
 
+from bot.database.dao.errors import user_message
 from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import ReminderKind, User
@@ -30,11 +31,10 @@ from bot.handlers.reminders import (
 )
 from bot.keyboards.inline import get_undo_delete_keyboard
 from bot.services.habit_pause import apply_pause, is_paused, valid_pause_date
-from bot.services.habit_reports import compute_habit_score
 from bot.services.parser import InputParser
 from bot.services.scheduler import SchedulerService
 from bot.utils.markdown import escape_markdown
-from bot.utils.pagination import limit_items, preview_line
+from bot.utils.pagination import preview_line
 from bot.utils.telegram import safe_edit_text
 from bot.utils.time_ext import (
     format_time,
@@ -50,10 +50,6 @@ from bot.utils.timezone import resolve_timezone
 router = Router(name="habits")
 logger = logging.getLogger(__name__)
 
-# 1.5: caps the "My Habits" list — at ReminderDAO.MAX_ACTIVE_HABITS (50),
-# unbounded rendering could exceed both Telegram's ~4096-char message
-# limit and its ~100-button-per-keyboard limit (2 buttons/habit here).
-_HABIT_LIST_LIMIT = 25
 
 class HabitState(StatesGroup):
     waiting_for_name = State()
@@ -77,46 +73,6 @@ def _habit_motivation_text(l10n: dict[str, Any], stats: dict[str, int]) -> str:
         best_ever_streak=stats.get("best_ever_streak", 0),
         avg_score=stats.get("avg_score", 0),
     )
-
-def _is_habit_entry(reminder) -> bool:
-    """Whether *reminder* belongs in "My Habits".
-
-    Deliberately does NOT match on "daily recurring + nagging" alone — those
-    are ordinary edit-keyboard toggles any plain task can have turned on,
-    and matching on them showed such a task in the habits list. `is_habit`
-    (set only by the Habits creation flow, or by the one-time legacy
-    backfill in bot/database/engine.py) is the source of truth; the
-    remaining checks catch rows that lived as a habit before is_habit
-    existed.
-    """
-    return bool(
-        getattr(reminder, "is_habit", False)
-        or getattr(reminder, "is_fluid_habit", False)
-        or getattr(reminder, "habit_active_due_at", None) is not None
-        or getattr(reminder, "habit_last_completed_due_at", None) is not None
-        or int(getattr(reminder, "habit_streak_current", 0) or 0) > 0
-        or int(getattr(reminder, "habit_streak_best", 0) or 0) > 0
-    )
-
-def _habit_streak_labels(reminder) -> tuple[int, int]:
-    if getattr(reminder, "is_fluid_habit", False):
-        return (
-            max(0, int(getattr(reminder, "fluid_streak_current", 0) or 0)),
-            max(0, int(getattr(reminder, "fluid_streak_best", 0) or 0)),
-        )
-    return (
-        max(0, int(getattr(reminder, "habit_streak_current", 0) or 0)),
-        max(0, int(getattr(reminder, "habit_streak_best", 0) or 0)),
-    )
-
-
-def _fluid_mode_label(reminder, l10n: dict[str, Any]) -> str:
-    if not getattr(reminder, "is_fluid_habit", False):
-        return l10n.get("habit_mode_fixed", "fixed")
-    mode = str(getattr(reminder, "fluid_mode", "") or "brief_only")
-    if mode == "ask_time":
-        return l10n.get("habit_mode_fluid_ask_time", "fluid: ask time daily")
-    return l10n.get("habit_mode_fluid_brief_only", "fluid: morning+evening checks")
 
 
 async def _schedule_fluid_habit_for_today(
@@ -271,12 +227,10 @@ async def cb_fluid_habit_mode(
         )
         await reminder_dao.session.flush()
     except ValueError as ve:
-        # 3.2: create_reminder can now also reject on quota (too many active
-        # habits), not just text length — the old fixed "too long" wording
-        # was misleading for that case. Match reminders.py's existing
-        # pattern (str(ve) shown as-is) instead of guessing which one fired.
+        # create_reminder rejects on quota or text length; user_message picks
+        # the localized wording for whichever fired (B-13).
         logger.error("Validation error: %s", ve)
-        await callback.message.answer(str(ve))
+        await callback.message.answer(user_message(ve, l10n))
         await callback.answer()
         return
     except Exception as e:
@@ -332,7 +286,7 @@ async def state_habit_time(
 
     parser = InputParser()
     try:
-        result = await parser.parse(message.text, user.timezone)
+        result = await parser.parse(message.text, user.timezone, getattr(user, "language", None))
     except OperationalError as e:
         logger.error("DB locked parsing habit time input for user %s: %s", user.id, e)
         await message.answer(l10n.get("db_busy", "⏳ The database is busy — please try again in a few seconds."))
@@ -358,6 +312,13 @@ async def state_habit_time(
     if data.get("habit_start_date") and is_clock_input(message.text):
         local = selected_time.astimezone(resolve_timezone(user.timezone)) if selected_time.tzinfo else selected_time
         selected_time = local_time_on_date(user.timezone, date.fromisoformat(data["habit_start_date"]), local.hour, local.minute)
+    # U-09 (2026-11-04 audit): keep a weekly/weekday/monthly rule from the
+    # phrase ("каждый понедельник в 9") instead of silently making it daily
+    # — streaks and the sweeper follow the habit's own rule now (B-08).
+    habit_rule = getattr(result, "rrule_string", None) or "FREQ=DAILY"
+    if habit_rule != (data.get("habit_rrule") or "FREQ=DAILY"):
+        await state.update_data(habit_rrule=habit_rule)
+    selected_time = _snap_to_rule(habit_rule, selected_time, user.timezone)
     needs_confirmation = (
         float(getattr(result,"confidence",1)) < 0.7
         or getattr(result,"rrule_string",None) not in {None,"FREQ=DAILY"}
@@ -372,7 +333,12 @@ async def state_habit_time(
         builder.button(text=l10n["confirm_save"], callback_data=f"habit_time_confirm:{context.token}")
         builder.button(text=l10n["btn_edit_time"], callback_data="habit_time_change")
         builder.button(text=l10n["btn_cancel"], callback_data="habit_cancel")
-        await message.answer(l10n["habit_confirm_time"].format(time=format_time(selected_time, user.timezone, fmt="%d.%m.%Y %H:%M")), reply_markup=builder.as_markup())
+        when = format_time(selected_time, user.timezone, fmt="%d.%m.%Y %H:%M")
+        if habit_rule == "FREQ=DAILY":
+            prompt = l10n["habit_confirm_time"].format(time=when)
+        else:
+            prompt = l10n["habit_confirm_time_rule"].format(rule=_rule_label(habit_rule, l10n), time=when)
+        await message.answer(prompt, reply_markup=builder.as_markup())
         return
     await _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time)
 
@@ -394,11 +360,33 @@ async def confirm_habit_time(callback: CallbackQuery, state: FSMContext, user: U
     await callback.answer()
 
 
+def _rule_label(rule: str, l10n: dict[str, Any]) -> str:
+    from types import SimpleNamespace
+
+    from bot.handlers.reminders_shared import _rrule_text
+
+    return _rrule_text(SimpleNamespace(is_recurring=True, rrule_string=rule), l10n)
+
+
+def _snap_to_rule(rule: str, selected_time: datetime, user_tz: str) -> datetime:
+    """First occurrence of *rule* at or after *selected_time* (same clock
+    time) — "every Monday at 9" typed on a Thursday starts next Monday."""
+    if rule == "FREQ=DAILY":
+        return selected_time
+    start = to_utc_naive(selected_time)
+    try:
+        snapped = next_occurrence_utc(rule, start, user_tz, start - timedelta(seconds=1))
+    except (ValueError, TypeError):
+        return selected_time
+    return to_utc_aware(snapped) if snapped else selected_time
+
+
 async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_service, l10n, selected_time):
     data = await state.get_data()
     habit_text = data.get("habit_text", l10n["habit_default_name"])
+    habit_rule = data.get("habit_rrule") or "FREQ=DAILY"
     # Normalize to UTC once and store as naive UTC in DB.
-    execution_time_utc = to_utc_naive(selected_time)
+    execution_time_utc = to_utc_naive(_snap_to_rule(habit_rule, selected_time, user.timezone))
 
     # The parser can return an ambiguous/past time (e.g. "at 9" when it's
     # already past 9 today in the user's zone). Since this habit is always
@@ -406,7 +394,7 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
     # reminder whose date-job would fire the instant it's scheduled.
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if execution_time_utc <= now_utc_naive:
-        advanced = next_occurrence_utc("FREQ=DAILY", execution_time_utc, user.timezone, now_utc_naive)
+        advanced = next_occurrence_utc(habit_rule, execution_time_utc, user.timezone, now_utc_naive)
         execution_time_utc = advanced or (execution_time_utc + timedelta(days=1))
 
     # Schedule it as a strict daily recurring task with nagging enabled
@@ -416,7 +404,7 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
             text=habit_text,
             execution_time=execution_time_utc,
             is_recurring=True,
-            rrule_string="FREQ=DAILY",
+            rrule_string=habit_rule,
             is_habit=True,
             is_nagging=False,
             nagging_max_repeats=3,
@@ -427,11 +415,10 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
             is_nagging=reminder.is_nagging,
         )
     except ValueError as ve:
-        # 3.2: see cb_fluid_habit_mode above for why this shows str(ve)
-        # instead of the fixed "text too long" wording.
+        # See cb_fluid_habit_mode above (localized via user_message, B-13).
         await reminder_dao.session.rollback()
         logger.error("Habit validation rejected for user %s", user.id)
-        await message.answer(str(ve))
+        await message.answer(user_message(ve, l10n))
         return
     except Exception as e:
         logger.error("Error creating habit: %s", e, exc_info=True)
@@ -453,7 +440,12 @@ async def _create_fixed_habit(message, state, user, reminder_dao, scheduler_serv
         return
 
     time_str = format_time(execution_time_utc, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
-    reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+    if habit_rule == "FREQ=DAILY":
+        reply_text = l10n["habit_created"].format(habit=escape_markdown(habit_text), time=time_str)
+    else:
+        reply_text = l10n["habit_created_rule"].format(
+            habit=escape_markdown(habit_text), rule=escape_markdown(_rule_label(habit_rule, l10n)), time=time_str
+        )
 
     # 3.6: soft, one-time nudge on the 11th active habit — not a hard
     # limit (Streaks caps at 12), just a heads-up that most people don't
@@ -475,123 +467,6 @@ async def open_habit_list(callback: CallbackQuery, user: User, reminder_dao: Rem
     await open_list(callback.message,reminder_dao,user,l10n,kind="habits",edit=True)
     await callback.answer()
 
-
-async def cb_habit_list(
-    callback: CallbackQuery, user: User, reminder_dao: ReminderDAO, habit_event_dao: HabitEventDAO, l10n: dict[str, Any]
-) -> None:
-    # get_user_reminders excludes fluid habits (they live in their own UI
-    # flow), so without merging in get_active_fluid_habits here, fluid
-    # habits would never show up in "My Habits" — making them impossible to
-    # delete short of the account-wide "Clear all" reset.
-    reminders = await reminder_dao.get_user_reminders(user.id)
-    fluid_reminders = await reminder_dao.get_active_fluid_habits(user.id)
-    # Filter for active recurring tasks
-    habits = [r for r in reminders if r.status == "pending" and _is_habit_entry(r)] + [
-        r for r in fluid_reminders if _is_habit_entry(r)
-    ]
-
-    if not habits:
-        await callback.message.edit_text(
-            l10n["habit_no_active"],
-            reply_markup=get_habits_keyboard(l10n).as_markup(),
-            parse_mode="Markdown",
-        )
-        await callback.answer()
-        return
-
-    # Build an inline keyboard with delete buttons for each habit
-    builder = InlineKeyboardBuilder()
-    # Step 7 (2026-09-26 audit remediation): explained once here rather
-    # than repeated on every habit's line below — see habit_reports.py's
-    # _build_report_text for the same wording used in weekly/monthly reports.
-    text_lines = [l10n["habit_list_header"], l10n.get(
-        "habit_score_explainer",
-        "💪 «Устойчивость» — сглаженная оценка (EMA), не совпадает с точной долей выполнений ниже.",
-    )]
-
-    try:
-        today_str = datetime.now(resolve_timezone(user.timezone)).date().isoformat()
-    except Exception:
-        today_str = datetime.now(pytz.UTC).date().isoformat()
-
-    # 1.5: bound both message length and keyboard button count — see
-    # _HABIT_LIST_LIMIT's comment above.
-    shown_habits, hidden_habits = limit_items(habits, _HABIT_LIST_LIMIT)
-
-    # fix(2.1): one query for every shown habit's events instead of one
-    # query per habit (was N+1 — up to _HABIT_LIST_LIMIT round trips per
-    # "My Habits" open). Only fetched for the habits actually rendered,
-    # same as get_events_for_reminders' other call site
-    # (bot/services/webserver.py's handle_miniapp_scores).
-    events_by_reminder = await habit_event_dao.get_events_for_reminders([h.id for h in shown_habits])
-
-    for i, h in enumerate(shown_habits, start=1):
-        streak, best = _habit_streak_labels(h)
-        # 3.2: EMA score alongside the streak — additive, doesn't zero out
-        # on a single missed cycle the way the streak does.
-        score = compute_habit_score(events_by_reminder.get(h.id, []))
-        if h.is_fluid_habit:
-            # fluid_planned_time is only meaningful for today's cycle — a stale
-            # value from a previous day must not be displayed as if still valid.
-            planned_time = getattr(h, "fluid_planned_time", None)
-            if getattr(h, "fluid_planned_date", None) == today_str and planned_time:
-                time_str = planned_time
-            else:
-                time_str = l10n.get("habit_fluid_time_anytime", "anytime")
-        else:
-            time_str = format_time(h.execution_time, user.timezone, user.show_utc_offset, "%H:%M")
-        text_lines.append(
-            l10n["habit_list_item"].format(
-                index=i,
-                habit=escape_markdown(preview_line(h.reminder_text)),
-                time=time_str,
-                streak=streak,
-                best=best,
-                score=score,
-                mode=_fluid_mode_label(h, l10n),
-            )
-        )
-        # Settings + deletion buttons. Fluid habits are scheduled entirely
-        # through the fluid-specific flow (_schedule_fluid_habit_for_today),
-        # not the repeat/nagging toggles that task_settings exposes — those
-        # would set fields the fluid path never reads, so skip the gear for
-        # them and only offer delete.
-        row = []
-        if not h.is_fluid_habit:
-            row.append(
-                InlineKeyboardButton(
-                    text=l10n.get("btn_task_settings", "⚙️"),
-                    callback_data=f"task_settings_{h.id}",
-                )
-            )
-        row.append(
-            InlineKeyboardButton(
-                text=l10n.get("habit_btn_pause", "⏸"),
-                callback_data=f"habit_pause_{h.id}",
-            )
-        )
-        row.append(
-            InlineKeyboardButton(
-                text=l10n["habit_btn_delete_n"].format(index=i),
-                callback_data=f"del_habit_{h.id}",
-            )
-        )
-        builder.row(*row)
-
-    if hidden_habits:
-        text_lines.append(l10n.get("brief_items_more", "…and {count} more").format(count=hidden_habits))
-
-    builder.row(InlineKeyboardButton(text=l10n["habit_btn_back_dashboard"], callback_data="habit_back_dash"))
-
-    try:
-        await callback.message.edit_text(
-            "\n".join(text_lines),
-            parse_mode="Markdown",
-            reply_markup=builder.as_markup()
-        )
-    except TelegramBadRequest:
-        pass  # Concurrent tap or an edge case the length bound above didn't fully catch — safe to ignore.
-    await callback.answer()
 
 @router.callback_query(F.data == "habit_back_dash")
 async def cb_habit_back_dash(

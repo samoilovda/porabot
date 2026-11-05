@@ -15,7 +15,10 @@ from bot.services.ui_context import create_context, get_context
 router = Router(name="notification_preferences")
 
 
-async def offer_notifications(message, dao, user, l10n):
+async def offer_notifications(message, dao, user, l10n) -> bool:
+    """Show the one-time offer after the user's first task. Returns True when
+    nothing more can ever happen for this user (offered now or before, or
+    already past their first task) so the caller can stop checking."""
     from datetime import timedelta
 
     from sqlalchemy import func, select
@@ -23,19 +26,26 @@ async def offer_notifications(message, dao, user, l10n):
     from bot.database.models import Reminder
 
     # The first task, not a mandatory onboarding step. Context makes the offer durable.
-    count = await dao.session.scalar(select(func.count()).select_from(Reminder).where(Reminder.user_id == user.id))
-    if count != 1:
-        return
+    count = await dao.session.scalar(
+        select(func.count())
+        .select_from(Reminder)
+        .where(Reminder.user_id == user.id, Reminder.pending_delete_at.is_(None))
+    )
+    if count == 0:
+        return False
+    if count > 1:
+        return True
     existing = await dao.session.scalar(
         select(UiContext).where(UiContext.user_id == user.id, UiContext.kind == "notify_offer")
     )
     if existing:
-        return
+        return True
     await create_context(dao.session, user.id, "notify_offer", {}, lifetime=timedelta(days=3650))
     builder = InlineKeyboardBuilder()
     for key, name in [("notify_only", "only"), ("notify_summaries", "summaries"), ("notify_custom", "custom")]:
         builder.row(_button(l10n[key], f"notify:{name}"))
     await message.answer(l10n["notification_offer"], reply_markup=builder.as_markup(), parse_mode=None)
+    return True
 
 
 @router.callback_query(F.data.startswith("notify:"))

@@ -93,7 +93,7 @@ async def test_new_text_during_confirming_parse_is_not_ignored() -> None:
             message, state, user, l10n, reminder_dao=None, scheduler_service=None
         )
 
-        reminders_module.parser.parse.assert_awaited_once_with("call mom", "UTC")
+        reminders_module.parser.parse.assert_awaited_once_with("call mom", "UTC", None)
         assert await state.get_state() == ReminderWizard.choosing_time.state
         data = await state.get_data()
         assert data["text"] == "call mom"

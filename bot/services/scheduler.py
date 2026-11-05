@@ -91,7 +91,29 @@ async def wait_for_in_flight_jobs(timeout: float = 20.0) -> None:
         )
 
 
-async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = False) -> None:
+def _job_id(reminder_id: int, is_nagging_execution: bool = False, is_snooze_execution: bool = False) -> str:
+    """Scheduler job id per execution kind: the series' main job is the bare
+    id, a nagging follow-up "nag_<id>", a snoozed occurrence of a RECURRING
+    reminder "snz_<id>" (B-11, 2026-11-04 audit — it used to replace the
+    main job, silently dropping regular occurrences before the snooze)."""
+    if is_snooze_execution:
+        return f"snz_{reminder_id}"
+    return f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+
+
+def _parse_job_id(job_id: str) -> Optional[tuple[str, int]]:
+    """(kind, reminder_id) for a reminder job id, None for service jobs."""
+    if job_id.isdigit():
+        return "main", int(job_id)
+    for prefix, kind in (("nag_", "nag"), ("snz_", "snooze")):
+        if job_id.startswith(prefix) and job_id[len(prefix):].isdigit():
+            return kind, int(job_id[len(prefix):])
+    return None
+
+
+async def execute_reminder_job(
+    reminder_id: int, is_nagging_execution: bool = False, is_snooze_execution: bool = False
+) -> None:
     """Called by APScheduler at the scheduled time to fire a reminder."""
     try:
         ctx = _get_context()
@@ -102,9 +124,10 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
     if current_task is not None:
         _in_flight_jobs.add(current_task)
     _in_flight_reminder_ids[reminder_id] = _in_flight_reminder_ids.get(reminder_id, 0) + 1
-    job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+    job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
     try:
-        await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution)
+        extra = {"is_snooze_execution": True} if is_snooze_execution else {}
+        await ctx.scheduler._execute_reminder(reminder_id, is_nagging_execution=is_nagging_execution, **extra)
         # Ran without crashing — a PREVIOUS crash-retry streak on this
         # exact job id (if any) is over; don't let it count against a
         # future, unrelated crash.
@@ -128,7 +151,7 @@ async def execute_reminder_job(reminder_id: int, is_nagging_execution: bool = Fa
             reminder_id,
             is_nagging_execution,
         )
-        ctx.scheduler.schedule_execution_retry(reminder_id, is_nagging_execution)
+        ctx.scheduler.schedule_execution_retry(reminder_id, is_nagging_execution, is_snooze_execution)
     finally:
         if current_task is not None:
             _in_flight_jobs.discard(current_task)
@@ -247,7 +270,7 @@ class SchedulerService:
             # instead of committing reminders that were never actually scheduled.
             raise
 
-    async def reconcile_jobs_with_db(self) -> None:
+    async def reconcile_jobs_with_db(self, user_id: Optional[int] = None) -> None:
         """Recreate scheduler jobs for pending reminders missing from the jobstore.
 
         Run once at startup: a job can be missing from the jobstore after bot
@@ -292,6 +315,7 @@ class SchedulerService:
                     # cleanup sweep — reconcile must not resurrect it.
                     Reminder.pending_delete_at.is_(None),
                     User.bot_blocked_at.is_(None),
+                    *((Reminder.user_id == user_id,) if user_id is not None else ()),
                 )
             )
             reminders = result.scalars().all()
@@ -405,12 +429,13 @@ class SchedulerService:
         sequence.
         """
         job_ids: list[tuple[str, int]] = []
+        snooze_job_ids: set[str] = set()
         for job in self.scheduler.get_jobs():
-            job_id = job.id
-            if job_id.isdigit():
-                job_ids.append((job_id, int(job_id)))
-            elif job_id.startswith("nag_") and job_id[4:].isdigit():
-                job_ids.append((job_id, int(job_id[4:])))
+            parsed = _parse_job_id(job.id)
+            if parsed is not None:
+                job_ids.append((job.id, parsed[1]))
+                if parsed[0] == "snooze":
+                    snooze_job_ids.add(job.id)
 
         if not job_ids:
             return 0
@@ -419,12 +444,16 @@ class SchedulerService:
         async with self.session_pool() as session:
             result = await session.execute(
                 select(
-                    Reminder.id, Reminder.status, Reminder.pending_delete_at, Reminder.forbidden_strikes
+                    Reminder.id,
+                    Reminder.status,
+                    Reminder.pending_delete_at,
+                    Reminder.forbidden_strikes,
+                    Reminder.snoozed_until,
                 ).where(Reminder.id.in_(reminder_ids))
             )
             valid_rows = {
-                reminder_id: (status, pending_delete_at, forbidden_strikes)
-                for reminder_id, status, pending_delete_at, forbidden_strikes in result.all()
+                reminder_id: (status, pending_delete_at, forbidden_strikes, snoozed_until)
+                for reminder_id, status, pending_delete_at, forbidden_strikes, snoozed_until in result.all()
             }
 
         removed = 0
@@ -435,6 +464,8 @@ class SchedulerService:
                 and row[0] == "pending"
                 and row[1] is None
                 and row[2] < FORBIDDEN_STRIKES_LIMIT
+                # a snooze job outlives its purpose once the snooze is cleared
+                and (job_id not in snooze_job_ids or row[3] is not None)
             )
             if still_active:
                 continue
@@ -453,12 +484,34 @@ class SchedulerService:
 
     def remove_reminder_job(self, reminder_id: int) -> None:
         """Remove the main job and any nagging job for *reminder_id*."""
-        for job_id in (str(reminder_id), f"nag_{reminder_id}"):
+        for job_id in (str(reminder_id), f"nag_{reminder_id}", f"snz_{reminder_id}"):
             try:
                 self.scheduler.remove_job(job_id)
                 logger.debug("Removed job %s.", job_id)
             except JobLookupError:
                 logger.debug("Job %s not found (already removed).", job_id)
+
+    def schedule_snooze(self, reminder_id: int, run_date: datetime, *, is_nagging: bool = False) -> None:
+        """B-11: fire a snoozed occurrence of a RECURRING reminder at
+        *run_date* on its own "snz_<id>" job, leaving the series' main job
+        (the next regular occurrence) alone. Callers set
+        Reminder.snoozed_until in the same transaction."""
+        run_date_utc = to_utc_aware(run_date)
+        self.scheduler.add_job(
+            execute_reminder_job,
+            "date",
+            run_date=run_date_utc,
+            args=[reminder_id, False, True],
+            id=_job_id(reminder_id, is_snooze_execution=True),
+            replace_existing=True,
+        )
+        logger.info("Snoozed occurrence of reminder %s to %s (nagging=%s).", reminder_id, run_date_utc, is_nagging)
+
+    def remove_snooze_job(self, reminder_id: int) -> None:
+        try:
+            self.scheduler.remove_job(f"snz_{reminder_id}")
+        except JobLookupError:
+            pass
 
     def remove_nagging_job(self, reminder_id: int) -> None:
         """Remove only the nagging follow-up job for *reminder_id*."""
@@ -474,6 +527,7 @@ class SchedulerService:
         is_nagging_execution: bool,
         *,
         min_delay_seconds: Optional[int] = None,
+        is_snooze_execution: bool = False,
     ) -> None:
         """Schedule a retry for a send that failed with a retryable/permanent error.
 
@@ -504,12 +558,12 @@ class SchedulerService:
         if min_delay_seconds is not None:
             delay = max(delay, timedelta(seconds=min_delay_seconds + 1))
         run_date = datetime.now(timezone.utc) + delay
-        job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+        job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
         self.scheduler.add_job(
             execute_reminder_job,
             "date",
             run_date=run_date,
-            args=[reminder_id, is_nagging_execution],
+            args=[reminder_id, is_nagging_execution, is_snooze_execution],
             id=job_id,
             replace_existing=True,
         )
@@ -517,7 +571,9 @@ class SchedulerService:
             "Reminder %s: send failed (attempt %s), retrying at %s.", reminder_id, attempt_number, run_date
         )
 
-    def schedule_execution_retry(self, reminder_id: int, is_nagging_execution: bool) -> None:
+    def schedule_execution_retry(
+        self, reminder_id: int, is_nagging_execution: bool, is_snooze_execution: bool = False
+    ) -> None:
         """1.2: retry a job whose _execute_reminder call raised an
         unexpected exception (DB error, code bug, ...) — NOT a Telegram
         send failure, which _schedule_send_retry above already covers.
@@ -529,7 +585,7 @@ class SchedulerService:
         than a DB column, since a crash this early means _execute_reminder
         never got as far as loading (or safely mutating) the Reminder row.
         """
-        job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+        job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
         attempt_number = self._crash_retry_counts.get(job_id, 0) + 1
         self._crash_retry_counts[job_id] = attempt_number
 
@@ -551,7 +607,7 @@ class SchedulerService:
             execute_reminder_job,
             "date",
             run_date=run_date,
-            args=[reminder_id, is_nagging_execution],
+            args=[reminder_id, is_nagging_execution, is_snooze_execution],
             id=job_id,
             replace_existing=True,
         )
@@ -648,9 +704,19 @@ class SchedulerService:
             candidate_naive += timedelta(days=1)
         return user_tz.localize(candidate_naive).astimezone(timezone.utc)
 
-    async def _execute_reminder(self, reminder_id: int, is_nagging_execution: bool = False) -> None:
-        """Fetch reminder from DB, send notification, handle recurrence and nagging."""
-        logger.info("Executing reminder %s (nagging=%s).", reminder_id, is_nagging_execution)
+    async def _execute_reminder(
+        self, reminder_id: int, is_nagging_execution: bool = False, is_snooze_execution: bool = False
+    ) -> None:
+        """Fetch reminder from DB, send notification, handle recurrence and nagging.
+
+        A snooze execution (B-11) re-sends a postponed occurrence of a
+        recurring reminder: like a nag it never advances the series
+        (execution_time/last_fired_at/habit cycle stay as they are), but it
+        starts a fresh nag chain like a main fire."""
+        logger.info(
+            "Executing reminder %s (nagging=%s, snooze=%s).", reminder_id, is_nagging_execution, is_snooze_execution
+        )
+        is_followup = is_nagging_execution or is_snooze_execution
 
         async with self.session_pool() as session:
             scheduled_main_job = False
@@ -675,7 +741,10 @@ class SchedulerService:
                     # did) delete.
                     logger.info("Reminder %s pending delete — skipping.", reminder_id)
                     return
-                if (reminder.is_recurring and reminder.rrule_string and not is_nagging_execution
+                if is_snooze_execution and getattr(reminder, "snoozed_until", None) is None:
+                    logger.info("Snooze of reminder %s was cancelled (done/edited) — skipping.", reminder_id)
+                    return
+                if (reminder.is_recurring and reminder.rrule_string and not is_followup
                         and getattr(reminder, "completed_for_execution_time", None) is not None
                         and reminder.completed_for_execution_time == reminder.execution_time):
                     user = await UserDAO(session).get_by_id(reminder.user_id)
@@ -705,13 +774,13 @@ class SchedulerService:
                 if reminder.is_fluid_habit and reminder.fluid_last_completed_date == datetime.now(resolve_timezone(user.timezone)).date().isoformat():
                     return
                 if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_like(reminder)):
-                    job_id = f"nag_{reminder_id}" if is_nagging_execution else str(reminder_id)
+                    job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
                     resume_utc = self._next_quiet_end_utc(user, now_utc)
                     self.scheduler.add_job(
                         execute_reminder_job,
                         "date",
                         run_date=resume_utc,
-                        args=[reminder_id, is_nagging_execution],
+                        args=[reminder_id, is_nagging_execution, is_snooze_execution],
                         id=job_id,
                         replace_existing=True,
                     )
@@ -728,7 +797,10 @@ class SchedulerService:
                     # follow-up just ends here; the main job jumps straight
                     # to the first occurrence at/after the pause end, so
                     # nothing inside the pause is replayed afterwards.
-                    if not is_nagging_execution:
+                    if is_snooze_execution:
+                        reminder.snoozed_until = None
+                        await session.commit()
+                    elif not is_nagging_execution:
                         resume_naive = first_occurrence_at_or_after(reminder, user.timezone, reminder.paused_until)
                         reminder.execution_time = resume_naive
                         await session.commit()
@@ -739,7 +811,7 @@ class SchedulerService:
                 now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
                 cycle_due_ts = None
                 if is_habit_like(reminder):
-                    if not is_nagging_execution:
+                    if not is_followup:
                         prev_due = reminder.habit_active_due_at
                         if (
                             prev_due is not None
@@ -824,6 +896,7 @@ class SchedulerService:
                             reminder.send_retry_count,
                             is_nagging_execution,
                             min_delay_seconds=retry_after_seconds,
+                            is_snooze_execution=is_snooze_execution,
                         )
                     await session.commit()
                     return
@@ -832,7 +905,9 @@ class SchedulerService:
                 # strike mechanism above already accounts for) — this cycle
                 # is handled, reset the retry counter and advance state.
                 reminder.send_retry_count = 0
-                if not is_nagging_execution:
+                if is_snooze_execution:
+                    reminder.snoozed_until = None
+                if not is_followup:
                     reminder.last_fired_at = now_utc_naive
 
                 if is_nagging_execution:
@@ -842,7 +917,7 @@ class SchedulerService:
                     reminder.nagging_sent_count = 0
 
                 # Recurring reschedule
-                if not gave_up and not is_nagging_execution and reminder.is_recurring and reminder.rrule_string:
+                if not gave_up and not is_followup and reminder.is_recurring and reminder.rrule_string:
                     try:
                         next_run_utc_naive = next_occurrence_utc(
                             reminder.rrule_string,
@@ -1009,9 +1084,16 @@ class SchedulerService:
                 message_id=int(reminder.last_nag_message_id),
             )
 
+        text = reminder.reminder_text
+        if is_nagging_execution and getattr(reminder, "nagging_max_repeats", None):
+            # U-05 (2026-11-04 audit): say which follow-up this is, so the
+            # user knows how many more are coming.
+            total = max(0, int(getattr(reminder, "nagging_max_repeats", 0) or 0))
+            current = min(total, max(0, int(getattr(reminder, "nagging_sent_count", 0) or 0)) + 1)
+            text = f"{text}\n\n{l10n['nag_counter'].format(n=current, max=total)}"
         sent_message, outcome, retry_after = await self._send_telegram_message(
             reminder.user_id,
-            reminder.reminder_text,
+            text,
             l10n,
             keyboard,
         )

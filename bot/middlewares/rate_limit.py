@@ -39,6 +39,12 @@ class RateLimitMiddleware(BaseMiddleware):
         self.max_updates = max_updates
         self.window_seconds = window_seconds
         self._hits: dict[int, deque] = defaultdict(deque)
+        # B-10: monotonic time until which a user has already been told they
+        # are throttled. A-25 stopped dropped updates from extending the
+        # window, so len(hits) stays == max_updates for the whole throttled
+        # period and the old "== max_updates" check replied to EVERY
+        # dropped update instead of once.
+        self._notified_until: dict[int, float] = {}
 
     async def __call__(
         self,
@@ -74,7 +80,9 @@ class RateLimitMiddleware(BaseMiddleware):
             # update — replying would itself be an unbounded-rate action
             # against the same flood.
             target = inner_event(event) if isinstance(event, Update) else event
-            if len(hits) == self.max_updates:
+            already_notified = now < self._notified_until.get(tg_user.id, 0.0)
+            if not already_notified:
+                self._notified_until[tg_user.id] = hits[0] + self.window_seconds
                 # 2.3: this middleware runs before DatabaseMiddleware, so
                 # there's no persisted user.language yet to key off — the
                 # best available signal is Telegram's own client-reported
@@ -93,6 +101,9 @@ class RateLimitMiddleware(BaseMiddleware):
                         l10n.get("rate_limited_callback", "⏳ Too many requests — slow down."),
                         show_alert=False,
                     )
+            elif isinstance(target, CallbackQuery):
+                # Still stop the button's loading spinner, just silently.
+                await target.answer()
             # A-25: a DROPPED update must NOT extend the window — only
             # updates that actually reach the handler count toward it.
             # Recording every rejected attempt here used to mean an
@@ -129,3 +140,5 @@ class RateLimitMiddleware(BaseMiddleware):
                 stale_user_ids.append(user_id)
         for user_id in stale_user_ids:
             del self._hits[user_id]
+        for user_id in [uid for uid, until in self._notified_until.items() if until <= now]:
+            del self._notified_until[user_id]

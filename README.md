@@ -21,24 +21,31 @@ Type a phrase; the bot parses time and extracts the task description:
 | `in 15 minutes check the oven` | 15 minutes from now — "check the oven" |
 | `mañana a las 9 tomar vitaminas` | tomorrow 09:00 — "tomar vitaminas" |
 | `каждый день в 9 тренировка` | daily recurring at 09:00 — "тренировка" |
+| `встреча 12.11 в 14:30` | 12 November 14:30 — "встреча" (DD.MM; DD/MM unless the interface is English) |
+| `каждый понедельник в 9 планёрка` | weekly on Mondays at 09:00 — "планёрка" |
+| `оплатить интернет 5 числа каждого месяца` | monthly on the 5th (asks for the time) — "оплатить интернет" |
+| `каждые 2 дня поливать цветы` | every 2 days (asks for the time) — "поливать цветы" |
+
+Recognized repeats: every day / morning / evening, weekdays, weekends, every week, named weekdays and lists of them ("по вторникам и четвергам", "every Tuesday and Thursday", "cada lunes", "toda segunda"), every N days/weeks/months, a day of every month. A repeat word the parser can't model ("каждый раз…") makes the bot ask for confirmation instead of silently saving a one-off. A date without a clock time asks for the hour.
 
 ### Reminders
 
 - **One-time and recurring** — daily, weekly, or any `RRULE`-expressible pattern
 - **Nagging mode** — follow-up every 5 minutes, capped at a per-task repeat limit (default 3)
-- **Snooze** — 15 min / 1 hour / tomorrow
+- **Snooze** — 15/30 min, 1/2 hours, a day, morning/afternoon/evening/night, or a custom time; snoozing one occurrence of a recurring task keeps the series' own next occurrence and shows "snoozed until …" in the list
+- **Nagging counter** — each follow-up says which one it is ("2 of 3")
 - **Quiet hours** — configurable sleep window; regular reminders and the missed-task digest are deferred/suppressed, while daily briefs and habit reports still arrive on schedule but silently (no sound/vibration)
-- **Missed-task recovery** — after a bot restart a catch-up digest surfaces missed reminders with one-tap "done all" or "snooze all"
+- **Missed-task recovery** — a once-a-day digest (default 10:00) of overdue tasks with one-tap "done all" or "snooze all"; after downtime, undelivered reminders are caught up automatically. "Today" shows overdue tasks from the last 7 days; older ones stay under Filter → Overdue and stop counting toward the active-task limit after 30 days
 
 ### Habits
 
-- **Fixed-time mode** — habit fires at a specific clock time every day; streak counted per scheduled `due_at` timestamp
+- **Fixed-time mode** — habit fires at a specific clock time on its schedule (daily, or e.g. "каждый понедельник в 9" / weekdays / weekly); the streak follows the habit's own rule, so a Mon–Fri habit keeps its streak over the weekend, and a cycle stays completable until the next occurrence
 - **Fluid mode** — habit is due any time within a local calendar day; streak is day-based
 - **Presets** — common habit templates selectable at creation
 - **Streaks** — `habit_streak_current` / `habit_streak_best` maintained per habit; fluid habits track `fluid_streak_current` / `fluid_streak_best` separately
 - **Undo** — reverts the last completion and restores the streak to the value it had before (via `habit_undo_pending` flag)
 - **"Not today"** — logs the cycle as `not_today` (distinct from an auto-detected `missed`); like a missed cycle, it resets the current streak
-- **Habit sweeper** — background minutely job detects cycles missed while the bot was down or the user had notifications off; writes `missed` events from live DB state, independent of whether any notification was ever sent
+- **Habit sweeper** — background minutely job writes a `missed` event for every elapsed cycle of the habit's rule (within a 7-day window), whether or not a notification was ever sent — bot downtime or a blocked bot no longer collapses several missed days into one
 - **Weekly and monthly reports** — aggregated done / not-today / missed rates per habit, sent at a user-configured weekday and time
 
 ### Task management
@@ -68,7 +75,7 @@ Type a phrase; the bot parses time and extracts the task description:
 
 4. **`forbidden_strikes` against infinite retry.** Every `TelegramForbiddenError` (user blocked the bot) increments `forbidden_strikes`. Once it reaches `FORBIDDEN_STRIKES_LIMIT = 3`, the reminder is excluded from reconciliation and nagging stops — the bot does not hammer a delivery address that will never accept messages.
 
-5. **Habit sweeper decoupled from notification delivery.** Missed cycles are detected by `habit_sweeper.py` from live DB state every minute, not by hooking into the moment the notification fires. A missed cycle is recorded even if the bot was down, the user had blocked it, or nagging was disabled.
+5. **Habit sweeper decoupled from notification delivery.** Missed cycles are detected by `habit_sweeper.py` from live DB state every minute, not by hooking into the moment the notification fires. Every elapsed occurrence of the habit's rule (within a 7-day window) is checked, so missed cycles are recorded even if the bot was down, the user had blocked it, or nagging was disabled. When a user unblocks the bot, their `forbidden_strikes` are reset and their reminders are rescheduled.
 
 6. **DAO layer + composition root.** All DB access goes through typed DAO classes (`ReminderDAO`, `UserDAO`, `HabitEventDAO`). `bot/__main__.py` is the composition root: it wires infrastructure (DB engine, scheduler, bot, session factory) but contains zero business logic.
 

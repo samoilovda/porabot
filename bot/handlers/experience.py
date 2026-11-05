@@ -14,6 +14,7 @@ from bot.database.dao.habit_event import HabitEventDAO
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import UiContext, User
 from bot.keyboards.inline import callback_button as _button
+from bot.lexicon import plural
 from bot.services.habit_pause import is_paused
 from bot.services.scheduler import SchedulerService
 from bot.services.ui_context import create_context, get_context
@@ -22,6 +23,7 @@ from bot.utils.timezone import resolve_timezone
 
 router = Router(name="experience")
 PAGE_SIZE = 8
+TODAY_OVERDUE_DAYS = 7
 
 
 class ExperienceState(StatesGroup):
@@ -46,7 +48,13 @@ async def list_items(dao, user, payload):
         return list(await dao.get_active_habits(user.id))
     if kind == "today":
         tasks = list(await dao.get_user_reminders_today(user.id, user.timezone))
-        overdue = list(await dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0, limit=200))
+        # B-15: only recent overdue tasks belong on "Today"; older ones
+        # stay under the Overdue filter (render_list shows a hint).
+        overdue = list(
+            await dao.get_overdue_pending_tasks(
+                user.id, min_minutes_overdue=0, limit=200, max_days_overdue=TODAY_OVERDUE_DAYS
+            )
+        )
         habits = list(await dao.get_active_habits(user.id))
         today = datetime.now(resolve_timezone(user.timezone)).date()
         included = {r.id: r for r in tasks + overdue if not r.is_habit and not r.is_fluid_habit}
@@ -105,7 +113,16 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
                 )
                 if (r.is_fluid_habit or cycle is not None) and not done:
                     count_habits += 1
-        lines.append(l10n["daily_remaining"].format(tasks=count_tasks, habits=count_habits))
+        lines.append(
+            l10n["daily_remaining"].format(
+                tasks=plural(l10n, "plural_tasks", count_tasks), habits=plural(l10n, "plural_habits", count_habits)
+            )
+        )
+        if payload["kind"] == "today":
+            all_overdue = await dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=0, limit=200)
+            older = sum(1 for r in all_overdue if r.id not in {t.id for t in tasks})
+            if older:
+                lines.append(l10n["today_older_overdue_hint"].format(count=older))
 
     from sqlalchemy import select
 
@@ -134,6 +151,12 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
         )
         if task.execution_time < datetime.now(timezone.utc).replace(tzinfo=None) and not task.is_fluid_habit:
             when = l10n["btn_filter_overdue"] + " · " + when
+        snoozed = getattr(task, "snoozed_until", None)
+        if snoozed is not None and snoozed > datetime.now(timezone.utc).replace(tzinfo=None):
+            # B-11: a postponed occurrence of a recurring task was invisible.
+            when = l10n["snoozed_until_short"].format(
+                time=format_time(snoozed, user.timezone, fmt="%d.%m %H:%M")
+            ) + " · " + when
         if paused:
             when = l10n["habit_paused_until"].format(date=format_time(task.paused_until, user.timezone, fmt="%d.%m"))
         lines.append(f"{index}. {task.reminder_text[:180]}\n{when}")
@@ -292,6 +315,11 @@ async def task_action(
         return await callback.answer(l10n["context_expired"], show_alert=True)
     task = await reminder_dao.get_owned(rid, user.id, include_pending_delete=action == "undelete")
     if not task:
+        if action == "undelete":
+            # B-12: the cleanup sweep already hard-deleted it — say so, and
+            # redraw the list without the stale Undo button.
+            await callback.answer(l10n["undo_too_late"], show_alert=True)
+            return await render_list(callback.message, reminder_dao, user, l10n, context, page)
         return await callback.answer(l10n["item_not_found"], show_alert=True)
     await state.clear()
     await state.update_data(nav_token=token, nav_page=page)
@@ -320,6 +348,10 @@ async def task_action(
             + "\n"
             + _rrule_text(task, l10n)
         )
+        if task.snoozed_until is not None and task.snoozed_until > datetime.now(timezone.utc).replace(tzinfo=None):
+            schedule += "\n" + l10n["snoozed_until_short"].format(
+                time=format_time(task.snoozed_until, user.timezone, fmt="%d.%m %H:%M")
+            )
         progress = ""
         if task.is_habit or task.is_fluid_habit:
             from bot.services.habit_reports import compute_habit_score
@@ -419,6 +451,7 @@ async def task_action(
             scheduler_service,
             user,
             l10n,
+            from_list=True,
         )
         await render_list(callback.message, reminder_dao, user, l10n, context, page)
     elif action in {"habitdone", "habitundo"}:

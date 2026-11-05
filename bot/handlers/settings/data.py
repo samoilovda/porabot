@@ -199,6 +199,7 @@ async def callback_clear_all_confirm(
     # survives with default settings (so the user re-onboards), and
     # payments is never touched — see UserDataService's docstring.
     service = UserDataService(reminder_dao, habit_event_dao)
+    pinned_message_id = user.pinned_brief_message_id
     try:
         reminder_ids = await service.reset(user)
     except OperationalError as e:
@@ -213,6 +214,14 @@ async def callback_clear_all_confirm(
     # failed commit above must leave jobs and DB state consistent.
     for reminder_id in reminder_ids:
         scheduler_service.remove_reminder_job(reminder_id)
+
+    # B-17 (2026-11-04 audit): the reset forgets pinned_brief_message_id, so
+    # nothing would ever unpin today's brief — do it now (best effort).
+    if pinned_message_id:
+        try:
+            await callback.bot.unpin_chat_message(chat_id=user.id, message_id=pinned_message_id)
+        except Exception as e:
+            logger.warning("Could not unpin brief %s for user %s: %s", pinned_message_id, user.id, e)
 
     await state.clear()
 

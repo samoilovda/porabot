@@ -372,7 +372,10 @@ async def test_snoozing_only_current_occurrence_keeps_series_anchor(database):
         callback("edit_scope:" + (await state.get_data())["scope_nonce"] + ":one"), state, user, dao, scheduler, RU
     )
     assert (task.execution_time, task.rrule_dtstart) == original
-    assert scheduler.schedule_reminder.call_args.args[1].replace(tzinfo=None) == target
+    # B-11: shown as snoozed_until and fired on its own job.
+    assert scheduler.schedule_snooze.call_args.args[1].replace(tzinfo=None) == target
+    assert task.snoozed_until == target
+    scheduler.schedule_reminder.assert_not_called()
 
 
 async def test_series_edit_beyond_until_does_not_save(database):
@@ -665,3 +668,51 @@ async def test_upgrade_adds_ui_contexts_without_changing_saved_tasks(database):
     assert task.is_nagging is True
     context = await create_context(session, user.id, "list", {"kind": "all"})
     assert await get_context(session, context.token, user.id, "list") is not None
+
+
+async def test_undo_delete_window_is_long_enough_to_notice_a_mistap():
+    """B-12 (2026-11-04 audit): the task list keeps its Undo button until
+    the next redraw; a 5-second window made most Undo taps 'too late'."""
+    from bot.handlers import reminders_shared
+
+    assert reminders_shared._UNDO_DELETE_WINDOW >= 30
+
+
+async def test_undo_after_hard_delete_says_too_late_and_drops_the_button(database):
+    from bot.handlers.experience import task_action
+
+    session, _ = database
+    user, dao, events = await user_dao(session)
+    ctx = await create_context(session, 1, "list", {"kind": "all", "query": None})
+    cb = callback(f"ux:{ctx.token}:0:undelete:999999")
+    await task_action(cb, fsm(), dao, events, Mock(), user, RU)
+    cb.answer.assert_awaited_once_with(RU["undo_too_late"], show_alert=True)
+    markup = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    datas = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert not any(":undelete:" in d for d in datas)
+
+
+async def test_weekly_habit_phrase_keeps_its_rule(database):
+    """U-09 (2026-11-04 audit): "каждый понедельник в 9" used to be saved as
+    a DAILY habit; it now keeps the weekly rule and starts on a Monday."""
+    from bot.handlers.habits import confirm_habit_time
+
+    session, _ = database
+    user, dao, _ = await user_dao(session)
+    state = fsm()
+    await state.set_state(HabitState.waiting_for_time)
+    await state.update_data(habit_text="Планёрка")
+    scheduler = SchedulerService(AsyncIOScheduler(), Mock(), Mock())
+    answer = AsyncMock()
+    await state_habit_time(
+        SimpleNamespace(text="каждый понедельник в 9", answer=answer), state, user, dao, scheduler, RU
+    )
+    prompt = answer.await_args.args[0]
+    assert "Пн" in prompt or "понедельник" in prompt.lower()
+    data = await state.get_data()
+    cb = callback(f"habit_time_confirm:{data['habit_confirm_token']}")
+    await confirm_habit_time(cb, state, user, dao, scheduler, RU)
+    habit = await session.scalar(select(Reminder).where(Reminder.is_habit.is_(True)))
+    assert habit.rrule_string == "FREQ=WEEKLY;BYDAY=MO"
+    assert habit.execution_time.weekday() == 0
+    assert habit.execution_time.hour == 9

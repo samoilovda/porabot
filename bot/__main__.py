@@ -105,6 +105,10 @@ class HeartbeatMonitor:
         self.failure_limit = failure_limit
         self.timeout_seconds = timeout_seconds
         self.consecutive_failures = 0
+        # False while main() is still in _wait_for_telegram: that loop already
+        # retries with backoff, and a shutdown here would only restart the
+        # process into the same wait.
+        self.shutdown_enabled = True
 
     async def check_and_write(self) -> None:
         try:
@@ -117,7 +121,7 @@ class HeartbeatMonitor:
                 self.failure_limit,
                 e,
             )
-            if self.consecutive_failures >= self.failure_limit:
+            if self.shutdown_enabled and self.consecutive_failures >= self.failure_limit:
                 logger.critical(
                     "Heartbeat: Telegram connectivity failed %d times in a row — "
                     "triggering shutdown so restart: always can recover.",
@@ -145,6 +149,88 @@ def _start_polling_coro(dp: Dispatcher, bot: Bot):
     "Polling stopped unexpectedly" on every single deploy/`docker stop`.
     """
     return dp.start_polling(bot, handle_signals=False)
+
+
+STARTUP_RETRY_INITIAL_DELAY_SECONDS = 2.0
+STARTUP_RETRY_MAX_DELAY_SECONDS = 60.0
+
+
+async def _wait_for_telegram(
+    bot: Bot,
+    stop_event: asyncio.Event,
+    *,
+    initial_delay: float = STARTUP_RETRY_INITIAL_DELAY_SECONDS,
+    max_delay: float = STARTUP_RETRY_MAX_DELAY_SECONDS,
+) -> None:
+    """Block until Telegram answers getMe, retrying with exponential backoff.
+
+    aiogram's start_polling() calls bot.me() once before its own
+    getUpdates retry loop exists, so a Telegram-side outage (Bad Gateway,
+    timeouts) at that exact moment propagated out of main(), killed the
+    process, and `restart: always` turned it into a ~2-minute crash loop
+    for the whole outage — each boot also re-hammering SetMyCommands. bot.me()
+    caches its result, so polling's own call right after this is a no-op.
+
+    Returns early (without raising) if *stop_event* is set so a SIGTERM
+    during the wait still shuts down cleanly.
+    """
+    delay = initial_delay
+    while not stop_event.is_set():
+        try:
+            await bot.me()
+            return
+        except Exception as e:
+            logger.warning("Telegram not reachable at startup (%s) — retrying in %.0fs", e or type(e).__name__, delay)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
+        delay = min(delay * 2, max_delay)
+
+
+
+async def _wait_for_telegram_then_set_commands(bot: Bot, stop_event: asyncio.Event, **wait_kwargs) -> None:
+    """Set the command menu only once Telegram answers getMe.
+
+    During an outage each SetMyCommands call blocks for the full request
+    timeout (~15s x 5 languages) before failing, and a failure here is only
+    logged, so the menu silently stayed stale until the next restart.
+    """
+    await _wait_for_telegram(bot, stop_event, **wait_kwargs)
+    if not stop_event.is_set():
+        await _set_bot_commands(bot)
+
+# Periodic jobs that older versions registered in the persistent "default"
+# jobstore (before 1.4 moved them to "memory"), under ids that no longer exist
+# in code. replace_existing only matches within one jobstore, so these were
+# never overwritten and kept firing alongside the memory copies.
+LEGACY_PERSISTED_PERIODIC_JOB_IDS = frozenset({"hourly_daily_briefs"})
+
+
+def purge_stale_persisted_periodic_jobs(scheduler: AsyncIOScheduler) -> list[str]:
+    """Remove periodic jobs from the persistent "default" jobstore that are
+    (re-)registered in "memory" on every boot, plus known legacy ids.
+
+    jobs.sqlite on an install that predates 1.4 still holds a pickled copy of
+    every periodic job. Each tick then ran both copies: harmless-but-noisy
+    "maximum number of running instances reached" warnings for same-id pairs,
+    and a genuine concurrent double run of process_daily_briefs (its legacy
+    copy has a different id, so max_instances didn't dedupe it).
+
+    Must be called after scheduler.start() and after every "memory" job has
+    been registered. Reminder jobs (numeric / nag_ ids) never collide with
+    the named periodic ones and are left alone.
+    """
+    memory_ids = {job.id for job in scheduler.get_jobs(jobstore="memory")}
+    stale_ids = memory_ids | LEGACY_PERSISTED_PERIODIC_JOB_IDS
+    removed: list[str] = []
+    for job in scheduler.get_jobs(jobstore="default"):
+        if job.id in stale_ids:
+            scheduler.remove_job(job.id, jobstore="default")
+            removed.append(job.id)
+    if removed:
+        logger.info("Removed %d stale periodic job(s) from the persistent jobstore: %s", len(removed), ", ".join(sorted(removed)))
+    return removed
 
 
 # Shutdown budget inside docker-compose's 30s stop_grace_period: up to this
@@ -407,7 +493,6 @@ async def main() -> None:
     # 1.2: without this, an exception a handler doesn't catch just logs and
     # goes silent for the user — see handle_dispatcher_error's docstring.
     dp.errors.register(handle_dispatcher_error)
-    await _set_bot_commands(bot)
 
     # Scheduler
     # Note: SQLAlchemyJobStore's own pickle_protocol already defaults to the
@@ -472,6 +557,7 @@ async def main() -> None:
     # plain "still scheduling jobs" touch (the old behavior) isn't enough.
     _write_heartbeat()
     heartbeat_monitor = HeartbeatMonitor(bot, stop_event)
+    heartbeat_monitor.shutdown_enabled = False
     scheduler.add_job(
         heartbeat_monitor.check_and_write,
         "interval",
@@ -564,6 +650,8 @@ async def main() -> None:
         jobstore="memory",
     )
 
+    purge_stale_persisted_periodic_jobs(scheduler)
+
     # 4.4/4.6: aiohttp server for the .ics feed and (once MINI_APP_URL is
     # configured) the Mini App — runs alongside long polling, not instead
     # of it. See bot/services/webserver.py's module docstring for scope.
@@ -587,11 +675,14 @@ async def main() -> None:
     logger.info("Starting polling…")
 
     try:
+        await _wait_for_telegram_then_set_commands(bot, stop_event)
+        heartbeat_monitor.shutdown_enabled = True
         # See _start_polling_coro's docstring for why handle_signals=False
         # is required here, not optional. Passing `dp` (A-09) is what lets
         # a signal-triggered shutdown wind polling down gracefully instead
         # of hard-cancelling it — see _run_until_stopped's docstring.
-        await _run_until_stopped(_start_polling_coro(dp, bot), stop_event, dp)
+        if not stop_event.is_set():
+            await _run_until_stopped(_start_polling_coro(dp, bot), stop_event, dp)
     finally:
         # Stop the scheduler BEFORE closing the bot session/engine: a job
         # mid-send (a reminder, a brief) that races past this point would

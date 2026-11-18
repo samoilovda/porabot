@@ -32,15 +32,15 @@ Recognized repeats: every day / morning / evening, weekdays, weekends, every wee
 
 - **One-time and recurring** — daily, weekly, or any `RRULE`-expressible pattern
 - **Nagging mode** — follow-up every 5 minutes, capped at a per-task repeat limit (default 3)
-- **Snooze** — 15/30 min, 1/2 hours, a day, morning/afternoon/evening/night, or a custom time; snoozing one occurrence of a recurring task keeps the series' own next occurrence and shows "snoozed until …" in the list
+- **Snooze** — 15/30 min, 1/2 hours, a day, morning/afternoon/evening/night, or a custom time; snoozing one occurrence of a recurring task keeps the series' own next occurrence and shows "snoozed until …" in the list (the confirmation also names the next scheduled repeat when it comes before the snoozed time; a snooze that lands on the next occurrence is sent once; deleting, pausing, or changing the repeat rule drops it; it survives a restart)
 - **Nagging counter** — each follow-up says which one it is ("2 of 3")
 - **Quiet hours** — configurable sleep window; regular reminders and the missed-task digest are deferred/suppressed, while daily briefs and habit reports still arrive on schedule but silently (no sound/vibration)
-- **Missed-task recovery** — a once-a-day digest (default 10:00) of overdue tasks with one-tap "done all" or "snooze all"; after downtime, undelivered reminders are caught up automatically. "Today" shows overdue tasks from the last 7 days; older ones stay under Filter → Overdue and stop counting toward the active-task limit after 30 days
+- **Missed-task recovery** — a once-a-day digest (default 10:00) of overdue tasks with "done all" or "snooze all" buttons that open a preview of exactly the tasks the digest listed (tasks closed or edited since are skipped and counted); after downtime, undelivered reminders are caught up automatically. "Today" shows overdue tasks from the last 7 days; older ones stay under Filter → Overdue and stop counting toward the active-task limit after 30 days
 
 ### Habits
 
 - **Fixed-time mode** — habit fires at a specific clock time on its schedule (daily, or e.g. "каждый понедельник в 9" / weekdays / weekly); the streak follows the habit's own rule, so a Mon–Fri habit keeps its streak over the weekend, and a cycle stays completable until the next occurrence
-- **Fluid mode** — habit is due any time within a local calendar day; streak is day-based
+- **Fluid mode** — habit is due any time within a local calendar day; streak is day-based; an hour planned for today is shown in the habit list and card ("today at 18:30"), otherwise "anytime today"
 - **Presets** — common habit templates selectable at creation
 - **Streaks** — `habit_streak_current` / `habit_streak_best` maintained per habit; fluid habits track `fluid_streak_current` / `fluid_streak_best` separately
 - **Undo** — reverts the last completion and restores the streak to the value it had before (via `habit_undo_pending` flag)

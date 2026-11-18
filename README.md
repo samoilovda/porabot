@@ -40,7 +40,7 @@ Recognized repeats: every day / morning / evening, weekdays, weekends, every wee
 ### Habits
 
 - **Fixed-time mode** — habit fires at a specific clock time on its schedule (daily, or e.g. "каждый понедельник в 9" / weekdays / weekly); the streak follows the habit's own rule, so a Mon–Fri habit keeps its streak over the weekend, and a cycle stays completable until the next occurrence
-- **Fluid mode** — habit is due any time within a local calendar day; streak is day-based
+- **Fluid mode** — habit is due any time within a local calendar day; streak is day-based; an hour planned for today is shown in the habit list and card ("today at 18:30"), otherwise "anytime today"
 - **Presets** — common habit templates selectable at creation
 - **Streaks** — `habit_streak_current` / `habit_streak_best` maintained per habit; fluid habits track `fluid_streak_current` / `fluid_streak_best` separately
 - **Undo** — reverts the last completion and restores the streak to the value it had before (via `habit_undo_pending` flag)

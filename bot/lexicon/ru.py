@@ -284,6 +284,7 @@ RU: dict[str, Any] = {
     'snoozed_toast': 'Отложено!',
     'task_untitled': 'Без названия',
     'snoozed_until': '⏰ Отложено до {time}',
+    'snoozed_next_series': '🔁 Следующий повтор по расписанию — {time}',
     'done_note_prompt': 'Отправь короткую заметку о выполнении.',
     'done_note_saved': '✅ Заметка сохранена.',
     'done_skip_next_done': '⏭ Следующее срабатывание пропущено. Новое время: {time}',

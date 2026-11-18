@@ -12,7 +12,8 @@ reimplementing it.
 import asyncio
 import logging
 import random
-from datetime import datetime, timedelta, timezone
+import secrets
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from aiogram.exceptions import TelegramBadRequest
@@ -190,6 +191,7 @@ async def _apply_repeat_change(
     new_base = _rrule_base_key(rrule_string) if is_recurring else None
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
+    reminder.snoozed_until = None  # a changed rule replaces the series: drop a postponed occurrence
     if not is_recurring:
         reminder.rrule_dtstart = None
     elif getattr(reminder, "rrule_dtstart", None) is None or old_base != new_base:
@@ -224,6 +226,8 @@ async def _apply_repeat_change(
             )
             scheduler_service.remove_reminder_job(reminder.id)
         return False
+    if hasattr(scheduler_service, "remove_snooze_job"):
+        scheduler_service.remove_snooze_job(reminder.id)
     return True
 
 
@@ -354,13 +358,14 @@ async def _soft_delete_reminder(
     reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
         seconds=_UNDO_DELETE_WINDOW
     )
+    reminder.snoozed_until = None  # a deleted reminder has no postponed occurrence left
     try:
         await reminder_dao.session.commit()
     except Exception as e:
         logger.error("Failed to commit soft-delete for reminder %s: %s", reminder.id, e, exc_info=True)
         await reminder_dao.session.rollback()
         return False
-    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.remove_reminder_job(reminder.id)  # also removes the snz_ job
     scheduler_service.remove_nagging_job(reminder.id)
     return True
 
@@ -396,6 +401,71 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
     return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
 
 
+async def time_prompt_context(
+    state: FSMContext, user: User, l10n: dict[str, Any], display_text: str,
+) -> tuple[Optional[date], str]:
+    """Context for RE-asking the time within the same draft.
+
+    If the user already picked a day (``time_base_date`` in the FSM) and that
+    day still has bookable slots, return ``(that date, "<ask_hour_for_date>
+    note")`` so the new keyboard keeps the day. Otherwise (no day, the day is
+    in the past, or today has no slots left) drop the stale value from the
+    FSM and return ``(None, "")`` — the general keyboard.
+    """
+    from bot.keyboards.inline import base_date_has_slots
+
+    raw = (await state.get_data()).get("time_base_date")
+    if not raw:
+        return None, ""
+    try:
+        base = date.fromisoformat(raw)
+    except ValueError:
+        base = None
+    if base is None or not base_date_has_slots(user.timezone, base):
+        await state.update_data(time_base_date=None)
+        return None, ""
+    note = l10n["ask_hour_for_date"].format(
+        text=escape_markdown(display_text), date=_weekday_date_label(base, l10n),
+    )
+    return base, note
+
+
+async def start_draft(state: FSMContext, *, keep_day: bool = False) -> str:
+    """Begin a NEW wizard draft: a fresh random token in the FSM data.
+
+    Time/confirm keyboards embed it (see get_time_selection_keyboard), so a
+    button from an older draft's message no longer matches and is rejected."""
+    draft_id = secrets.token_hex(4)
+    # A day picked for an earlier draft must not leak into this one.
+    if keep_day:
+        await state.update_data(draft_id=draft_id)
+    else:
+        await state.update_data(draft_id=draft_id, time_base_date=None)
+    return draft_id
+
+
+async def ensure_draft(state: FSMContext) -> str:
+    """Keep the current draft's token (a re-prompt for the same draft), or
+    start one if the FSM data has none."""
+    draft_id = (await state.get_data()).get("draft_id")
+    if not draft_id:
+        draft_id = await start_draft(state, keep_day=True)
+    return draft_id
+
+
+def series_next_line(reminder, snoozed_utc_naive, user, l10n: dict[str, Any]) -> str:
+    """MarkdownV2 line "Next scheduled repeat — DD.MM HH:MM" for a snooze of a
+    RECURRING reminder whose series occurrence comes BEFORE the snoozed time
+    (so the user sees both). Empty string otherwise."""
+    next_run = getattr(reminder, "execution_time", None)
+    if not getattr(reminder, "is_recurring", False) or next_run is None or snoozed_utc_naive is None:
+        return ""
+    if next_run >= snoozed_utc_naive:
+        return ""
+    when = format_time(next_run, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    return l10n["snoozed_next_series"].format(time=escape_markdown_v2(when))
+
+
 async def _handle_parsed_result(
     source_message: Message,
     state: FSMContext,
@@ -411,6 +481,8 @@ async def _handle_parsed_result(
     raw_text = result.clean_text or l10n.get("task_untitled", "Untitled task")
     clean_text, tags_csv, priority = extract_tags_and_priority(raw_text)
     clean_text = clean_text or l10n.get("task_untitled", "Untitled task")
+    # A new task text is a new draft: buttons of any earlier draft expire.
+    await start_draft(state)
     await state.update_data(
         text=clean_text, tags=tags_csv, priority=priority,
         user_timezone=user.timezone, chat_id=source_message.chat.id,
@@ -432,11 +504,13 @@ async def _handle_parsed_result(
     await state.set_state(ReminderWizard.choosing_time)
     await source_message.answer(
         l10n["ask_time"].format(text=escape_markdown(clean_text)),
-        reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        reply_markup=get_time_selection_keyboard(
+            user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+        ),
     )
 
 
-def _weekday_date_label(dt: datetime, l10n: dict[str, Any]) -> str:
+def _weekday_date_label(dt: datetime | date, l10n: dict[str, Any]) -> str:
     names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return f"{names[dt.weekday()]} {dt.strftime('%d.%m')}"
 
@@ -493,6 +567,7 @@ async def _resolve_time_and_respond(
             ),
             reply_markup=get_time_selection_keyboard(
                 user.timezone, l10n, user.show_utc_offset, base_date=local_date,
+                draft_id=await ensure_draft(state),
             ),
         )
         return
@@ -503,7 +578,7 @@ async def _resolve_time_and_respond(
     )
     await source_message.answer(
         l10n["parse_confirmation_prompt"].format(text=escape_markdown(display_text), time=parsed_time),
-        reply_markup=get_parse_confirmation_keyboard(l10n),
+        reply_markup=get_parse_confirmation_keyboard(l10n, draft_id=await ensure_draft(state)),
     )
 
 
@@ -533,9 +608,14 @@ async def _save_and_show_edit(
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if execution_time <= now_utc_naive + timedelta(minutes=1):
         await state.set_state(ReminderWizard.choosing_time)
+        base_date, day_note = await time_prompt_context(state, user, l10n, text or "")
+        past_text = l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time.")
         await source_message.answer(
-            l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time."),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+            f"{past_text}\n\n{day_note}" if day_note else past_text,
+            reply_markup=get_time_selection_keyboard(
+                user.timezone, l10n, user.show_utc_offset, base_date=base_date,
+                draft_id=await ensure_draft(state),
+            ),
         )
         return
 
@@ -589,6 +669,10 @@ async def _save_and_show_edit(
                 new_reminder.snoozed_until = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1
+                # Same as the quick-snooze path: a postponed task must stop
+                # its repeated-signal chain (nag job removed after commit).
+                new_reminder.last_nag_chat_id = None
+                new_reminder.last_nag_message_id = None
             elif new_reminder.is_recurring:
                 new_reminder.snoozed_until = None  # editing the series drops a pending snooze
         else:
@@ -703,6 +787,12 @@ async def _save_and_show_edit(
         await state.clear()
         return
 
+    if edit_reminder_id and data.get("is_snooze_mode"):
+        try:
+            scheduler_service.remove_nagging_job(new_reminder.id)
+        except Exception as e:
+            logger.error("Failed to remove nag job for snoozed reminder %s: %s", new_reminder.id, e, exc_info=True)
+
     await state.clear()
 
     date_str = format_time(execution_time, user.timezone, user.show_utc_offset, "%d.%m.%Y %H:%M")
@@ -717,6 +807,10 @@ async def _save_and_show_edit(
     # confirmation and claim the (already persisted) task was cancelled.
     # No auto-hide timer either: the card stays until the user acts on it.
     keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
+    if edit_reminder_id and data.get("is_snooze_mode"):
+        next_line = series_next_line(new_reminder, getattr(new_reminder, "snoozed_until", None), user, l10n)
+        if next_line:
+            safe_preview = f"{safe_preview}\n{next_line}"
     await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 
     if data.get("nav_token"):

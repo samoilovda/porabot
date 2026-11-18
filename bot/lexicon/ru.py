@@ -368,6 +368,7 @@ RU: dict[str, Any] = {
     'habit_mode_fluid_ask_time': 'гибкая: спросить время утром',
     'habit_mode_fluid_brief_only': 'гибкая: только сводки',
     'habit_fluid_time_anytime': 'в любое время сегодня',
+    'habit_fluid_time_planned': 'сегодня в {time}',
     'fluid_morning_title': '🌊 *Гибкие привычки на сегодня:*',
     'fluid_pick_time_prompt': '🌊 *План на день:*\nВыбери время напоминания сегодня для: *{habit}*',
     'fluid_evening_check': '🌙 *Перед вечерней сводкой:*\nОтметь выполненные гибкие привычки:',

@@ -368,6 +368,7 @@ ES: dict[str, Any] = {
     'habit_mode_fluid_ask_time': 'flexible: preguntar hora cada mañana',
     'habit_mode_fluid_brief_only': 'flexible: solo resúmenes',
     'habit_fluid_time_anytime': 'en cualquier momento de hoy',
+    'habit_fluid_time_planned': 'hoy a las {time}',
     'fluid_morning_title': '🌊 *Hábitos flexibles de hoy:*',
     'fluid_pick_time_prompt': '🌊 *Plan del día:*\nElige la hora de recordatorio para: *{habit}*',
     'fluid_evening_check': '🌙 *Antes del resumen nocturno:*\nMarca hábitos flexibles completados:',

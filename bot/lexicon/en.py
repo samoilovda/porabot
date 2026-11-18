@@ -368,6 +368,7 @@ EN: dict[str, Any] = {
     'habit_mode_fluid_ask_time': 'fluid: ask time daily',
     'habit_mode_fluid_brief_only': 'fluid: brief-only',
     'habit_fluid_time_anytime': 'anytime today',
+    'habit_fluid_time_planned': 'today at {time}',
     'fluid_morning_title': '🌊 *Fluid habits for today:*',
     'fluid_pick_time_prompt': '🌊 *Plan your fluid habit:*\nPick today’s reminder time for: *{habit}*',
     'fluid_evening_check': '🌙 *Before evening wrap-up:*\nMark completed fluid habits:',

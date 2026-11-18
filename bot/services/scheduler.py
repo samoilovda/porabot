@@ -825,9 +825,13 @@ class SchedulerService:
                 now_utc = datetime.now(timezone.utc)
                 if reminder.is_fluid_habit and reminder.fluid_last_completed_date == datetime.now(resolve_timezone(user.timezone)).date().isoformat():
                     return
-                if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_like(reminder)):
+                # "Habits wake me" must cover fluid habits too: is_habit_like()
+                # excludes them by design (streak accounting), so they are
+                # added here explicitly.
+                is_habit_for_quiet = is_habit_like(reminder) or bool(reminder.is_fluid_habit)
+                if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_for_quiet):
                     job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
-                    resume_utc = self._next_quiet_end_utc(user, now_utc, is_habit=is_habit_like(reminder))
+                    resume_utc = self._next_quiet_end_utc(user, now_utc, is_habit=is_habit_for_quiet)
                     self.scheduler.add_job(
                         execute_reminder_job,
                         "date",

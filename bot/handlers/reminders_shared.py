@@ -589,6 +589,10 @@ async def _save_and_show_edit(
                 new_reminder.snoozed_until = execution_time
             if is_snooze_mode:
                 new_reminder.snooze_count = int(new_reminder.snooze_count or 0) + 1
+                # Same as the quick-snooze path: a postponed task must stop
+                # its repeated-signal chain (nag job removed after commit).
+                new_reminder.last_nag_chat_id = None
+                new_reminder.last_nag_message_id = None
             elif new_reminder.is_recurring:
                 new_reminder.snoozed_until = None  # editing the series drops a pending snooze
         else:
@@ -702,6 +706,12 @@ async def _save_and_show_edit(
         await source_message.answer(l10n.get("schedule_error", "❌ Failed to schedule. Please try again."))
         await state.clear()
         return
+
+    if edit_reminder_id and data.get("is_snooze_mode"):
+        try:
+            scheduler_service.remove_nagging_job(new_reminder.id)
+        except Exception as e:
+            logger.error("Failed to remove nag job for snoozed reminder %s: %s", new_reminder.id, e, exc_info=True)
 
     await state.clear()
 

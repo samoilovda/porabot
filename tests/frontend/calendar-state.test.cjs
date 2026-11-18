@@ -15,7 +15,7 @@ const HEATMAP = {
 };
 
 // heatmap: "ok" | "fail" | "hold" (pending until release()) — mutable via the returned handle.
-async function boot({ heatmap = "ok" } = {}) {
+async function boot({ heatmap = "ok", data = HEATMAP } = {}) {
   const { window, document } = parseHTML(
     fs.readFileSync("bot/webapp/index.html", "utf8"),
   );
@@ -34,7 +34,7 @@ async function boot({ heatmap = "ok" } = {}) {
       ? { language: "en" }
       : path.includes("scores")
         ? { habits: [] }
-        : HEATMAP;
+        : data;
     if (path.includes("heatmap")) {
       if (ctl.heatmap === "hold")
         await new Promise((resolve) => ctl.held.push(resolve));
@@ -165,4 +165,45 @@ test("keyboard navigation across a month boundary updates month, selection and c
     pressed(document).getAttribute("aria-label"),
   );
   assert.match($(document, "heatmap-detail").textContent, /1 missed/);
+});
+
+const SKIP_DATA = {
+  start: "2026-08-01",
+  end: "2026-10-18",
+  days: [
+    { date: "2026-10-01", done: 0, not_today: 2, missed: 0, total: 2 },
+    { date: "2026-10-02", done: 0, not_today: 0, missed: 1, total: 1 },
+    { date: "2026-10-03", done: 1, not_today: 1, missed: 1, total: 3 },
+    { date: "2026-10-04", done: 1, not_today: 1, missed: 0, total: 2 },
+  ],
+};
+const cell = (document, date) =>
+  document.querySelector('#heatmap button[data-date="' + date + '"]');
+
+test("a day of only deliberate skips is neutral and labelled as skipped, not missed", async () => {
+  const { document } = await boot({ data: SKIP_DATA });
+  const skip = cell(document, "2026-10-01");
+  assert.equal(skip.dataset.level, "skip");
+  assert.match(skip.getAttribute("aria-label"), /2 skipped on purpose/);
+  assert.doesNotMatch(skip.getAttribute("aria-label"), /missed/);
+});
+
+test("a day with only misses is a failure level and says missed", async () => {
+  const { document } = await boot({ data: SKIP_DATA });
+  const missed = cell(document, "2026-10-02");
+  assert.equal(missed.dataset.level, "1");
+  assert.match(missed.getAttribute("aria-label"), /1 missed/);
+  assert.doesNotMatch(missed.getAttribute("aria-label"), /skipped/);
+});
+
+test("a mixed day lists done, skipped and missed separately", async () => {
+  const { document } = await boot({ data: SKIP_DATA });
+  const mixed = cell(document, "2026-10-03");
+  assert.equal(mixed.dataset.level, "2");
+  assert.match(
+    mixed.getAttribute("aria-label"),
+    /1 done, 1 skipped on purpose, 1 missed/,
+  );
+  // done + skipped (no misses) counts as a complete day
+  assert.equal(cell(document, "2026-10-04").dataset.level, "3");
 });

@@ -7,6 +7,7 @@
   --button: #1769aa;
   --button-text: #fff;
   --heat-0: #e9ecef;
+  --heat-skip: #cfd8e3;
   --heat-1: #ffd7ab;
   --heat-2: #9be9a8;
   --heat-3: #216e39;
@@ -19,6 +20,7 @@
     --secondary-bg: #232e3c;
     --button: #5288c1;
     --heat-0: #303a45;
+    --heat-skip: #46586b;
     --heat-1: #65421e;
     --heat-2: #126a38;
     --heat-3: #216e39;
@@ -144,6 +146,9 @@ button[aria-pressed="true"] {
 .heat-cell[data-level="0"] {
   background: var(--heat-0);
 }
+.heat-cell[data-level="skip"] {
+  background: var(--heat-skip);
+}
 .heat-cell[data-level="1"] {
   background: var(--heat-1);
 }
@@ -185,6 +190,7 @@ button[aria-pressed="true"] {
   --secondary-bg: #232e3c;
   --button: #5288c1;
   --heat-0: #303a45;
+  --heat-skip: #46586b;
   --heat-1: #65421e;
   --heat-2: #126a38;
   --heat-3: #216e39;

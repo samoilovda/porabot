@@ -136,7 +136,11 @@ def build_scores_payload(habits_with_events: list[tuple[Any, Any]], score_fn) ->
                 "score": score,
                 "history_count": len(events),
                 "done_count": sum(e.outcome == "done" for e in events),
+                # Combined "not done" count, kept as-is for older clients.
                 "missed_count": sum(e.outcome != "done" for e in events),
+                # Split of the same events: a deliberate skip is not a miss.
+                "not_today_count": sum(e.outcome == "not_today" for e in events),
+                "missed_only_count": sum(e.outcome not in ("done", "not_today") for e in events),
                 "streak_current": max(0, int(current or 0)),
                 "streak_best": max(0, int(best or 0)),
             }

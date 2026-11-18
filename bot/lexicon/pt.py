@@ -284,6 +284,7 @@ PT: dict[str, Any] = {
     'snoozed_toast': 'Adiado',
     'task_untitled': 'Tarefa sem título',
     'snoozed_until': '⏰ Adiado até {time}',
+    'snoozed_next_series': '🔁 Próxima repetição programada — {time}',
     'done_note_prompt': 'Envie uma nota curta de conclusão.',
     'done_note_saved': '✅ Nota salva.',
     'done_skip_next_done': '⏭ Próxima ocorrência pulada. Nova hora: {time}',

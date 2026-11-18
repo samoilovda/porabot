@@ -1,6 +1,6 @@
 """Inline keyboards for Porabot."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -9,6 +9,20 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config import config
 from bot.utils.time_ext import format_time, local_time_on_date, local_time_today_or_tomorrow
 from bot.utils.timezone import resolve_timezone
+
+TIME_SLOT_HOURS = (9, 14, 19, 23)
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def base_date_has_slots(user_timezone: str, base_date: date) -> bool:
+    """True when at least one time-of-day slot on *base_date* is still in the
+    future (same >1 minute margin the save step enforces). False for a day in
+    the past or a today whose slots have all passed."""
+    cutoff = _now_utc() + timedelta(minutes=1)
+    return any(local_time_on_date(user_timezone, base_date, h) > cutoff for h in TIME_SLOT_HOURS)
 
 
 def _format_utc_offset(tz_name: str) -> str:
@@ -79,17 +93,17 @@ def get_time_selection_keyboard(
         )
 
     # Row 2-3: Time-of-day slots (morning, day, evening, night)
-    times = [
-        (l10n["time_morning"], 9),
-        (l10n["time_day"], 14),
-        (l10n["time_evening"], 19),
-        (l10n["time_night"], 23),
-    ]
+    times = list(zip(
+        (l10n["time_morning"], l10n["time_day"], l10n["time_evening"], l10n["time_night"]),
+        TIME_SLOT_HOURS, strict=False,
+    ))
 
     buttons: list[InlineKeyboardButton] = []
     for label, hour in times:
         if base_date is not None:
             target_time = local_time_on_date(user_timezone, base_date, hour)
+            if target_time <= _now_utc() + timedelta(minutes=1):
+                continue  # a slot already in the past can't be saved
         else:
             # 1.3: DST-safe — see local_time_today_or_tomorrow's docstring
             # for why this replaced a plain now.replace(hour=...) +
@@ -106,8 +120,10 @@ def get_time_selection_keyboard(
         )
 
     # Split into two rows for better layout
-    builder.row(*buttons[:2])
-    builder.row(*buttons[2:])
+    if buttons[:2]:
+        builder.row(*buttons[:2])
+    if buttons[2:]:
+        builder.row(*buttons[2:])
 
     # Row 4: Other options (tomorrow, manual entry) — "tomorrow" only
     # makes sense relative to today, so it's dropped once a specific day

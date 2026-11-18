@@ -126,7 +126,9 @@
     tg.initDataUnsafe.user &&
     tg.initDataUnsafe.user.language_code;
   // Telegram reports regional variants ("pt-br"); the primary subtag picks the strings.
-  var preliminaryBase = String(preliminary || "").toLowerCase().split(/[-_]/)[0];
+  var preliminaryBase = String(preliminary || "")
+    .toLowerCase()
+    .split(/[-_]/)[0];
   var lang = STRINGS[preliminaryBase] ? preliminaryBase : "en";
   var t = STRINGS[lang];
   var payloads = {},
@@ -389,9 +391,19 @@
         : t.noRecords)
     );
   }
-  function selectDay(day) {
-    selectedDate = day.date;
-    el("heatmap-detail").textContent = details(day);
+  function dayData(key) {
+    var found = ((payloads.heatmap && payloads.heatmap.days) || []).filter(
+      function (d) {
+        return d.date === key;
+      },
+    )[0];
+    return found || { date: key, done: 0, missed: 0, not_today: 0, total: 0 };
+  }
+  // One place that makes the selection visible: pressed state, roving
+  // tabindex and the detail caption all follow selectedDate.
+  function syncSelection() {
+    if (!payloads.heatmap || !selectedDate) return;
+    el("heatmap-detail").textContent = details(dayData(selectedDate));
     Array.from(el("heatmap").querySelectorAll("button[data-date]")).forEach(
       function (b) {
         b.tabIndex = b.dataset.date === selectedDate ? 0 : -1;
@@ -399,7 +411,13 @@
       },
     );
   }
+  function selectDay(day) {
+    selectedDate = day.date;
+    syncSelection();
+  }
   function changeMonth(delta) {
+    // No data (still loading, or the load failed): nothing to navigate.
+    if (!payloads.heatmap || !month) return;
     var date = new Date(month + "-01T12:00:00Z");
     date.setUTCMonth(date.getUTCMonth() + delta);
     var candidate = date.toISOString().slice(0, 7),
@@ -458,6 +476,8 @@
     }
     if (!selectedDate || selectedDate.slice(0, 7) !== month)
       selectedDate = month + "-01";
+    if (selectedDate < data.start) selectedDate = data.start;
+    if (selectedDate > data.end) selectedDate = data.end;
     for (var index = 1; index <= count; index++) {
       var key = month + "-" + String(index).padStart(2, "0");
       var day = days[key] || {
@@ -526,6 +546,7 @@
     }
     el("heatmap-legend").textContent =
       t.noRecords + " · " + t.done + " · " + t.missed;
+    syncSelection();
   }
   el("month-prev").addEventListener("click", function () {
     changeMonth(-1);

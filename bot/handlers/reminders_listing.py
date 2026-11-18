@@ -243,8 +243,17 @@ async def callback_tasks_filter_menu(callback: CallbackQuery, l10n: dict[str, An
 
 @router.callback_query(F.data == "recovery_done_all")
 async def preview_recovery_done_all(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]) -> None:
+    # Old digest buttons carry no snapshot: preview the CURRENT overdue
+    # list instead of acting blindly (digests with a token go through
+    # recovery_review.recovery_snapshot_button).
     from bot.handlers.experience import begin_batch
     await begin_batch(callback,reminder_dao,user,l10n)
+
+
+@router.callback_query(F.data == "recovery_snooze_all")
+async def preview_recovery_snooze_all(callback: CallbackQuery, reminder_dao: ReminderDAO, user: User, l10n: dict[str, Any]) -> None:
+    from bot.handlers.experience import begin_batch
+    await begin_batch(callback, reminder_dao, user, l10n, action="snooze")
 
 
 async def callback_recovery_done_all(
@@ -355,15 +364,15 @@ async def callback_recovery_done_all(
     await callback.answer()
 
 
-@router.callback_query(F.data == "recovery_snooze_all")
 async def callback_recovery_snooze_all(
     callback: CallbackQuery,
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
     user: User,
     l10n: dict[str, Any],
+    *, overdue_snapshot=None, batch_context=None,
 ) -> None:
-    overdue = await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
+    overdue = overdue_snapshot if overdue_snapshot is not None else await reminder_dao.get_overdue_pending_tasks(user.id, min_minutes_overdue=30, limit=RECOVERY_DIGEST_LIMIT)
     if not overdue:
         await callback.answer(l10n.get("no_tasks", "No tasks"), show_alert=True)
         return
@@ -411,10 +420,13 @@ async def callback_recovery_snooze_all(
             logger.error("Failed to schedule reminder %s after recovery 'snooze all': %s", task.id, e, exc_info=True)
         scheduler_service.remove_nagging_job(task.id)
 
-    await callback.message.edit_text(
-        l10n.get("recovery_snooze_all_done", "⏰ Snoozed {count} overdue tasks by 1 hour.").format(count=len(overdue)),
-        reply_markup=None,
-    )
+    summary = l10n.get("recovery_snooze_all_done", "⏰ Snoozed {count} overdue tasks by 1 hour.").format(count=len(overdue))
+    if batch_context is not None:
+        import json
+        selected = sum(i["selected"] for i in json.loads(batch_context.payload_json)["items"])
+        if selected > len(overdue):
+            summary += "\n" + l10n["batch_skipped"].format(count=selected - len(overdue))
+    await callback.message.edit_text(summary, reply_markup=None)
     await callback.answer()
 
 

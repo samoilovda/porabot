@@ -54,7 +54,7 @@ Recognized repeats: every day / morning / evening, weekdays, weekends, every wee
 - **Search and quick filters** — `/find <text>`, plus one-tap filters for today / this week / overdue / recurring / by tag
 - **Data export** — one-tap JSON export of every task, habit, and habit event
 - **Read-only calendar feed** — a personal, revocable `.ics` URL to subscribe to in Google/Apple Calendar
-- **Mini App progress view** — a small Telegram Mini App showing habit scores and a completion heatmap
+- **Mini App progress view** — a small Telegram Mini App showing habit scores and a completion heatmap; deliberate "not today" skips are counted and shown separately from missed cycles
 
 ### General
 

@@ -144,7 +144,7 @@ def test_build_scores_payload_uses_fluid_streaks_for_fluid_habits() -> None:
     events = [SimpleNamespace(outcome="done"), SimpleNamespace(outcome="missed")]
     payload = build_scores_payload([(reminder, events)], score_fn=lambda evs: 77)
     assert payload["habits"] == [
-        {"id": 1, "text": "Meditate", "score": 77, "history_count": 2, "done_count": 1, "missed_count": 1, "streak_current": 5, "streak_best": 9}
+        {"id": 1, "text": "Meditate", "score": 77, "history_count": 2, "done_count": 1, "missed_count": 1, "not_today_count": 0, "missed_only_count": 1, "streak_current": 5, "streak_best": 9}
     ]
 
 
@@ -157,3 +157,16 @@ def test_build_scores_payload_empty_events_scores_zero_without_calling_score_fn(
     payload = build_scores_payload([(reminder, [])], score_fn=lambda evs: called.append(1) or 100)
     assert payload["habits"][0]["score"] == 0
     assert called == []
+
+
+def test_scores_payload_splits_deliberate_skips_from_misses_and_keeps_combined_count() -> None:
+    reminder = SimpleNamespace(
+        id=1, reminder_text="Run", is_fluid_habit=False,
+        habit_streak_current=1, habit_streak_best=2, fluid_streak_current=0, fluid_streak_best=0,
+    )
+    events = [SimpleNamespace(outcome=o) for o in ("done", "not_today", "not_today", "missed")]
+    habit = build_scores_payload([(reminder, events)], lambda e: 50)["habits"][0]
+    assert habit["done_count"] == 1
+    assert habit["not_today_count"] == 2
+    assert habit["missed_only_count"] == 1
+    assert habit["missed_count"] == 3  # unchanged combined "not done" for older clients

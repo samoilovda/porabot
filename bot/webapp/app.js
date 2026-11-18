@@ -13,7 +13,8 @@
         "A smoothed score of recorded check-ins, not a completion percentage.",
       history: "Recorded history",
       done: "done",
-      missed: "missed or skipped",
+      missed: "missed",
+      skipped: "skipped on purpose",
       streak: "Current streak",
       best: "best",
       noRecords: "No records",
@@ -43,6 +44,7 @@
       history: "Записанная история",
       done: "выполнено",
       missed: "пропущено",
+      skipped: "пропущено осознанно",
       streak: "Текущая серия",
       best: "рекорд",
       noRecords: "Нет записей",
@@ -71,7 +73,8 @@
         "Una puntuación suavizada del historial, no un porcentaje de cumplimiento.",
       history: "Historial registrado",
       done: "hecho",
-      missed: "omitido",
+      missed: "perdido",
+      skipped: "omitido a propósito",
       streak: "Racha actual",
       best: "récord",
       noRecords: "Sin registros",
@@ -100,7 +103,8 @@
         "Uma pontuação suavizada do histórico, não uma porcentagem de cumprimento.",
       history: "Histórico registrado",
       done: "feito",
-      missed: "perdido ou pulado",
+      missed: "perdido",
+      skipped: "pulado de propósito",
       streak: "Sequência atual",
       best: "recorde",
       noRecords: "Sem registros",
@@ -357,13 +361,13 @@
             "p",
             t.history +
               ": " +
-              habit.done_count +
-              " " +
-              t.done +
-              ", " +
-              habit.missed_count +
-              " " +
-              t.missed,
+              countsText(
+                habit.done_count,
+                habit.not_today_count || 0,
+                habit.missed_only_count !== undefined
+                  ? habit.missed_only_count
+                  : habit.missed_count - (habit.not_today_count || 0),
+              ),
             "habit-meta",
           ),
         );
@@ -376,20 +380,31 @@
       timeZone: "UTC",
     }).format(new Date(value + "T12:00:00Z"));
   }
+  // "3 done, 1 skipped on purpose, 2 missed" — zero parts are left out, and
+  // a deliberate skip is never counted as a miss.
+  function countsText(done, skipped, missed) {
+    var parts = [];
+    if (done) parts.push(done + " " + t.done);
+    if (skipped) parts.push(skipped + " " + t.skipped);
+    if (missed) parts.push(missed + " " + t.missed);
+    return parts.length ? parts.join(", ") : "0 " + t.done;
+  }
   function details(day) {
     return (
       dateLabel(day.date) +
       ": " +
       (day.total
-        ? day.done +
-          " " +
-          t.done +
-          ", " +
-          (day.missed + day.not_today) +
-          " " +
-          t.missed
+        ? countsText(day.done, day.not_today, day.missed)
         : t.noRecords)
     );
+  }
+  // 0 nothing recorded, "skip" only deliberate skips (neutral, not a failure),
+  // 1 only misses, 2 done and missed, 3 everything not skipped was done.
+  function dayLevel(item) {
+    if (item.total === 0) return "0";
+    if (item.done === 0 && item.missed === 0) return "skip";
+    if (item.done === 0) return "1";
+    return item.missed > 0 ? "2" : "3";
   }
   function dayData(key) {
     var found = ((payloads.heatmap && payloads.heatmap.days) || []).filter(
@@ -497,15 +512,7 @@
         cell.className = "heat-cell";
         cell.dataset.date = item.date;
         cell.disabled = item.date < data.start || item.date > data.end;
-        cell.dataset.level = String(
-          item.total === 0
-            ? 0
-            : item.done === 0
-              ? 1
-              : item.done < item.total
-                ? 2
-                : 3,
-        );
+        cell.dataset.level = dayLevel(item);
         cell.setAttribute("aria-label", details(item));
         cell.setAttribute("aria-pressed", String(item.date === selectedDate));
         cell.setAttribute("tabindex", item.date === selectedDate ? "0" : "-1");
@@ -545,7 +552,7 @@
       })(day, index);
     }
     el("heatmap-legend").textContent =
-      t.noRecords + " · " + t.done + " · " + t.missed;
+      t.noRecords + " · " + t.done + " · " + t.skipped + " · " + t.missed;
     syncSelection();
   }
   el("month-prev").addEventListener("click", function () {

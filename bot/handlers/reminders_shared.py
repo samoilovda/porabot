@@ -190,6 +190,7 @@ async def _apply_repeat_change(
     new_base = _rrule_base_key(rrule_string) if is_recurring else None
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
+    reminder.snoozed_until = None  # a changed rule replaces the series: drop a postponed occurrence
     if not is_recurring:
         reminder.rrule_dtstart = None
     elif getattr(reminder, "rrule_dtstart", None) is None or old_base != new_base:
@@ -224,6 +225,8 @@ async def _apply_repeat_change(
             )
             scheduler_service.remove_reminder_job(reminder.id)
         return False
+    if hasattr(scheduler_service, "remove_snooze_job"):
+        scheduler_service.remove_snooze_job(reminder.id)
     return True
 
 
@@ -354,13 +357,14 @@ async def _soft_delete_reminder(
     reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
         seconds=_UNDO_DELETE_WINDOW
     )
+    reminder.snoozed_until = None  # a deleted reminder has no postponed occurrence left
     try:
         await reminder_dao.session.commit()
     except Exception as e:
         logger.error("Failed to commit soft-delete for reminder %s: %s", reminder.id, e, exc_info=True)
         await reminder_dao.session.rollback()
         return False
-    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.remove_reminder_job(reminder.id)  # also removes the snz_ job
     scheduler_service.remove_nagging_job(reminder.id)
     return True
 
@@ -394,6 +398,19 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
         if normalized:
             return random.choice(normalized)
     return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
+
+
+def series_next_line(reminder, snoozed_utc_naive, user, l10n: dict[str, Any]) -> str:
+    """MarkdownV2 line "Next scheduled repeat — DD.MM HH:MM" for a snooze of a
+    RECURRING reminder whose series occurrence comes BEFORE the snoozed time
+    (so the user sees both). Empty string otherwise."""
+    next_run = getattr(reminder, "execution_time", None)
+    if not getattr(reminder, "is_recurring", False) or next_run is None or snoozed_utc_naive is None:
+        return ""
+    if next_run >= snoozed_utc_naive:
+        return ""
+    when = format_time(next_run, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    return l10n["snoozed_next_series"].format(time=escape_markdown_v2(when))
 
 
 async def _handle_parsed_result(
@@ -727,6 +744,10 @@ async def _save_and_show_edit(
     # confirmation and claim the (already persisted) task was cancelled.
     # No auto-hide timer either: the card stays until the user acts on it.
     keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
+    if edit_reminder_id and data.get("is_snooze_mode"):
+        next_line = series_next_line(new_reminder, getattr(new_reminder, "snoozed_until", None), user, l10n)
+        if next_line:
+            safe_preview = f"{safe_preview}\n{next_line}"
     await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 
     if data.get("nav_token"):

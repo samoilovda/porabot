@@ -75,7 +75,7 @@ async def test_forwarded_message_with_caption_is_unaffected() -> None:
         chat=SimpleNamespace(id=1),
         answer=AsyncMock(),
     )
-    state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock())
+    state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock(), get_data=AsyncMock(return_value={"draft_id": "d1d1d1d1"}))
     user = SimpleNamespace(language="en", timezone="UTC", show_utc_offset=False)
     l10n = get_l10n("en")
 

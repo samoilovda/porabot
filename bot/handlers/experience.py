@@ -74,6 +74,15 @@ async def list_items(dao, user, payload):
     return list(await dao.get_user_reminders(user.id))
 
 
+_BUTTON_NAME_LIMIT = 20
+
+
+def _button_name(text: str) -> str:
+    """Short single-line name for a list button (about 20 chars, "…" if cut)."""
+    line = " ".join((text or "").split())
+    return line if len(line) <= _BUTTON_NAME_LIMIT else line[: _BUTTON_NAME_LIMIT - 1].rstrip() + "…"
+
+
 async def render_list(message, dao, user, l10n, context, page, *, edit=True, undo=None, undo_done=None):
     payload = json.loads(context.payload_json)
     tasks = await list_items(dao, user, payload)
@@ -161,6 +170,8 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
         if paused:
             when = l10n["habit_paused_until"].format(date=format_time(task.paused_until, user.timezone, fmt="%d.%m"))
         lines.append(f"{index}. {task.reminder_text[:180]}\n{when}")
+        entry_row = []  # this entry's own button row: primary action (if any), then Edit
+        short_name = _button_name(task.reminder_text)
         if task.is_habit or task.is_fluid_habit:
             cycle = daily_cycle(task, user, today)
             if not task.is_fluid_habit and cycle is None:
@@ -182,22 +193,26 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
                 )
                 key = cycle_key_for_fluid(today.isoformat()) if task.is_fluid_habit else cycle_key_for_fixed(cycle)
                 can_undo = completion_token(user.id, task.id, key) in undo_tokens
-                builder.button(
-                    text=f"{'↩' if done and can_undo else '✅'} {index}",
-                    callback_data=(
-                        callbacks(context, page, "habitundo" if done else "habitdone", task.id) + f":{suffix}"
+                entry_row.append(
+                    _button(
+                        f"{'↩' if done and can_undo else '✅'} {index} {short_name}",
+                        (callbacks(context, page, "habitundo" if done else "habitdone", task.id) + f":{suffix}")
+                        if not done or can_undo
+                        else "noop",
                     )
-                    if not done or can_undo
-                    else "noop",
                 )
         else:
-            builder.button(
-                text=f"✅ {index}",
-                callback_data=callbacks(context, page, "done", task.id)
-                + f":{int(to_utc_naive(task.execution_time).replace(tzinfo=timezone.utc).timestamp())}",
+            entry_row.append(
+                _button(
+                    f"✅ {index} {short_name}",
+                    callbacks(context, page, "done", task.id)
+                    + f":{int(to_utc_naive(task.execution_time).replace(tzinfo=timezone.utc).timestamp())}",
+                )
             )
-        builder.button(text=f"{l10n['btn_edit']} {index}", callback_data=callbacks(context, page, "detail", task.id))
-        builder.adjust(2, repeat=True)
+        entry_row.append(_button(f"{l10n['btn_edit']} {index}", callbacks(context, page, "detail", task.id)))
+        # One row per entry, so a paused habit or one already done today (no
+        # primary action) cannot shift the next entry's buttons into its row.
+        builder.row(*entry_row)
     if not shown:
         lines.append(
             l10n["find_no_results"].format(query=payload["query"])

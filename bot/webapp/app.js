@@ -16,6 +16,7 @@
       missed: "missed",
       skipped: "skipped on purpose",
       partial: "partly done",
+      historyLink: "History",
       legend: "Legend",
       streak: "Current streak",
       best: "best",
@@ -48,6 +49,7 @@
       missed: "пропущено",
       skipped: "пропущено осознанно",
       partial: "выполнено частично",
+      historyLink: "История",
       legend: "Обозначения",
       streak: "Текущая серия",
       best: "рекорд",
@@ -80,6 +82,7 @@
       missed: "perdido",
       skipped: "omitido a propósito",
       partial: "parcialmente hecho",
+      historyLink: "Historial",
       legend: "Leyenda",
       streak: "Racha actual",
       best: "récord",
@@ -112,6 +115,7 @@
       missed: "perdido",
       skipped: "pulado de propósito",
       partial: "parcialmente feito",
+      historyLink: "Histórico",
       legend: "Legenda",
       streak: "Sequência atual",
       best: "recorde",
@@ -174,6 +178,7 @@
     document.documentElement.lang = lang;
     el("scores-title").textContent = t.scoresTitle;
     el("heatmap-title").textContent = t.heatmapTitle;
+    el("history-link").textContent = t.historyLink;
     el("score-explanation").textContent = t.explain;
     el("calendar-view").textContent = t.calendar;
     el("list-view").textContent = t.list;

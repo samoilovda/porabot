@@ -84,6 +84,23 @@ button[aria-pressed="true"] {
   outline: 2px solid var(--button);
   outline-offset: -2px;
 }
+.jump {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--button);
+  border-radius: 8px;
+  color: var(--button);
+  text-decoration: none;
+}
+.jump:focus-visible {
+  outline: 3px solid var(--button);
+  outline-offset: 2px;
+}
+#heatmap-title {
+  scroll-margin-top: 8px;
+}
 #scores {
   display: flex;
   flex-direction: column;

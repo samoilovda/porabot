@@ -14,6 +14,7 @@ from typing import Any
 
 import pytz
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -31,6 +32,8 @@ from bot.handlers.reminders_shared import (
     _reset_auto_delete,
     _resolve_time_and_respond,
     _save_and_show_edit,
+    ensure_draft,
+    start_draft,
 )
 from bot.keyboards.inline import get_time_selection_keyboard
 from bot.services.parser import InputParser
@@ -219,9 +222,10 @@ async def handle_reply_to_card(
     if not result.parsed_datetime:
         # Ambiguous: ask for the time of THIS task, never start a new one.
         await state.set_state(ReminderWizard.choosing_time)
+        draft_id = await start_draft(state)
         await message.answer(
             l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset, draft_id=draft_id),
         )
         return
 
@@ -349,7 +353,9 @@ async def state_choosing_time_text_input(
     if not result.parsed_datetime:
         await message.answer(
             l10n.get("choosing_time_retry", "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`."),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+            reply_markup=get_time_selection_keyboard(
+                user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+            ),
         )
         return
 
@@ -364,13 +370,33 @@ async def state_choosing_time_text_input(
     )
 
 
-@router.callback_query(ReminderWizard.choosing_time, F.data.startswith("time_"))
+async def _draft_matches(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any], draft_id: str) -> bool:
+    """True when the pressed button belongs to the current FSM draft. Otherwise
+    nothing is changed: the user gets the "expired" alert and the old
+    message loses its keyboard (Telegram errors ignored)."""
+    if draft_id and (await state.get_data()).get("draft_id") == draft_id:
+        return True
+    await callback.answer(l10n["context_expired"], show_alert=True)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except (TelegramAPIError, AttributeError):
+        pass
+    return False
+
+
+@router.callback_query(ReminderWizard.choosing_time, F.data.regexp(r"^t[dftm]:"))
 async def callback_time_selected(
     callback: CallbackQuery, state: FSMContext, user: User, l10n: dict[str, Any],
     reminder_dao: ReminderDAO, scheduler_service: SchedulerService,
 ) -> None:
-    """Resolve the chosen time option and persist the reminder."""
-    data_str = callback.data
+    """Resolve the chosen time option and persist the reminder.
+
+    callback_data: ``td:<draft>:<minutes>``, ``tf:<draft>:<epoch>``,
+    ``tt:<draft>``, ``tm:<draft>`` — the draft token must match the FSM's."""
+    parts = callback.data.split(":")
+    kind = parts[0]
+    if len(parts) < 2 or not await _draft_matches(callback, state, l10n, parts[1]):
+        return
     try:
         tz = resolve_timezone(user.timezone)
     except Exception:
@@ -378,21 +404,21 @@ async def callback_time_selected(
     now = datetime.now(tz)
     execution_time = None
 
-    if "delta" in data_str or "fixed" in data_str:
+    if kind in ("td", "tf"):
         try:
-            if "delta" in data_str:
-                execution_time = now + timedelta(minutes=int(data_str.split("_")[-1]))
+            if kind == "td":
+                execution_time = now + timedelta(minutes=int(parts[2]))
             else:
-                execution_time = datetime.fromisoformat(data_str.split("_fixed_")[1])
-        except (ValueError, IndexError):
+                execution_time = datetime.fromtimestamp(int(parts[2]), tz)
+        except (ValueError, IndexError, OverflowError, OSError):
             # B-17: callback_data is client-controlled — a malformed value
             # gets the specific "invalid action" alert, not a generic error.
             return await callback.answer(l10n["invalid_action"], show_alert=True)
-    elif "tomorrow" in data_str:
+    elif kind == "tt":
         # 1.3: DST-safe — see local_time_tomorrow's docstring for why this
         # replaced a plain now.replace(hour=9, ...) + timedelta(days=1).
         execution_time = local_time_tomorrow(user.timezone, 9)
-    elif "manual" in data_str:
+    elif kind == "tm":
         # Used to state.clear() here, discarding the task text and (for an
         # edit/snooze) edit_reminder_id, and prompting the user to "try
         # again" with no working way to actually enter a time —
@@ -413,7 +439,24 @@ async def callback_time_selected(
         await state.clear()
 
 
-@router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_yes")
+@router.callback_query(ReminderWizard.choosing_time, F.data.startswith("time_"))
+@router.callback_query(ReminderWizard.confirming_parse, F.data.startswith("parse_confirm_"))
+async def callback_legacy_wizard_button(callback: CallbackQuery, l10n: dict[str, Any]) -> None:
+    """Buttons from before draft binding carry no draft token: they cannot be
+    tied to the current draft, so they change nothing."""
+    await callback.answer(l10n["context_expired"], show_alert=True)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except (TelegramAPIError, AttributeError):
+        pass
+
+
+def _parse_confirm_parts(data: str) -> tuple[str, str]:
+    parts = data.split(":")
+    return (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else "")
+
+
+@router.callback_query(ReminderWizard.confirming_parse, F.data.regexp(r"^pc:[^:]*:y$"))
 async def callback_parse_confirm_yes(
     callback: CallbackQuery,
     state: FSMContext,
@@ -422,30 +465,38 @@ async def callback_parse_confirm_yes(
     reminder_dao: ReminderDAO,
     scheduler_service: SchedulerService,
 ) -> None:
+    if not await _draft_matches(callback, state, l10n, _parse_confirm_parts(callback.data)[0]):
+        return
     await callback.answer()
     await callback.message.delete()
     await _save_and_show_edit(callback.message, state, l10n, user, reminder_dao, scheduler_service)
 
 
-@router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_pick_time")
+@router.callback_query(ReminderWizard.confirming_parse, F.data.regexp(r"^pc:[^:]*:t$"))
 async def callback_parse_confirm_pick_time(
     callback: CallbackQuery,
     state: FSMContext,
     user: User,
     l10n: dict[str, Any],
 ) -> None:
+    if not await _draft_matches(callback, state, l10n, _parse_confirm_parts(callback.data)[0]):
+        return
     data = await state.get_data()
     text = data.get("text", l10n.get("task_untitled", "Untitled task"))
     await state.set_state(ReminderWizard.choosing_time)
     await callback.message.edit_text(
         l10n["ask_time"].format(text=escape_markdown(text)),
-        reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        reply_markup=get_time_selection_keyboard(
+            user.timezone, l10n, user.show_utc_offset, draft_id=data["draft_id"],
+        ),
     )
     await callback.answer()
 
 
-@router.callback_query(ReminderWizard.confirming_parse, F.data == "parse_confirm_cancel")
+@router.callback_query(ReminderWizard.confirming_parse, F.data.regexp(r"^pc:[^:]*:x$"))
 async def callback_parse_confirm_cancel(callback: CallbackQuery, state: FSMContext, l10n: dict[str, Any]) -> None:
+    if not await _draft_matches(callback, state, l10n, _parse_confirm_parts(callback.data)[0]):
+        return
     await state.clear()
     await callback.message.edit_text(l10n.get("cmd_cancel", "Reminder creation cancelled."), reply_markup=None)
     await callback.answer()
@@ -486,13 +537,14 @@ async def callback_edit_edit(
         priority=reminder.priority,
     )
     await state.update_data(is_snooze_mode=False, series_confirmed=False, scope_candidate=None)
+    draft_id = await start_draft(state)
     if getattr(reminder, "is_recurring", False):
         await _show_scope(callback.message, state, reminder, l10n)
         await callback.answer()
         return
     await callback.message.edit_text(
         l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
-        reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+        reply_markup=get_time_selection_keyboard(user.timezone, l10n, draft_id=draft_id),
     )
     await callback.answer()
 
@@ -526,7 +578,7 @@ async def callback_edit_scope(callback: CallbackQuery, state: FSMContext, user: 
         result = SimpleNamespace(parsed_datetime=datetime.fromisoformat(candidate["time"]), date_only=candidate["date_only"], confidence=candidate["confidence"])
         await _resolve_time_and_respond(callback.message, state, user, l10n, result, reminder_dao, scheduler_service, reminder.reminder_text)
     else:
-        await callback.message.answer(l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)), reply_markup=get_time_selection_keyboard(user.timezone, l10n))
+        await callback.message.answer(l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)), reply_markup=get_time_selection_keyboard(user.timezone, l10n, draft_id=await ensure_draft(state)))
     await callback.answer()
 
 

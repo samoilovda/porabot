@@ -33,9 +33,17 @@ def get_time_selection_keyboard(
     l10n: dict[str, Any],
     show_utc_offset: bool = False,
     base_date: Optional[date] = None,
+    *,
+    draft_id: str,
 ) -> InlineKeyboardMarkup:
     """
     Keyboard for choosing reminder time.
+
+    Every button except cancel carries ``draft_id`` (the FSM draft the
+    keyboard was shown for), so a button left in an older message cannot
+    apply its time to a different, newer draft. Formats (all < 64 bytes):
+    ``td:<draft>:<minutes>``, ``tf:<draft>:<epoch>``, ``tt:<draft>``,
+    ``tm:<draft>``.
 
     If a fixed time-of-day has passed today, it rolls over to tomorrow.
 
@@ -63,11 +71,11 @@ def get_time_selection_keyboard(
     if base_date is None:
         # Row 1: Delta buttons (add X minutes/hours to now)
         builder.row(
-            InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data="time_delta_15"),
-            InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data="time_delta_30"),
-            InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data="time_delta_60"),
-            InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data="time_delta_120"),
-            InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data="time_delta_180"),
+            InlineKeyboardButton(text=l10n["time_delta_15m"], callback_data=f"td:{draft_id}:15"),
+            InlineKeyboardButton(text=l10n["time_delta_30m"], callback_data=f"td:{draft_id}:30"),
+            InlineKeyboardButton(text=l10n["time_delta_1h"], callback_data=f"td:{draft_id}:60"),
+            InlineKeyboardButton(text=l10n["time_delta_2h"], callback_data=f"td:{draft_id}:120"),
+            InlineKeyboardButton(text=l10n["time_delta_3h"], callback_data=f"td:{draft_id}:180"),
         )
 
     # Row 2-3: Time-of-day slots (morning, day, evening, night)
@@ -88,12 +96,12 @@ def get_time_selection_keyboard(
             # timedelta(days=1).
             target_time = local_time_today_or_tomorrow(user_timezone, hour)
 
-        callback_val = target_time.isoformat()
+        callback_val = int(target_time.timestamp())
         time_str = format_time(target_time, user_timezone, show_utc_offset, "%H:%M")
         buttons.append(
             InlineKeyboardButton(
                 text=f"{label} {format_time(target_time, user_timezone, fmt='%d.%m')} ({time_str})",
-                callback_data=f"time_fixed_{callback_val}",
+                callback_data=f"tf:{draft_id}:{callback_val}",
             )
         )
 
@@ -106,11 +114,11 @@ def get_time_selection_keyboard(
     # is already known.
     if base_date is None:
         builder.row(
-            InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data="time_tomorrow"),
-            InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"),
+            InlineKeyboardButton(text=l10n["time_tomorrow"], callback_data=f"tt:{draft_id}"),
+            InlineKeyboardButton(text=l10n["time_manual"], callback_data=f"tm:{draft_id}"),
         )
     else:
-        builder.row(InlineKeyboardButton(text=l10n["time_manual"], callback_data="time_manual"))
+        builder.row(InlineKeyboardButton(text=l10n["time_manual"], callback_data=f"tm:{draft_id}"))
 
     # Row 5: Cancel option (escape route for wizard)
     builder.row(
@@ -567,14 +575,16 @@ def get_done_followup_keyboard(
     return builder.as_markup()
 
 
-def get_parse_confirmation_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """Keyboard for low-confidence parser confirmations."""
+def get_parse_confirmation_keyboard(l10n: dict[str, Any], *, draft_id: str) -> InlineKeyboardMarkup:
+    """Keyboard for low-confidence parser confirmations.
+
+    Buttons are bound to ``draft_id``: ``pc:<draft>:y|t|x`` (yes / pick time / cancel)."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_yes", "✅ Yes"), callback_data="parse_confirm_yes"),
-        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_time", "🕒 Pick time"), callback_data="parse_confirm_pick_time"),
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_yes", "✅ Yes"), callback_data=f"pc:{draft_id}:y"),
+        InlineKeyboardButton(text=l10n.get("btn_parse_confirm_time", "🕒 Pick time"), callback_data=f"pc:{draft_id}:t"),
     )
-    builder.row(InlineKeyboardButton(text=l10n.get("btn_parse_confirm_cancel", "❌ Cancel"), callback_data="parse_confirm_cancel"))
+    builder.row(InlineKeyboardButton(text=l10n.get("btn_parse_confirm_cancel", "❌ Cancel"), callback_data=f"pc:{draft_id}:x"))
     return builder.as_markup()
 
 

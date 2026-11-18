@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
+from bot.handlers.reminders_shared import start_draft
 from bot.keyboards.inline import get_snooze_keyboard, get_time_selection_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -64,6 +65,7 @@ async def callback_snooze_act(
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
+        draft_id = await start_draft(state)
         await state.update_data(
             edit_reminder_id=reminder.id,
             text=reminder.reminder_text,
@@ -73,7 +75,7 @@ async def callback_snooze_act(
         )
         await callback.message.edit_text(
             l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset, draft_id=draft_id),
         )
         await callback.answer()
         return

@@ -10,6 +10,7 @@ is a known APScheduler tradeoff.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from typing import Optional
 
 import pytz
@@ -28,7 +29,7 @@ from bot.keyboards.inline import get_task_done_keyboard
 from bot.lexicon import get_l10n
 from bot.services.habit_pause import first_occurrence_at_or_after, is_paused
 from bot.services.notification_policy import notification_policy
-from bot.utils.time_ext import next_occurrence_utc, parse_hhmm, to_utc_aware
+from bot.utils.time_ext import is_quiet_hours, next_occurrence_utc, parse_hhmm, to_utc_aware
 from bot.utils.timezone import resolve_timezone
 
 logger = logging.getLogger(__name__)
@@ -695,34 +696,54 @@ class SchedulerService:
         # reminder is never delivered silently instead.
         return notification_policy(user, "reminder", now_local, is_habit=is_habit) == "suppress"
 
-    def _next_quiet_end_utc(self, user, now_utc: datetime) -> datetime:
-        """Next local time quiet hours end, as UTC.
+    def _next_quiet_end_utc(self, user, now_utc: datetime, *, is_habit: bool = False) -> datetime:
+        """Earliest moment after *now_utc* at which quiet hours are OVER, as UTC.
 
-        3.3: computed via naive local wall-clock time + tz.localize(), not
-        now_local.replace(...) + timedelta on a pytz-aware datetime.
-        replace() keeps now_local's ORIGINAL tzinfo (a fixed UTC offset
-        snapshot pytz bakes in at astimezone() time) instead of resolving
-        the correct offset for the candidate's own date — a `+= timedelta`
-        that crosses a DST transition then carries the stale offset,
-        landing an hour off. Same pitfall next_occurrence_utc
-        (bot/utils/time_ext.py) already avoids the same way.
+        T-06 (2026-11-18 audit #06): the source of truth is is_quiet_hours —
+        it picks the weekday or weekend window by the weekday of the instant
+        being checked. The old version took "the end of the window active
+        now", which was wrong across the weekday/weekend boundary: with
+        weekday 23-07 and weekend 23-10, Sunday 23:30 resumed Monday at
+        10:00 (the weekend end) although Monday's window ends at 07:00, and
+        Friday 23:30 resumed Saturday at 07:00 — still quiet under the
+        weekend window — so the reminder was deferred a second time.
+
+        Candidates are every window end (weekday and weekend) plus each local
+        midnight (the window choice flips there) for today and the next two
+        days; the first candidate > now at which is_quiet_hours is false wins.
+
+        3.3: candidates are built as naive local wall-clock times and
+        localized once with tz.localize(), not now_local.replace()/timedelta
+        on a pytz-aware datetime, which would carry a stale DST offset.
         """
         try:
             user_tz = resolve_timezone(user.timezone)
         except Exception:
             user_tz = pytz.UTC
+        today = now_utc.astimezone(user_tz).date()
+        ends = {
+            parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00"),
+            parse_hhmm(getattr(user, "quiet_hours_weekend_end", "07:00"), "07:00"),
+        }
+        candidates = []
+        for offset in range(3):
+            day = today + timedelta(days=offset)
+            for t in [dt_time(0, 0), *ends]:
+                naive = datetime(day.year, day.month, day.day, t.hour, t.minute)
+                candidates.append(user_tz.localize(naive).astimezone(timezone.utc))
+        for cand in sorted(set(candidates)):
+            if cand > now_utc and not is_quiet_hours(user, cand.astimezone(user_tz), is_habit=is_habit):
+                return cand
+        # No moment in the next three days is free of quiet hours (e.g. a
+        # window with start == end, "always quiet"). Keep the old behaviour:
+        # the next occurrence of the weekday end time.
+        logger.warning("No end of quiet hours found within 3 days for user %s; using weekday end.", getattr(user, "id", "?"))
+        end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
         now_local_naive = now_utc.astimezone(user_tz).replace(tzinfo=None)
-        # 3.5: the weekend window's end applies if "now" falls on a
-        # Sat/Sun — same day-of-week rule is_quiet_hours uses to pick which
-        # window is currently active.
-        if now_local_naive.weekday() >= 5 and bool(getattr(user, "quiet_hours_weekend_enabled", False)):
-            end = parse_hhmm(getattr(user, "quiet_hours_weekend_end", "10:00"), "10:00")
-        else:
-            end = parse_hhmm(getattr(user, "quiet_hours_end", "07:00"), "07:00")
-        candidate_naive = now_local_naive.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
-        if candidate_naive <= now_local_naive:
-            candidate_naive += timedelta(days=1)
-        return user_tz.localize(candidate_naive).astimezone(timezone.utc)
+        fallback = now_local_naive.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+        if fallback <= now_local_naive:
+            fallback += timedelta(days=1)
+        return user_tz.localize(fallback).astimezone(timezone.utc)
 
     async def _execute_reminder(
         self, reminder_id: int, is_nagging_execution: bool = False, is_snooze_execution: bool = False
@@ -806,7 +827,7 @@ class SchedulerService:
                     return
                 if self._is_quiet_hours_now(user, now_utc, is_habit=is_habit_like(reminder)):
                     job_id = _job_id(reminder_id, is_nagging_execution, is_snooze_execution)
-                    resume_utc = self._next_quiet_end_utc(user, now_utc)
+                    resume_utc = self._next_quiet_end_utc(user, now_utc, is_habit=is_habit_like(reminder))
                     self.scheduler.add_job(
                         execute_reminder_job,
                         "date",

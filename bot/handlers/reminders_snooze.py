@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.database.dao.reminder import ReminderDAO
 from bot.database.models import User
+from bot.handlers.reminders_shared import series_next_line, start_draft
 from bot.keyboards.inline import get_snooze_keyboard, get_time_selection_keyboard
 from bot.services.scheduler import SchedulerService
 from bot.states.reminder import ReminderWizard
@@ -64,6 +65,7 @@ async def callback_snooze_act(
 
     if action == "custom":
         await state.set_state(ReminderWizard.choosing_time)
+        draft_id = await start_draft(state)
         await state.update_data(
             edit_reminder_id=reminder.id,
             text=reminder.reminder_text,
@@ -73,7 +75,7 @@ async def callback_snooze_act(
         )
         await callback.message.edit_text(
             l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset, draft_id=draft_id),
         )
         await callback.answer()
         return
@@ -171,6 +173,9 @@ async def callback_snooze_act(
     if reminder.snooze_count <= 1:
         friendly_time = format_time(new_time_utc_naive, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
         snoozed_line = l10n["snoozed_until"].format(time=escape_markdown_v2(friendly_time))
+        series_line = series_next_line(reminder, new_time_utc_naive if reminder.is_recurring else None, user, l10n)
+        if series_line:
+            snoozed_line = f"{snoozed_line}\n{series_line}"
         # callback.message.text is None for a media message — fall back to
         # the caption, then an empty string, instead of escape_markdown_v2
         # crashing on None. (Reminder.media_file_id/media_type are dead

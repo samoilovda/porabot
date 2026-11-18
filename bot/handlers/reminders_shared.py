@@ -190,6 +190,7 @@ async def _apply_repeat_change(
     new_base = _rrule_base_key(rrule_string) if is_recurring else None
     reminder.is_recurring = is_recurring
     reminder.rrule_string = rrule_string
+    reminder.snoozed_until = None  # a changed rule replaces the series: drop a postponed occurrence
     if not is_recurring:
         reminder.rrule_dtstart = None
     elif getattr(reminder, "rrule_dtstart", None) is None or old_base != new_base:
@@ -224,6 +225,8 @@ async def _apply_repeat_change(
             )
             scheduler_service.remove_reminder_job(reminder.id)
         return False
+    if hasattr(scheduler_service, "remove_snooze_job"):
+        scheduler_service.remove_snooze_job(reminder.id)
     return True
 
 
@@ -354,13 +357,14 @@ async def _soft_delete_reminder(
     reminder.pending_delete_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
         seconds=_UNDO_DELETE_WINDOW
     )
+    reminder.snoozed_until = None  # a deleted reminder has no postponed occurrence left
     try:
         await reminder_dao.session.commit()
     except Exception as e:
         logger.error("Failed to commit soft-delete for reminder %s: %s", reminder.id, e, exc_info=True)
         await reminder_dao.session.rollback()
         return False
-    scheduler_service.remove_reminder_job(reminder.id)
+    scheduler_service.remove_reminder_job(reminder.id)  # also removes the snz_ job
     scheduler_service.remove_nagging_job(reminder.id)
     return True
 

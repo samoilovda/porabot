@@ -92,6 +92,10 @@ async def wait_for_in_flight_jobs(timeout: float = 20.0) -> None:
         )
 
 
+# A snooze this close to a series occurrence is merged into it (see _execute_reminder).
+_SNOOZE_MERGE_WINDOW = timedelta(minutes=1)
+
+
 def _job_id(reminder_id: int, is_nagging_execution: bool = False, is_snooze_execution: bool = False) -> str:
     """Scheduler job id per execution kind: the series' main job is the bare
     id, a nagging follow-up "nag_<id>", a snoozed occurrence of a RECURRING
@@ -339,6 +343,22 @@ class SchedulerService:
             existing_job_ids = {job.id for job in self.scheduler.get_jobs()}
 
             for reminder in reminders:
+                # A postponed occurrence of a recurring reminder lives on its
+                # own snz_ job: bring it back if the jobstore lost it. A future
+                # snooze keeps its time; one that fell due while we were down
+                # is sent as a (staggered) catch-up, once.
+                if (
+                    reminder.is_recurring
+                    and getattr(reminder, "snoozed_until", None) is not None
+                    and f"snz_{reminder.id}" not in existing_job_ids
+                    and reminder.id not in _in_flight_reminder_ids
+                ):
+                    snooze_at = to_utc_aware(reminder.snoozed_until)
+                    if snooze_at <= now_utc:
+                        snooze_at = now_utc + timedelta(minutes=1, seconds=catchup_stagger_seconds)
+                        catchup_stagger_seconds += 2
+                    self.schedule_snooze(reminder.id, snooze_at, is_nagging=reminder.is_nagging)
+                    restored += 1
                 if str(reminder.id) in existing_job_ids:
                     continue
                 if reminder.id in _in_flight_reminder_ids:
@@ -765,6 +785,17 @@ class SchedulerService:
                 if is_snooze_execution and getattr(reminder, "snoozed_until", None) is None:
                     logger.info("Snooze of reminder %s was cancelled (done/edited) — skipping.", reminder_id)
                     return
+                if is_snooze_execution:
+                    # Coincidence rule: a snooze that lands in the same minute
+                    # as a series occurrence is carried by that occurrence —
+                    # one notification, not two, whichever job runs first.
+                    snooze_at = reminder.snoozed_until
+                    series_marks = [reminder.execution_time, getattr(reminder, "last_fired_at", None)]
+                    if any(m is not None and abs(m - snooze_at) < _SNOOZE_MERGE_WINDOW for m in series_marks):
+                        reminder.snoozed_until = None
+                        await session.commit()
+                        logger.info("Snooze of reminder %s coincides with the series occurrence — merged.", reminder_id)
+                        return
                 if (reminder.is_recurring and reminder.rrule_string and not is_followup
                         and getattr(reminder, "completed_for_execution_time", None) is not None
                         and reminder.completed_for_execution_time == reminder.execution_time):
@@ -926,8 +957,18 @@ class SchedulerService:
                 # strike mechanism above already accounts for) — this cycle
                 # is handled, reset the retry counter and advance state.
                 reminder.send_retry_count = 0
+                merged_snooze = False
                 if is_snooze_execution:
                     reminder.snoozed_until = None
+                elif (
+                    not is_followup
+                    and getattr(reminder, "snoozed_until", None) is not None
+                    and reminder.snoozed_until <= now_utc_naive + _SNOOZE_MERGE_WINDOW
+                ):
+                    # This occurrence IS the postponed one too (same minute or
+                    # already due): one notification, no second snz_ run.
+                    reminder.snoozed_until = None
+                    merged_snooze = True
                 if not is_followup:
                     reminder.last_fired_at = now_utc_naive
 
@@ -987,6 +1028,8 @@ class SchedulerService:
                     )
 
                 await session.commit()
+                if merged_snooze:
+                    self.remove_snooze_job(reminder_id)
 
             except Exception as e:
                 await session.rollback()

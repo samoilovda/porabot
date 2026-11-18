@@ -578,12 +578,14 @@ def get_parse_confirmation_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarku
     return builder.as_markup()
 
 
-def get_missed_recovery_keyboard(l10n: dict[str, Any]) -> InlineKeyboardMarkup:
-    """Keyboard for missed-task recovery digest."""
+def get_missed_recovery_keyboard(l10n: dict[str, Any], token: Optional[str] = None) -> InlineKeyboardMarkup:
+    """Keyboard for missed-task recovery digest. *token* names the snapshot of
+    the tasks listed in the digest, so the bulk buttons act on exactly those."""
+    suffix = f":{token}" if token else ""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=l10n.get("btn_recovery_done_all", "✅ Done all"), callback_data="recovery_done_all"),
-        InlineKeyboardButton(text=l10n.get("btn_recovery_snooze_all", "⏰ +1h all"), callback_data="recovery_snooze_all"),
+        InlineKeyboardButton(text=l10n.get("btn_recovery_done_all", "✅ Done all"), callback_data=f"recovery_done_all{suffix}"),
+        InlineKeyboardButton(text=l10n.get("btn_recovery_snooze_all", "⏰ +1h all"), callback_data=f"recovery_snooze_all{suffix}"),
     )
     builder.row(InlineKeyboardButton(text=l10n["btn_close"], callback_data="close_tasks"))
     return builder.as_markup()

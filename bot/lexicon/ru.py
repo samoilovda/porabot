@@ -429,6 +429,8 @@ RU: dict[str, Any] = {
     'daily_remaining': 'Осталось на сегодня: {tasks} · {habits}',
     'add_habit': '➕ Добавить привычку',
     'batch_skipped': 'Пропущено изменённых или уже закрытых задач: {count}.',
+    'batch_preview_snooze': 'Отложить выбранные задачи на 1 час ({count})? Новые задачи в этот набор не войдут.',
+    'batch_apply_snooze': 'Подтвердить перенос',
     'habit_detail_progress': 'Устойчивость: {score}/100 · серия {current} · рекорд {best}',
     'habit_btn_pause': '⏸ Пауза',
     'limit_reminders_reached': '❌ У тебя уже {count} активных задач (лимит {limit}). Выполни или удали часть.',

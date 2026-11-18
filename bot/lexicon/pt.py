@@ -430,6 +430,8 @@ PT: dict[str, Any] = {
     'daily_remaining': 'Pendentes hoje: {tasks} · {habits}',
     'add_habit': '➕ Adicionar hábito',
     'batch_skipped': 'Tarefas alteradas ou já encerradas puladas: {count}.',
+    'batch_preview_snooze': 'Adiar 1 hora as tarefas selecionadas ({count})? Tarefas novas não serão incluídas.',
+    'batch_apply_snooze': 'Confirmar +1 h',
     'habit_detail_progress': 'Constância: {score}/100 · sequência {current} · recorde {best}',
     'habit_btn_pause': '⏸ Pausar',
     'limit_reminders_reached': '❌ Você já tem {count} tarefas ativas (limite {limit}). Conclua ou exclua algumas primeiro.',

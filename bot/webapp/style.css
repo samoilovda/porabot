@@ -11,6 +11,7 @@
   --heat-1: #ffd7ab;
   --heat-2: #9be9a8;
   --heat-3: #216e39;
+  --heat-3-text: #fff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -22,8 +23,9 @@
     --heat-0: #303a45;
     --heat-skip: #46586b;
     --heat-1: #65421e;
-    --heat-2: #126a38;
-    --heat-3: #216e39;
+    --heat-2: #0f4d2a;
+    --heat-3: #2ea043;
+    --heat-3-text: #04140a;
   }
 }
 * {
@@ -125,7 +127,29 @@ button[aria-pressed="true"] {
   flex: 1;
 }
 #heatmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
   font-size: 0.875rem;
+}
+#heatmap-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--hint);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  line-height: 1;
 }
 .calendar-grid {
   display: grid;
@@ -143,21 +167,38 @@ button[aria-pressed="true"] {
   min-height: 36px;
   border: 1px solid var(--hint);
 }
-.heat-cell[data-level="0"] {
+.heat-cell[data-level="0"],
+.swatch[data-level="0"] {
   background: var(--heat-0);
 }
-.heat-cell[data-level="skip"] {
+.heat-cell[data-level="skip"],
+.swatch[data-level="skip"] {
   background: var(--heat-skip);
 }
-.heat-cell[data-level="1"] {
+.heat-cell[data-level="1"],
+.swatch[data-level="1"] {
   background: var(--heat-1);
 }
-.heat-cell[data-level="2"] {
+.heat-cell[data-level="2"],
+.swatch[data-level="2"] {
   background: var(--heat-2);
 }
-.heat-cell[data-level="3"] {
+.heat-cell[data-level="3"],
+.swatch[data-level="3"] {
   background: var(--heat-3);
-  color: #fff;
+  color: var(--heat-3-text);
+}
+/* A complete day is marked with a check, so it is not told apart from a
+   partial one by colour alone. */
+.heat-cell[data-level="3"]::after,
+.swatch[data-level="3"]::after {
+  content: "✓";
+  font-weight: 700;
+}
+.heat-cell[data-level="3"]::after {
+  display: block;
+  font-size: 0.75em;
+  line-height: 1;
 }
 .days-list {
   display: flex;
@@ -192,6 +233,7 @@ button[aria-pressed="true"] {
   --heat-0: #303a45;
   --heat-skip: #46586b;
   --heat-1: #65421e;
-  --heat-2: #126a38;
-  --heat-3: #216e39;
+  --heat-2: #0f4d2a;
+  --heat-3: #2ea043;
+  --heat-3-text: #04140a;
 }

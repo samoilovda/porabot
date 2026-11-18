@@ -1,7 +1,7 @@
 """Missed-task recovery digests for overdue pending tasks."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 from aiogram import Bot
@@ -26,7 +26,7 @@ RECOVERY_LOCAL_TIME = "10:00"
 RECOVERY_DIGEST_LIMIT = 5
 
 
-async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
+async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict, token: str | None = None) -> bool:
     """Returns True if this outcome is final (delivered, blocked, or a
     payload Telegram rejects even after the plain-text retry) — False only
     for a retryable failure. See daily_briefs._send_safe for the rationale."""
@@ -35,7 +35,7 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
             chat_id=user_id,
             text=text,
             parse_mode="Markdown",
-            reply_markup=get_missed_recovery_keyboard(l10n),
+            reply_markup=get_missed_recovery_keyboard(l10n, token),
         )
         return True
     except TelegramForbiddenError:
@@ -48,7 +48,7 @@ async def _send_safe(bot: Bot, user_id: int, text: str, l10n: dict) -> bool:
                 chat_id=user_id,
                 text=strip_markdown_escapes(text),
                 parse_mode=None,
-                reply_markup=get_missed_recovery_keyboard(l10n),
+                reply_markup=get_missed_recovery_keyboard(l10n, token),
             )
             return True
         except Exception as retry_e:
@@ -163,7 +163,17 @@ async def process_missed_task_recovery() -> None:
                 l10n = get_l10n(user.language)
                 text = build_digest_text(overdue, user, l10n)
 
-                delivered = await _send_safe(bot, user.id, text, l10n)
+                # Snapshot of exactly the tasks the digest lists: the bulk
+                # buttons act on these, not on whatever is overdue later.
+                from bot.services.ui_context import batch_items, create_context
+
+                shown, _hidden = limit_items(overdue, RECOVERY_DIGEST_LIMIT)
+                snapshot = await create_context(
+                    session, user.id, "recovery", {"items": batch_items(shown, user)},
+                    lifetime=timedelta(hours=48),
+                )
+
+                delivered = await _send_safe(bot, user.id, text, l10n, snapshot.token)
                 if not delivered:
                     # Retryable failure — release the claim (mirrors
                     # daily_briefs._release_brief_claim) so a later tick

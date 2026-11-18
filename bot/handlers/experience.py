@@ -18,6 +18,7 @@ from bot.lexicon import plural
 from bot.services.habit_pause import is_paused
 from bot.services.scheduler import SchedulerService
 from bot.services.ui_context import create_context, get_context
+from bot.utils.fluid_habit import fluid_time_label
 from bot.utils.time_ext import format_time, to_utc_naive
 from bot.utils.timezone import resolve_timezone
 
@@ -154,7 +155,7 @@ async def render_list(message, dao, user, l10n, context, page, *, edit=True, und
     for index, task in enumerate(shown, start=page * PAGE_SIZE + 1):
         paused = is_paused(task)
         when = (
-            l10n["habit_fluid_time_anytime"]
+            fluid_time_label(task, user.timezone, l10n)
             if task.is_fluid_habit
             else format_time(task.execution_time, user.timezone, fmt="%d.%m %H:%M")
         )
@@ -354,7 +355,7 @@ async def task_action(
         builder.row(_button(l10n["close_settings"], f"nav:{token}:{page}"))
         schedule = (
             (
-                l10n["habit_fluid_time_anytime"]
+                fluid_time_label(task, user.timezone, l10n)
                 + " · "
                 + l10n["habit_fluid_mode_ask_time" if task.fluid_mode == "ask_time" else "habit_fluid_mode_brief_only"]
             )

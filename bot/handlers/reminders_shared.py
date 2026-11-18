@@ -13,7 +13,7 @@ import asyncio
 import logging
 import random
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from aiogram.exceptions import TelegramBadRequest
@@ -397,13 +397,46 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
     return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
 
 
-async def start_draft(state: FSMContext) -> str:
+async def time_prompt_context(
+    state: FSMContext, user: User, l10n: dict[str, Any], display_text: str,
+) -> tuple[Optional[date], str]:
+    """Context for RE-asking the time within the same draft.
+
+    If the user already picked a day (``time_base_date`` in the FSM) and that
+    day still has bookable slots, return ``(that date, "<ask_hour_for_date>
+    note")`` so the new keyboard keeps the day. Otherwise (no day, the day is
+    in the past, or today has no slots left) drop the stale value from the
+    FSM and return ``(None, "")`` — the general keyboard.
+    """
+    from bot.keyboards.inline import base_date_has_slots
+
+    raw = (await state.get_data()).get("time_base_date")
+    if not raw:
+        return None, ""
+    try:
+        base = date.fromisoformat(raw)
+    except ValueError:
+        base = None
+    if base is None or not base_date_has_slots(user.timezone, base):
+        await state.update_data(time_base_date=None)
+        return None, ""
+    note = l10n["ask_hour_for_date"].format(
+        text=escape_markdown(display_text), date=_weekday_date_label(base, l10n),
+    )
+    return base, note
+
+
+async def start_draft(state: FSMContext, *, keep_day: bool = False) -> str:
     """Begin a NEW wizard draft: a fresh random token in the FSM data.
 
     Time/confirm keyboards embed it (see get_time_selection_keyboard), so a
     button from an older draft's message no longer matches and is rejected."""
     draft_id = secrets.token_hex(4)
-    await state.update_data(draft_id=draft_id)
+    # A day picked for an earlier draft must not leak into this one.
+    if keep_day:
+        await state.update_data(draft_id=draft_id)
+    else:
+        await state.update_data(draft_id=draft_id, time_base_date=None)
     return draft_id
 
 
@@ -412,7 +445,7 @@ async def ensure_draft(state: FSMContext) -> str:
     start one if the FSM data has none."""
     draft_id = (await state.get_data()).get("draft_id")
     if not draft_id:
-        draft_id = await start_draft(state)
+        draft_id = await start_draft(state, keep_day=True)
     return draft_id
 
 
@@ -460,7 +493,7 @@ async def _handle_parsed_result(
     )
 
 
-def _weekday_date_label(dt: datetime, l10n: dict[str, Any]) -> str:
+def _weekday_date_label(dt: datetime | date, l10n: dict[str, Any]) -> str:
     names = l10n.get("weekday_names") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return f"{names[dt.weekday()]} {dt.strftime('%d.%m')}"
 
@@ -558,10 +591,13 @@ async def _save_and_show_edit(
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if execution_time <= now_utc_naive + timedelta(minutes=1):
         await state.set_state(ReminderWizard.choosing_time)
+        base_date, day_note = await time_prompt_context(state, user, l10n, text or "")
+        past_text = l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time.")
         await source_message.answer(
-            l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time."),
+            f"{past_text}\n\n{day_note}" if day_note else past_text,
             reply_markup=get_time_selection_keyboard(
-                user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+                user.timezone, l10n, user.show_utc_offset, base_date=base_date,
+                draft_id=await ensure_draft(state),
             ),
         )
         return

@@ -34,6 +34,7 @@ from bot.handlers.reminders_shared import (
     _save_and_show_edit,
     ensure_draft,
     start_draft,
+    time_prompt_context,
 )
 from bot.keyboards.inline import get_time_selection_keyboard
 from bot.services.parser import InputParser
@@ -350,17 +351,20 @@ async def state_choosing_time_text_input(
         await message.answer(l10n["parse_error"])
         return
 
+    data = await state.get_data()
+    display_text = data.get("text") or l10n.get("task_untitled", "Untitled task")
     if not result.parsed_datetime:
+        base_date, day_note = await time_prompt_context(state, user, l10n, display_text)
+        retry_text = l10n.get("choosing_time_retry", "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`.")
         await message.answer(
-            l10n.get("choosing_time_retry", "🕒 I couldn't find a time in that. Try again, e.g. `18:30` or `tomorrow at 9`."),
+            f"{retry_text}\n\n{day_note}" if day_note else retry_text,
             reply_markup=get_time_selection_keyboard(
-                user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+                user.timezone, l10n, user.show_utc_offset, base_date=base_date,
+                draft_id=await ensure_draft(state),
             ),
         )
         return
 
-    data = await state.get_data()
-    display_text = data.get("text") or l10n.get("task_untitled", "Untitled task")
     # Same router task creation goes through (_resolve_time_and_respond) —
     # step 3, 2026-09-26 audit remediation: typing "понедельник" here used
     # to save outright at whatever filler time dateparser invented for the

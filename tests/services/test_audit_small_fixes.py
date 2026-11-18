@@ -70,8 +70,9 @@ async def test_malformed_time_callback_gets_invalid_action() -> None:
 
     from bot.handlers.reminders_wizard import callback_time_selected
 
-    cb = SimpleNamespace(data="time_delta_abc", answer=AsyncMock(), message=SimpleNamespace())
+    cb = SimpleNamespace(data="td:abcd1234:abc", answer=AsyncMock(), message=SimpleNamespace())
     state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=1, user_id=1))
+    await state.update_data(draft_id="abcd1234")
     user = SimpleNamespace(id=1, timezone="UTC")
     await callback_time_selected(cb, state, user, RU, None, None)
     cb.answer.assert_awaited_once_with(RU["invalid_action"], show_alert=True)

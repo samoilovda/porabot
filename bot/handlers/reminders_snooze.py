@@ -74,7 +74,7 @@ async def callback_snooze_act(
         )
         await callback.message.edit_text(
             l10n["ask_time"].format(text=escape_markdown(reminder.reminder_text)),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n),
+            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
         )
         await callback.answer()
         return

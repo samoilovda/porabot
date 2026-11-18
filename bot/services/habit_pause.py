@@ -75,6 +75,7 @@ async def apply_pause(reminder, user_tz: str, scheduler_service, session, until:
     being recorded as misses the moment the pause is lifted.
     """
     now = _now_naive()
+    reminder.snoozed_until = None  # a postponed occurrence does not survive a pause/resume
     if until is None:
         reminder.paused_until = now
     else:
@@ -95,5 +96,7 @@ async def apply_pause(reminder, user_tz: str, scheduler_service, session, until:
         from bot.utils.time_ext import to_utc_aware
 
         scheduler_service.remove_nagging_job(reminder.id)
+        if hasattr(scheduler_service, "remove_snooze_job"):
+            scheduler_service.remove_snooze_job(reminder.id)
         scheduler_service.schedule_reminder(reminder.id, to_utc_aware(resume_at), is_nagging=reminder.is_nagging)
     return True

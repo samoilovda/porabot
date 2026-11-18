@@ -15,6 +15,8 @@
       done: "done",
       missed: "missed",
       skipped: "skipped on purpose",
+      partial: "partly done",
+      legend: "Legend",
       streak: "Current streak",
       best: "best",
       noRecords: "No records",
@@ -45,6 +47,8 @@
       done: "выполнено",
       missed: "пропущено",
       skipped: "пропущено осознанно",
+      partial: "выполнено частично",
+      legend: "Обозначения",
       streak: "Текущая серия",
       best: "рекорд",
       noRecords: "Нет записей",
@@ -75,6 +79,8 @@
       done: "hecho",
       missed: "perdido",
       skipped: "omitido a propósito",
+      partial: "parcialmente hecho",
+      legend: "Leyenda",
       streak: "Racha actual",
       best: "récord",
       noRecords: "Sin registros",
@@ -105,6 +111,8 @@
       done: "feito",
       missed: "perdido",
       skipped: "pulado de propósito",
+      partial: "parcialmente feito",
+      legend: "Legenda",
       streak: "Sequência atual",
       best: "recorde",
       noRecords: "Sem registros",
@@ -406,6 +414,28 @@
     if (item.done === 0) return "1";
     return item.missed > 0 ? "2" : "3";
   }
+  // One swatch + label per cell level, using the same data-level styling as
+  // the cells (the full-day mark is added by CSS to both).
+  function renderLegend() {
+    var legend = el("heatmap-legend");
+    legend.setAttribute("aria-label", t.legend);
+    legend.replaceChildren();
+    [
+      ["0", t.noRecords],
+      ["skip", t.skipped],
+      ["1", t.missed],
+      ["2", t.partial],
+      ["3", t.done],
+    ].forEach(function (entry) {
+      var item = node("li");
+      var swatch = node("span", "", "swatch");
+      swatch.dataset.level = entry[0];
+      swatch.setAttribute("aria-hidden", "true");
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(entry[1]));
+      legend.appendChild(item);
+    });
+  }
   function dayData(key) {
     var found = ((payloads.heatmap && payloads.heatmap.days) || []).filter(
       function (d) {
@@ -551,8 +581,7 @@
         grid.appendChild(cell);
       })(day, index);
     }
-    el("heatmap-legend").textContent =
-      t.noRecords + " · " + t.done + " · " + t.skipped + " · " + t.missed;
+    renderLegend();
     syncSelection();
   }
   el("month-prev").addEventListener("click", function () {

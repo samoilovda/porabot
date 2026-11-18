@@ -400,6 +400,19 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
     return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
 
 
+def series_next_line(reminder, snoozed_utc_naive, user, l10n: dict[str, Any]) -> str:
+    """MarkdownV2 line "Next scheduled repeat — DD.MM HH:MM" for a snooze of a
+    RECURRING reminder whose series occurrence comes BEFORE the snoozed time
+    (so the user sees both). Empty string otherwise."""
+    next_run = getattr(reminder, "execution_time", None)
+    if not getattr(reminder, "is_recurring", False) or next_run is None or snoozed_utc_naive is None:
+        return ""
+    if next_run >= snoozed_utc_naive:
+        return ""
+    when = format_time(next_run, user.timezone, user.show_utc_offset, "%d.%m %H:%M")
+    return l10n["snoozed_next_series"].format(time=escape_markdown_v2(when))
+
+
 async def _handle_parsed_result(
     source_message: Message,
     state: FSMContext,
@@ -721,6 +734,10 @@ async def _save_and_show_edit(
     # confirmation and claim the (already persisted) task was cancelled.
     # No auto-hide timer either: the card stays until the user acts on it.
     keyboard = get_saved_task_keyboard(new_reminder.id, l10n)
+    if edit_reminder_id and data.get("is_snooze_mode"):
+        next_line = series_next_line(new_reminder, getattr(new_reminder, "snoozed_until", None), user, l10n)
+        if next_line:
+            safe_preview = f"{safe_preview}\n{next_line}"
     await source_message.answer(safe_preview, reply_markup=keyboard, parse_mode="MarkdownV2")
 
     if data.get("nav_token"):

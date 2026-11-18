@@ -39,10 +39,10 @@ async def test_manual_time_entry_stays_in_choosing_time_and_keeps_task_text() ->
 
     state = _make_state()
     await state.set_state(ReminderWizard.choosing_time)
-    await state.update_data(text="call mom", edit_reminder_id=42)
+    await state.update_data(text="call mom", edit_reminder_id=42, draft_id="d1d1d1d1")
 
     callback = SimpleNamespace(
-        data="time_manual",
+        data="tm:d1d1d1d1",
         answer=AsyncMock(),
         message=SimpleNamespace(edit_text=AsyncMock()),
     )

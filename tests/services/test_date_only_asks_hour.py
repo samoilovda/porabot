@@ -112,7 +112,7 @@ async def test_quick_button_after_date_only_prompt_creates_task_on_the_recognize
 
     keyboard = message.answer.await_args.kwargs["reply_markup"]
     morning_button = keyboard.inline_keyboard[0][0]  # first time-of-day slot: 09:00
-    assert morning_button.callback_data.startswith("time_fixed_")
+    assert morning_button.callback_data.startswith("tf:")
 
     created_reminder = SimpleNamespace(
         id=7, reminder_text="приготовить обед", is_recurring=False, is_nagging=False,

@@ -12,6 +12,7 @@ reimplementing it.
 import asyncio
 import logging
 import random
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -400,6 +401,25 @@ def _pick_done_reply(l10n: dict[str, Any]) -> str:
     return str(l10n.get("task_done_reply", "✅ *Great\\!*"))
 
 
+async def start_draft(state: FSMContext) -> str:
+    """Begin a NEW wizard draft: a fresh random token in the FSM data.
+
+    Time/confirm keyboards embed it (see get_time_selection_keyboard), so a
+    button from an older draft's message no longer matches and is rejected."""
+    draft_id = secrets.token_hex(4)
+    await state.update_data(draft_id=draft_id)
+    return draft_id
+
+
+async def ensure_draft(state: FSMContext) -> str:
+    """Keep the current draft's token (a re-prompt for the same draft), or
+    start one if the FSM data has none."""
+    draft_id = (await state.get_data()).get("draft_id")
+    if not draft_id:
+        draft_id = await start_draft(state)
+    return draft_id
+
+
 def series_next_line(reminder, snoozed_utc_naive, user, l10n: dict[str, Any]) -> str:
     """MarkdownV2 line "Next scheduled repeat — DD.MM HH:MM" for a snooze of a
     RECURRING reminder whose series occurrence comes BEFORE the snoozed time
@@ -428,6 +448,8 @@ async def _handle_parsed_result(
     raw_text = result.clean_text or l10n.get("task_untitled", "Untitled task")
     clean_text, tags_csv, priority = extract_tags_and_priority(raw_text)
     clean_text = clean_text or l10n.get("task_untitled", "Untitled task")
+    # A new task text is a new draft: buttons of any earlier draft expire.
+    await start_draft(state)
     await state.update_data(
         text=clean_text, tags=tags_csv, priority=priority,
         user_timezone=user.timezone, chat_id=source_message.chat.id,
@@ -449,7 +471,9 @@ async def _handle_parsed_result(
     await state.set_state(ReminderWizard.choosing_time)
     await source_message.answer(
         l10n["ask_time"].format(text=escape_markdown(clean_text)),
-        reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+        reply_markup=get_time_selection_keyboard(
+            user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+        ),
     )
 
 
@@ -510,6 +534,7 @@ async def _resolve_time_and_respond(
             ),
             reply_markup=get_time_selection_keyboard(
                 user.timezone, l10n, user.show_utc_offset, base_date=local_date,
+                draft_id=await ensure_draft(state),
             ),
         )
         return
@@ -520,7 +545,7 @@ async def _resolve_time_and_respond(
     )
     await source_message.answer(
         l10n["parse_confirmation_prompt"].format(text=escape_markdown(display_text), time=parsed_time),
-        reply_markup=get_parse_confirmation_keyboard(l10n),
+        reply_markup=get_parse_confirmation_keyboard(l10n, draft_id=await ensure_draft(state)),
     )
 
 
@@ -552,7 +577,9 @@ async def _save_and_show_edit(
         await state.set_state(ReminderWizard.choosing_time)
         await source_message.answer(
             l10n.get("time_in_past", "⏰ This time has already passed. Please choose a future time."),
-            reply_markup=get_time_selection_keyboard(user.timezone, l10n, user.show_utc_offset),
+            reply_markup=get_time_selection_keyboard(
+                user.timezone, l10n, user.show_utc_offset, draft_id=await ensure_draft(state),
+            ),
         )
         return
 

@@ -71,3 +71,22 @@ async def test_user_with_nothing_overdue_is_checked_once_per_day(maker, monkeypa
     async with session_maker() as s:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         assert (await s.get(User, 1)).last_missed_recovery_date == today
+
+
+@pytest.mark.parametrize("lang", ["en", "ru", "es", "pt"])
+def test_escape_heavy_texts_stay_within_limit_escaped_and_stripped(lang) -> None:
+    """Audit 2026-11-18 #05: 5 tasks of 3000 characters made of Cyrillic,
+    emoji and every legacy-Markdown special character. Truncation happens
+    before escaping (preview_line then escape_markdown), so the worst case
+    is bounded both as sent (escaped) and as the plain-text fallback."""
+    from bot.utils.markdown import strip_markdown_escapes
+
+    nasty = ("Задача 😀 *_[]`\\ " * 300)[:3000]
+    text = build_digest_text([_task(i, nasty) for i in range(RECOVERY_DIGEST_LIMIT)], USER, get_l10n(lang))
+
+    assert len(text) <= 4096 - 1000  # generous headroom, not just under the limit
+    assert len(strip_markdown_escapes(text)) <= len(text)
+    # Truncation happens before escaping, so no line ends in the middle of an
+    # escape pair: each task line ends with the ellipsis, never a stray "\\".
+    for line in text.splitlines()[2:2 + RECOVERY_DIGEST_LIMIT]:
+        assert line.endswith("…")

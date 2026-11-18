@@ -19,7 +19,7 @@ def test_next_quiet_end_resolves_correct_offset_across_spring_forward() -> None:
     # Europe/Berlin switches to summer time (UTC+1 -> UTC+2) at 2026-03-29
     # 02:00 local, same transition test_dst_recurring_reminder.py uses.
     service = SchedulerService(AsyncIOScheduler(), bot=SimpleNamespace(), session_pool=SimpleNamespace())
-    user = SimpleNamespace(timezone="Europe/Berlin", quiet_hours_end="07:00")
+    user = SimpleNamespace(timezone="Europe/Berlin", quiet_hours_enabled=True, quiet_hours_start="23:00", quiet_hours_end="07:00")
 
     # "now" is 2026-03-28 23:30 CET (UTC+1) — before the transition. Quiet
     # hours end (07:00) has already passed today, so the candidate rolls to
@@ -36,7 +36,7 @@ def test_next_quiet_end_resolves_correct_offset_across_spring_forward() -> None:
 
 def test_next_quiet_end_same_day_when_not_yet_passed() -> None:
     service = SchedulerService(AsyncIOScheduler(), bot=SimpleNamespace(), session_pool=SimpleNamespace())
-    user = SimpleNamespace(timezone="UTC", quiet_hours_end="07:00")
+    user = SimpleNamespace(timezone="UTC", quiet_hours_enabled=True, quiet_hours_start="23:00", quiet_hours_end="07:00")
 
     now_utc = datetime(2026, 5, 1, 3, 0, tzinfo=timezone.utc)
 
